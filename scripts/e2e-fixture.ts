@@ -1,0 +1,561 @@
+import { resolve, sep } from "node:path";
+
+import {
+	type BootstrapResponse,
+	type ChangeFile,
+	type ChangesResponse,
+	type CreateCommentRequest,
+	CSRF_HEADER,
+	type DiffResponse,
+	type ReviewComment,
+	type ReviewRecord,
+	type ReviewStateResponse,
+	type SetReviewRequest,
+	type StageFileRequest,
+} from "../src/shared/contracts.ts";
+
+const host = process.env.E2E_HOST || "127.0.0.1";
+const port = Number(process.env.E2E_PORT || 4174);
+const distRoot = resolve(import.meta.dir, "..", "dist");
+const csrfToken = "e2e-csrf-token";
+let operationRevision = "fixture-operation-1";
+
+const repository = {
+	id: "fixture-repository",
+	name: "sample-project",
+	root: "/fixtures/sample-project",
+	branch: "feature/mobile-review",
+	head: "0123456789abcdef0123456789abcdef01234567",
+	unborn: false,
+};
+
+const initialFiles: ChangeFile[] = [
+	{
+		id: "fixture-review-ts",
+		path: "src/review.ts",
+		previousPath: null,
+		kind: "modified",
+		indexStatus: ".",
+		worktreeStatus: "M",
+		staged: false,
+		unstaged: true,
+		conflicted: false,
+		binary: false,
+		additions: 5,
+		deletions: 2,
+		contentRevision: "fixture-review-v1",
+		reviewed: false,
+		commentCount: 0,
+	},
+	{
+		id: "fixture-format-ts",
+		path: "src/format.ts",
+		previousPath: null,
+		kind: "added",
+		indexStatus: ".",
+		worktreeStatus: "?",
+		staged: false,
+		unstaged: true,
+		conflicted: false,
+		binary: false,
+		additions: 4,
+		deletions: 0,
+		contentRevision: "fixture-format-v1",
+		reviewed: false,
+		commentCount: 0,
+	},
+];
+const files: ChangeFile[] = structuredClone(initialFiles);
+
+const diffs: Record<string, DiffResponse> = {
+	"fixture-review-ts": {
+		diff: {
+			fileId: "fixture-review-ts",
+			path: "src/review.ts",
+			previousPath: null,
+			kind: "modified",
+			contentRevision: "fixture-review-v1",
+			operationRevision,
+			binary: false,
+			tooLarge: false,
+			header: ["diff --git a/src/review.ts b/src/review.ts"],
+			additions: 5,
+			deletions: 2,
+			hunks: [
+				{
+					id: "fixture-review-hunk-1",
+					header: "@@ -1,5 +1,6 @@",
+					oldStart: 1,
+					oldLines: 5,
+					newStart: 1,
+					newLines: 6,
+					lines: [
+						{
+							id: "r1",
+							kind: "context",
+							text: "export function review(path: string) {",
+							oldLine: 1,
+							newLine: 1,
+							noNewline: false,
+						},
+						{
+							id: "r2",
+							kind: "deletion",
+							text: "  return load(path);",
+							oldLine: 2,
+							newLine: null,
+							noNewline: false,
+						},
+						{
+							id: "r3",
+							kind: "addition",
+							text: "  const result = load(path);",
+							oldLine: null,
+							newLine: 2,
+							noNewline: false,
+						},
+						{
+							id: "r4",
+							kind: "addition",
+							text: "  return result.files;",
+							oldLine: null,
+							newLine: 3,
+							noNewline: false,
+						},
+						{
+							id: "r5",
+							kind: "context",
+							text: "}",
+							oldLine: 3,
+							newLine: 4,
+							noNewline: false,
+						},
+					],
+				},
+				{
+					id: "fixture-review-hunk-2",
+					header: "@@ -12,3 +13,5 @@",
+					oldStart: 12,
+					oldLines: 3,
+					newStart: 13,
+					newLines: 5,
+					lines: [
+						{
+							id: "r6",
+							kind: "context",
+							text: "export const status = {",
+							oldLine: 12,
+							newLine: 13,
+							noNewline: false,
+						},
+						{
+							id: "r7",
+							kind: "deletion",
+							text: "  ready: false,",
+							oldLine: 13,
+							newLine: null,
+							noNewline: false,
+						},
+						{
+							id: "r8",
+							kind: "addition",
+							text: "  ready: true,",
+							oldLine: null,
+							newLine: 14,
+							noNewline: false,
+						},
+						{
+							id: "r9",
+							kind: "addition",
+							text: "  reviewed: false,",
+							oldLine: null,
+							newLine: 15,
+							noNewline: false,
+						},
+						{
+							id: "r10",
+							kind: "context",
+							text: "};",
+							oldLine: 14,
+							newLine: 16,
+							noNewline: false,
+						},
+					],
+				},
+			],
+		},
+	},
+	"fixture-format-ts": {
+		diff: {
+			fileId: "fixture-format-ts",
+			path: "src/format.ts",
+			previousPath: null,
+			kind: "added",
+			contentRevision: "fixture-format-v1",
+			operationRevision,
+			binary: false,
+			tooLarge: false,
+			header: ["diff --git a/src/format.ts b/src/format.ts"],
+			additions: 4,
+			deletions: 0,
+			hunks: [
+				{
+					id: "fixture-format-hunk-1",
+					header: "@@ -0,0 +1,4 @@",
+					oldStart: 0,
+					oldLines: 0,
+					newStart: 1,
+					newLines: 4,
+					lines: [
+						{
+							id: "f1",
+							kind: "addition",
+							text: "export function compact(value: string) {",
+							oldLine: null,
+							newLine: 1,
+							noNewline: false,
+						},
+						{
+							id: "f2",
+							kind: "addition",
+							text: "  return value.trim();",
+							oldLine: null,
+							newLine: 2,
+							noNewline: false,
+						},
+						{
+							id: "f3",
+							kind: "addition",
+							text: "}",
+							oldLine: null,
+							newLine: 3,
+							noNewline: false,
+						},
+						{
+							id: "f4",
+							kind: "addition",
+							text: "",
+							oldLine: null,
+							newLine: 4,
+							noNewline: false,
+						},
+					],
+				},
+			],
+		},
+	},
+};
+
+const reviews: ReviewRecord[] = [];
+const comments: ReviewComment[] = [];
+
+const securityHeaders = {
+	"Content-Security-Policy": [
+		"default-src 'self'",
+		"base-uri 'none'",
+		"object-src 'none'",
+		"frame-ancestors 'none'",
+		"script-src 'self'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self'",
+		"font-src 'self'",
+		"connect-src 'self'",
+		"manifest-src 'self'",
+		"worker-src 'self'",
+	].join("; "),
+	"Referrer-Policy": "no-referrer",
+	"X-Content-Type-Options": "nosniff",
+};
+
+function json(value: unknown, status = 200): Response {
+	return Response.json(value, {
+		status,
+		headers: {
+			...securityHeaders,
+			"Cache-Control": "no-store",
+		},
+	});
+}
+
+function requireCsrf(request: Request): Response | null {
+	if (request.headers.get(CSRF_HEADER) === csrfToken) return null;
+	return json(
+		{ error: { code: "invalid_csrf", message: "Invalid CSRF token" } },
+		403,
+	);
+}
+
+async function serveStatic(
+	pathname: string,
+	request: Request,
+): Promise<Response> {
+	const decodedPath = decodeURIComponent(pathname);
+	const relativePath =
+		decodedPath === "/" ? "index.html" : decodedPath.slice(1);
+	const candidate = resolve(distRoot, relativePath);
+	const insideDist =
+		candidate === distRoot || candidate.startsWith(`${distRoot}${sep}`);
+
+	if (insideDist) {
+		const file = Bun.file(candidate);
+		if (await file.exists()) {
+			return new Response(file, {
+				headers: {
+					...securityHeaders,
+					"Cache-Control":
+						relativePath === "index.html"
+							? "no-cache"
+							: "public, max-age=31536000, immutable",
+					...(file.type ? { "Content-Type": file.type } : {}),
+				},
+			});
+		}
+	}
+
+	if (request.headers.get("accept")?.includes("text/html")) {
+		const index = Bun.file(resolve(distRoot, "index.html"));
+		return new Response(index, {
+			headers: {
+				...securityHeaders,
+				"Cache-Control": "no-cache",
+				"Content-Type": "text/html; charset=utf-8",
+			},
+		});
+	}
+
+	return new Response("Not found", { status: 404, headers: securityHeaders });
+}
+
+const server = Bun.serve({
+	hostname: host,
+	port,
+	idleTimeout: 255,
+	async fetch(request) {
+		const url = new URL(request.url);
+		const fileRoute =
+			/^\/api\/files\/([^/]+)\/(diff|stage|review|comments)$/.exec(
+				url.pathname,
+			);
+		const commentRoute = /^\/api\/comments\/([^/]+)$/.exec(url.pathname);
+
+		if (url.pathname === "/api/bootstrap" && request.method === "GET") {
+			return json({
+				repository,
+				csrfToken,
+				operationRevision,
+			} satisfies BootstrapResponse);
+		}
+
+		if (url.pathname === "/api/files" && request.method === "GET") {
+			return json({
+				repository,
+				files,
+				operationRevision,
+			} satisfies ChangesResponse);
+		}
+
+		if (fileRoute?.[2] === "diff" && request.method === "GET") {
+			const diff = diffs[decodeURIComponent(fileRoute[1] || "")];
+			return diff
+				? json({ ...diff, diff: { ...diff.diff, operationRevision } })
+				: json(
+						{ error: { code: "not_found", message: "Fixture file not found" } },
+						404,
+					);
+		}
+
+		if (url.pathname === "/api/comments" && request.method === "GET") {
+			return json({ reviews, comments } satisfies ReviewStateResponse);
+		}
+
+		if (url.pathname === "/api/search" && request.method === "GET") {
+			const query = url.searchParams.get("q") || "";
+			const currentPath = url.searchParams.get("currentPath") || files[0]!.path;
+			return json({
+				query,
+				currentPath,
+				currentFile: [
+					{
+						path: currentPath,
+						line: 2,
+						column: 16,
+						preview: "  const result = load(path);",
+					},
+				],
+				otherFiles: [
+					{
+						path: "src/format.ts",
+						line: 2,
+						column: 10,
+						preview: "  return value.trim();",
+					},
+				],
+				truncated: false,
+			});
+		}
+
+		if (url.pathname === "/api/source" && request.method === "GET") {
+			const path = url.searchParams.get("path") || files[0]!.path;
+			const focusLine = Number(url.searchParams.get("line") || 2);
+			return json({
+				path,
+				focusLine,
+				startLine: 1,
+				endLine: 4,
+				lines: [
+					{ line: 1, text: "export function fixture() {" },
+					{ line: 2, text: "  return true;" },
+					{ line: 3, text: "}" },
+					{ line: 4, text: "" },
+				],
+				truncated: false,
+			});
+		}
+
+		if (url.pathname === "/api/events" && request.method === "GET") {
+			const body = new ReadableStream({
+				start(controller) {
+					controller.enqueue(
+						new TextEncoder().encode(
+							`data: ${JSON.stringify({ type: "ready", operationRevision, at: new Date().toISOString() })}\n\n`,
+						),
+					);
+				},
+			});
+			return new Response(body, {
+				headers: {
+					...securityHeaders,
+					"Cache-Control": "no-cache, no-store, no-transform",
+					"Content-Type": "text/event-stream",
+					"X-Accel-Buffering": "no",
+				},
+			});
+		}
+
+		if (url.pathname.startsWith("/api/") && request.method !== "GET") {
+			const csrfError = requireCsrf(request);
+			if (csrfError) return csrfError;
+		}
+
+		if (url.pathname === "/api/e2e/reset" && request.method === "POST") {
+			files.splice(0, files.length, ...structuredClone(initialFiles));
+			reviews.splice(0);
+			comments.splice(0);
+			operationRevision = "fixture-operation-1";
+			return json({ reset: true });
+		}
+
+		if (fileRoute?.[2] === "review" && request.method === "PUT") {
+			const body = (await request.json()) as SetReviewRequest;
+			const file = files.find((candidate) => candidate.id === body.fileId);
+			if (!file)
+				return json(
+					{ error: { code: "not_found", message: "Fixture file not found" } },
+					404,
+				);
+			file.reviewed = body.reviewed;
+			const review = {
+				fileId: file.id,
+				path: file.path,
+				contentRevision: file.contentRevision,
+				reviewed: file.reviewed,
+				updatedAt: new Date().toISOString(),
+			} satisfies ReviewRecord;
+			const existing = reviews.findIndex(
+				(candidate) => candidate.fileId === file.id,
+			);
+			if (existing >= 0) reviews[existing] = review;
+			else reviews.push(review);
+			return json({ review });
+		}
+
+		if (fileRoute?.[2] === "stage" && request.method === "POST") {
+			const body = (await request.json()) as StageFileRequest;
+			const file = files.find((candidate) => candidate.id === body.fileId);
+			if (!file)
+				return json(
+					{ error: { code: "not_found", message: "Fixture file not found" } },
+					404,
+				);
+			file.staged = true;
+			file.unstaged = false;
+			file.indexStatus = file.kind === "added" ? "A" : "M";
+			file.worktreeStatus = ".";
+			operationRevision = `fixture-operation-${Date.now()}`;
+			return json({ file, operationRevision });
+		}
+
+		if (fileRoute?.[2] === "comments" && request.method === "POST") {
+			const body = (await request.json()) as CreateCommentRequest;
+			const file = files.find((candidate) => candidate.id === body.fileId);
+			if (!file)
+				return json(
+					{ error: { code: "not_found", message: "Fixture file not found" } },
+					404,
+				);
+			const now = new Date().toISOString();
+			const comment: ReviewComment = {
+				id: `fixture-comment-${comments.length + 1}`,
+				path: file.path,
+				stale: false,
+				createdAt: now,
+				updatedAt: now,
+				...body,
+			};
+			comments.push(comment);
+			file.commentCount += 1;
+			return json({ comment }, 201);
+		}
+
+		if (commentRoute && request.method === "PUT") {
+			const body = (await request.json()) as { id: string; body: string };
+			const comment = comments.find((candidate) => candidate.id === body.id);
+			if (!comment)
+				return json(
+					{
+						error: { code: "not_found", message: "Fixture comment not found" },
+					},
+					404,
+				);
+			comment.body = body.body;
+			comment.updatedAt = new Date().toISOString();
+			return json({ comment });
+		}
+
+		if (commentRoute && request.method === "DELETE") {
+			const body = (await request.json()) as { id: string };
+			const index = comments.findIndex((candidate) => candidate.id === body.id);
+			if (index < 0)
+				return json(
+					{
+						error: { code: "not_found", message: "Fixture comment not found" },
+					},
+					404,
+				);
+			const [comment] = comments.splice(index, 1);
+			const file = files.find((candidate) => candidate.id === comment?.fileId);
+			if (file) file.commentCount = Math.max(0, file.commentCount - 1);
+			return json({ deletedId: body.id });
+		}
+
+		if (url.pathname.startsWith("/api/")) {
+			return json(
+				{
+					error: { code: "not_found", message: "Fixture API route not found" },
+				},
+				404,
+			);
+		}
+
+		return serveStatic(url.pathname, request);
+	},
+});
+
+console.log(`Couch Review e2e fixture listening at ${server.url}`);
+
+function stop() {
+	void server.stop(true);
+}
+
+process.once("SIGINT", stop);
+process.once("SIGTERM", stop);

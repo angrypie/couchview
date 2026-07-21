@@ -1,0 +1,99 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { createCouchReviewApp, type CouchReviewApp } from "./server.ts";
+
+const temporaryDirectories: string[] = [];
+const applications: CouchReviewApp[] = [];
+
+afterEach(async () => {
+  for (const application of applications.splice(0)) application.close();
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+async function fixture() {
+  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-static-"));
+  temporaryDirectories.push(directory);
+  const repositoryRoot = path.join(directory, "repository");
+  const staticRoot = path.join(directory, "dist");
+  await mkdir(path.join(staticRoot, "assets"), { recursive: true });
+  await mkdir(repositoryRoot, { recursive: true });
+  expect(Bun.spawnSync(["git", "init", "-q", repositoryRoot]).exitCode).toBe(0);
+  await writeFile(
+    path.join(staticRoot, "index.html"),
+    "<!doctype html><title>Couch Review</title><main>Disconnected shell</main>",
+    "utf8",
+  );
+  await writeFile(path.join(staticRoot, "assets", "app-12345678.js"), "export {};\n", "utf8");
+  const secret = path.join(directory, "secret.js");
+  await writeFile(secret, "do not serve me\n", "utf8");
+  await symlink(secret, path.join(staticRoot, "leak.js"));
+
+  const app = await createCouchReviewApp({
+    root: repositoryRoot,
+    host: "127.0.0.1",
+    port: 3001,
+    staticDirectory: staticRoot,
+  });
+  applications.push(app);
+  return app;
+}
+
+function localRequest(pathname: string, init: RequestInit = {}): Request {
+  const headers = new Headers(init.headers);
+  headers.set("host", "127.0.0.1:3001");
+  return new Request(`http://127.0.0.1:3001${pathname}`, { ...init, headers });
+}
+
+describe("production static serving", () => {
+  test("serves the shell and hashed assets with restrictive security headers", async () => {
+    const app = await fixture();
+
+    const shell = await app.fetch(localRequest("/nested/client/route"));
+    expect(shell.status).toBe(200);
+    expect(await shell.text()).toContain("Disconnected shell");
+    expect(shell.headers.get("cache-control")).toBe("no-cache");
+    expect(shell.headers.get("content-security-policy")).toContain("default-src 'self'");
+    expect(shell.headers.get("content-security-policy")).toContain("form-action 'none'");
+    expect(shell.headers.get("x-frame-options")).toBe("DENY");
+    expect(shell.headers.has("access-control-allow-origin")).toBe(false);
+
+    const asset = await app.fetch(localRequest("/assets/app-12345678.js"));
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+  });
+
+  test("rejects symlink escapes, lexical traversal, host aliases, and non-exact origins", async () => {
+    const app = await fixture();
+
+    const symlinkEscape = await app.fetch(localRequest("/leak.js"));
+    expect(symlinkEscape.status).toBe(403);
+    expect(await symlinkEscape.text()).not.toContain("do not serve me");
+
+    const traversal = await app.fetch(localRequest("/%2e%2e%2fsecret.js"));
+    expect(traversal.status).toBe(400);
+
+    const aliasHost = await app.fetch(
+      new Request("http://localhost:3001/", { headers: { host: "localhost:3001" } }),
+    );
+    expect(aliasHost.status).toBe(403);
+
+    const developmentHost = await app.fetch(
+      new Request("http://127.0.0.1:5173/", { headers: { host: "127.0.0.1:5173" } }),
+    );
+    expect(developmentHost.status).toBe(403);
+
+    const originWithPath = await app.fetch(
+      localRequest("/", { headers: { origin: "http://127.0.0.1:3001/path" } }),
+    );
+    expect(originWithPath.status).toBe(403);
+  });
+});

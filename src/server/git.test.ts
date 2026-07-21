@@ -1,0 +1,878 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { parseGrepOutput, parsePorcelainV2, parseUnifiedDiff, runGit } from "./git.ts";
+import { GitRepository } from "./repository.ts";
+
+const temporaryDirectories: string[] = [];
+const decoder = new TextDecoder();
+
+function git(directory: string, args: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", directory, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, LC_ALL: "C", LANG: "C" },
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${decoder.decode(result.stderr)}`);
+  }
+  return decoder.decode(result.stdout);
+}
+
+async function committedRepository(files: Record<string, string | Uint8Array>): Promise<string> {
+  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-backend-"));
+  temporaryDirectories.push(directory);
+  git(directory, ["init", "-q"]);
+  git(directory, ["config", "user.name", "Couch Review Tests"]);
+  git(directory, ["config", "user.email", "couch-review@example.invalid"]);
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const absolutePath = path.join(directory, relativePath);
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await writeFile(absolutePath, contents);
+  }
+  git(directory, ["add", "-A"]);
+  git(directory, ["commit", "-q", "-m", "fixture"]);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+
+describe("parsePorcelainV2", () => {
+  test("parses ordinary, renamed, untracked, and conflicted records without splitting paths", () => {
+    const output = [
+      "# branch.oid 0123456789abcdef",
+      "# branch.head feature/review",
+      "1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb src/a file.ts",
+      "2 R. N... 100644 100644 100644 ccccccc ddddddd R100 src/new name.ts",
+      "src/old name.ts",
+      "? src/new file.ts",
+      "u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc src/conflict.ts",
+      "",
+    ].join("\0");
+
+    const parsed = parsePorcelainV2(output);
+
+    expect(parsed.branch).toBe("feature/review");
+    expect(parsed.head).toBe("0123456789abcdef");
+    expect(parsed.entries).toHaveLength(4);
+    expect(parsed.entries[0]).toMatchObject({
+      path: "src/a file.ts",
+      kind: "modified",
+      staged: false,
+      unstaged: true,
+    });
+    expect(parsed.entries[1]).toMatchObject({
+      path: "src/new name.ts",
+      previousPath: "src/old name.ts",
+      kind: "renamed",
+    });
+    expect(parsed.entries[2]).toMatchObject({ path: "src/new file.ts", kind: "untracked" });
+    expect(parsed.entries[3]).toMatchObject({
+      path: "src/conflict.ts",
+      kind: "unmerged",
+      conflicted: true,
+    });
+  });
+
+  test("recognizes an unborn branch", () => {
+    const parsed = parsePorcelainV2("# branch.oid (initial)\0# branch.head main\0");
+    expect(parsed).toMatchObject({ branch: "main", head: null, unborn: true });
+  });
+
+  test("merges a staged deletion and same-path recreation into one partial file", () => {
+    const parsed = parsePorcelainV2(
+      [
+        "# branch.oid abcdef",
+        "1 D. N... 100644 000000 000000 aaaaaaa 0000000 same.txt",
+        "? same.txt",
+        "",
+      ].join("\0"),
+    );
+    expect(parsed.entries).toEqual([
+      expect.objectContaining({
+        path: "same.txt",
+        kind: "modified",
+        indexStatus: "D",
+        worktreeStatus: "?",
+        staged: true,
+        unstaged: true,
+      }),
+    ]);
+  });
+});
+
+describe("parseUnifiedDiff", () => {
+  test("assigns old/new line numbers and newline metadata", () => {
+    const parsed = parseUnifiedDiff(
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -2,2 +2,3 @@ function example() {",
+        " same",
+        "-old",
+        "+new",
+        "+more",
+        "\\ No newline at end of file",
+        "",
+      ].join("\n"),
+    );
+
+    expect(parsed.additions).toBe(2);
+    expect(parsed.deletions).toBe(1);
+    expect(parsed.hunks).toHaveLength(1);
+    expect(parsed.hunks[0]?.lines.slice(0, 4)).toMatchObject([
+      { kind: "context", oldLine: 2, newLine: 2 },
+      { kind: "deletion", oldLine: 3, newLine: null },
+      { kind: "addition", oldLine: null, newLine: 3 },
+      { kind: "addition", oldLine: null, newLine: 4, noNewline: true },
+    ]);
+  });
+
+  test("bounds rendered rows and ignores accidental later file sections", () => {
+    const parsed = parseUnifiedDiff(
+      [
+        "diff --git a/a.ts b/a.ts",
+        "--- a/a.ts",
+        "+++ b/a.ts",
+        "@@ -0,0 +1,3 @@",
+        "+one",
+        "+two",
+        "+three",
+        "diff --git a/b.ts b/b.ts",
+        "--- a/b.ts",
+        "+++ b/b.ts",
+        "@@ -0,0 +1 @@",
+        "+other file",
+        "",
+      ].join("\n"),
+      2,
+    );
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.hunks).toHaveLength(1);
+    expect(parsed.hunks[0]?.lines.map((line) => line.text)).toEqual(["one", "two"]);
+  });
+});
+
+describe("parseGrepOutput", () => {
+  test("parses Git's NUL-delimited filename, line, and column fields", () => {
+    const output = new TextEncoder().encode(
+      "src/a file.ts\0" +
+        "12\0" +
+        "5\0" +
+        "const token = true;\n" +
+        "src/b.ts\0" +
+        "3\0" +
+        "1\0" +
+        "token()\n",
+    );
+    expect(parseGrepOutput(output)).toEqual([
+      { path: "src/a file.ts", line: 12, column: 5, preview: "const token = true;" },
+      { path: "src/b.ts", line: 3, column: 1, preview: "token()" },
+    ]);
+  });
+});
+
+describe("GitRepository", () => {
+  test("reviews, searches, previews, and stages an untracked file on an unborn branch", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-backend-"));
+    temporaryDirectories.push(directory);
+    const initialized = Bun.spawnSync(["git", "init", "-q", directory]);
+    expect(initialized.exitCode).toBe(0);
+    await writeFile(path.join(directory, "sample file.ts"), "alpha\nbeta token\n", "utf8");
+    await writeFile(path.join(directory, "substring.ts"), "const tokenized = true;\n", "utf8");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const looseObjectDirectories = (await readdir(path.join(directory, ".git", "objects"), {
+        withFileTypes: true,
+      })).filter((entry) => entry.isDirectory() && /^[0-9a-f]{2}$/.test(entry.name));
+      expect(looseObjectDirectories).toHaveLength(0);
+      expect(await Bun.file(repository.store.filePath).exists()).toBe(false);
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "sample file.ts");
+      expect(file).toMatchObject({ kind: "untracked", staged: false, unstaged: true });
+      if (!file) throw new Error("fixture file missing from Git status");
+
+      const diff = await repository.diff(file.id);
+      expect(diff.diff).toMatchObject({ binary: false, additions: 2, deletions: 0 });
+      expect(diff.diff.hunks[0]?.lines[1]).toMatchObject({ text: "beta token", newLine: 2 });
+
+      const search = await repository.search("token", "sample file.ts");
+      expect(search.currentFile).toEqual([
+        { path: "sample file.ts", line: 2, column: 6, preview: "beta token" },
+      ]);
+      expect(search.otherFiles).toEqual([]);
+      const source = await repository.source("sample file.ts", 2, 1);
+      expect(source.lines).toEqual([
+        { line: 1, text: "alpha" },
+        { line: 2, text: "beta token" },
+      ]);
+
+      await repository.setReview({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        reviewed: true,
+      });
+      await repository.createComment({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        side: "new",
+        startLine: 2,
+        endLine: 2,
+        hunkHeader: diff.diff.hunks[0]?.header ?? "",
+        excerpt: ["beta token"],
+        body: "Please rename this.",
+      });
+
+      const staged = await repository.stage({
+        fileId: file.id,
+        operationRevision: before.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+      expect(staged.file).toMatchObject({ staged: true, unstaged: false, reviewed: true, commentCount: 1 });
+      expect(staged.file?.contentRevision).toBe(file.contentRevision);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("keeps reviews across staging and unrelated commits, then marks changed anchors stale", async () => {
+    const directory = await committedRepository({
+      "target.ts": "one\n\nthree token\n",
+      "unrelated.ts": "export const unrelated = 1;\n",
+    });
+    git(directory, ["config", "diff.suppressBlankEmpty", "true"]);
+    git(directory, ["config", "color.grep", "always"]);
+    await writeFile(path.join(directory, "target.ts"), "ONE\n\nthree token\n");
+    git(directory, ["add", "--", "target.ts"]);
+    await writeFile(path.join(directory, "target.ts"), "ONE\n\nTHREE token\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "target.ts");
+      expect(file).toMatchObject({ staged: true, unstaged: true });
+      if (!file) throw new Error("target fixture missing");
+      const diff = await repository.diff(file.id);
+      expect(diff.diff.hunks.flatMap((hunk) => hunk.lines)).toContainEqual(
+        expect.objectContaining({ kind: "addition", text: "THREE token", newLine: 3 }),
+      );
+      const search = await repository.search("token", "target.ts");
+      expect(search.currentFile[0]).toMatchObject({ path: "target.ts", line: 3 });
+
+      await repository.setReview({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        reviewed: true,
+      });
+      const replacementHunk = diff.diff.hunks[0];
+      if (!replacementHunk) throw new Error("target hunk missing");
+      const created = await repository.createComment({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        side: "mixed",
+        startLine: 1,
+        endLine: 3,
+        oldStartLine: 1,
+        oldEndLine: 3,
+        newStartLine: 1,
+        newEndLine: 3,
+        hunkHeader: replacementHunk.header,
+        excerpt: ["forged excerpt"],
+        body: "Keep both replacement ranges.",
+      });
+      expect(created.comment.excerpt).not.toContain("forged excerpt");
+
+      const staged = await repository.stage({
+        fileId: file.id,
+        operationRevision: before.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+      expect(staged.file).toMatchObject({ staged: true, unstaged: false, reviewed: true });
+      expect(staged.file?.contentRevision).toBe(file.contentRevision);
+
+      await writeFile(
+        path.join(directory, "unrelated.ts"),
+        "export const unrelated = 2;\n",
+      );
+      git(directory, ["add", "--", "unrelated.ts"]);
+      git(directory, ["commit", "-q", "--only", "-m", "unrelated", "--", "unrelated.ts"]);
+      const afterUnrelatedCommit = await repository.changes();
+      const unchangedTarget = afterUnrelatedCommit.files.find(
+        (candidate) => candidate.path === "target.ts",
+      );
+      expect(unchangedTarget?.contentRevision).toBe(file.contentRevision);
+      expect(unchangedTarget?.reviewed).toBe(true);
+
+      await writeFile(path.join(directory, "target.ts"), "ONE\n\nchanged token\n");
+      const staleState = await repository.reviewState();
+      expect(staleState.reviews.find((review) => review.fileId === file.id)?.reviewed).toBe(false);
+      expect(staleState.comments.find((comment) => comment.id === created.comment.id)?.stale).toBe(true);
+      const edited = await repository.updateComment(created.comment.id, "Still needs attention.");
+      expect(edited.comment.stale).toBe(true);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("stages a copied destination without staging its modified source", async () => {
+    const directory = await committedRepository({ "source.txt": "original\n" });
+    git(directory, ["config", "status.renames", "copies"]);
+    await copyFile(path.join(directory, "source.txt"), path.join(directory, "copy.txt"));
+    git(directory, ["add", "--", "copy.txt"]);
+    await writeFile(path.join(directory, "copy.txt"), "original\ncopy edit\n");
+    await writeFile(path.join(directory, "source.txt"), "source edit\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      const copied = before.files.find((candidate) => candidate.path === "copy.txt");
+      expect(copied).toMatchObject({ staged: true, unstaged: true });
+      if (!copied) throw new Error("copy fixture missing");
+      const copyDiff = await repository.diff(copied.id);
+      expect(copyDiff.diff.hunks.flatMap((hunk) => hunk.lines).map((line) => line.text))
+        .not.toContain("source edit");
+      await repository.stage({
+        fileId: copied.id,
+        operationRevision: before.operationRevision,
+        contentRevision: copied.contentRevision,
+      });
+      expect(git(directory, ["diff", "--cached", "--", "source.txt"])).toBe("");
+      expect(git(directory, ["diff", "--", "source.txt"])).toContain("source edit");
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("returns conflicts for a busy or changed index without staging the selected file", async () => {
+    const directory = await committedRepository({ "a.txt": "a\n", "b.txt": "b\n" });
+    await writeFile(path.join(directory, "a.txt"), "a changed\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "a.txt");
+      if (!file) throw new Error("conflict fixture missing");
+      const indexLock = `${repository.indexPath}.lock`;
+      await writeFile(indexLock, "busy");
+      await expect(
+        repository.stage({
+          fileId: file.id,
+          operationRevision: before.operationRevision,
+          contentRevision: file.contentRevision,
+        }),
+      ).rejects.toMatchObject({ status: 423 });
+      await rm(indexLock);
+
+      await writeFile(path.join(directory, "a.txt"), "a changed again\n");
+      await expect(
+        repository.stage({
+          fileId: file.id,
+          operationRevision: before.operationRevision,
+          contentRevision: file.contentRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(git(directory, ["diff", "--cached", "--", "a.txt"])).toBe("");
+
+      const refreshed = await repository.changes();
+      const refreshedFile = refreshed.files.find((candidate) => candidate.path === "a.txt");
+      if (!refreshedFile) throw new Error("refreshed fixture missing");
+      await writeFile(path.join(directory, "b.txt"), "b changed\n");
+      git(directory, ["add", "--", "b.txt"]);
+      await expect(
+        repository.stage({
+          fileId: refreshedFile.id,
+          operationRevision: refreshed.operationRevision,
+          contentRevision: refreshedFile.contentRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(git(directory, ["diff", "--cached", "--", "a.txt"])).toBe("");
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("staging a deleted file does not recurse into an untracked replacement directory", async () => {
+    const directory = await committedRepository({ foo: "tracked leaf\n" });
+    await rm(path.join(directory, "foo"));
+    await mkdir(path.join(directory, "foo"));
+    await writeFile(path.join(directory, "foo", "bar.txt"), "untracked child\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const before = await repository.changes();
+      const deleted = before.files.find((candidate) => candidate.path === "foo");
+      const child = before.files.find((candidate) => candidate.path === "foo/bar.txt");
+      expect(deleted?.kind).toBe("deleted");
+      expect(child?.kind).toBe("untracked");
+      if (!deleted) throw new Error("deleted fixture missing");
+      await repository.stage({
+        fileId: deleted.id,
+        operationRevision: before.operationRevision,
+        contentRevision: deleted.contentRevision,
+      });
+      expect(git(directory, ["diff", "--cached", "--name-only", "--", "foo/bar.txt"])).toBe("");
+      expect(git(directory, ["ls-files", "--", "foo/bar.txt"])).toBe("");
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("shows and stages an index conflict as one reviewable file", async () => {
+    const directory = await committedRepository({ "conflict.txt": "base\n" });
+    const primaryBranch = git(directory, ["branch", "--show-current"]).trim();
+    git(directory, ["checkout", "-q", "-b", "other"]);
+    await writeFile(path.join(directory, "conflict.txt"), "other\n");
+    git(directory, ["commit", "-qam", "other"]);
+    git(directory, ["checkout", "-q", primaryBranch]);
+    await writeFile(path.join(directory, "conflict.txt"), "primary\n");
+    git(directory, ["commit", "-qam", "primary"]);
+    const merge = Bun.spawnSync(["git", "-C", directory, "merge", "other"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(merge.exitCode).not.toBe(0);
+    const repository = await GitRepository.open(directory);
+    try {
+      const before = await repository.changes();
+      const conflicted = before.files.find((candidate) => candidate.path === "conflict.txt");
+      expect(conflicted).toMatchObject({ conflicted: true, staged: true, unstaged: true });
+      if (!conflicted) throw new Error("conflict fixture missing");
+      const diff = await repository.diff(conflicted.id);
+      expect(diff.diff.hunks.flatMap((hunk) => hunk.lines).some((line) => line.text.includes("<<<<<<<")))
+        .toBe(true);
+      await repository.stage({
+        fileId: conflicted.id,
+        operationRevision: before.operationRevision,
+        contentRevision: conflicted.contentRevision,
+      });
+      expect((await repository.changes()).files.find((file) => file.path === "conflict.txt")?.conflicted)
+        .toBe(false);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("stages file/directory transitions without collapsing the review queue", async () => {
+    const directoryToFile = await committedRepository({ "a/b.txt": "nested\n" });
+    await rm(path.join(directoryToFile, "a"), { recursive: true });
+    await writeFile(path.join(directoryToFile, "a"), "flat\n");
+    const first = await GitRepository.open(directoryToFile);
+    try {
+      const changes = await first.changes();
+      expect(changes.files.map((file) => file.path)).toEqual(["a", "a/b.txt"]);
+      const replacement = changes.files.find((file) => file.path === "a");
+      if (!replacement) throw new Error("directory-to-file fixture missing");
+      await first.stage({
+        fileId: replacement.id,
+        operationRevision: changes.operationRevision,
+        contentRevision: replacement.contentRevision,
+      });
+      expect(git(directoryToFile, ["ls-files", "-z"])).toBe("a\0");
+      expect(git(directoryToFile, ["diff", "--cached", "--name-status"])).toContain("A\ta");
+      expect(git(directoryToFile, ["diff", "--cached", "--name-status"])).toContain(
+        "D\ta/b.txt",
+      );
+    } finally {
+      first.close();
+    }
+
+    const fileToDirectory = await committedRepository({ a: "flat\n" });
+    await rm(path.join(fileToDirectory, "a"));
+    await mkdir(path.join(fileToDirectory, "a"));
+    await writeFile(path.join(fileToDirectory, "a/b.txt"), "nested\n");
+    const second = await GitRepository.open(fileToDirectory);
+    try {
+      const changes = await second.changes();
+      expect(changes.files.map((file) => file.path)).toEqual(["a", "a/b.txt"]);
+      const replacement = changes.files.find((file) => file.path === "a/b.txt");
+      if (!replacement) throw new Error("file-to-directory fixture missing");
+      await second.stage({
+        fileId: replacement.id,
+        operationRevision: changes.operationRevision,
+        contentRevision: replacement.contentRevision,
+      });
+      expect(git(fileToDirectory, ["ls-files", "-z"])).toBe("a/b.txt\0");
+      expect(git(fileToDirectory, ["diff", "--cached", "--name-status"])).toContain("D\ta");
+      expect(git(fileToDirectory, ["diff", "--cached", "--name-status"])).toContain(
+        "A\ta/b.txt",
+      );
+    } finally {
+      second.close();
+    }
+  });
+
+  test("accepts and stages literal backslashes in POSIX filenames", async () => {
+    const directory = await committedRepository({ "base.txt": "base\n" });
+    const unusualPath = "foo\\..\\bar.ts";
+    await writeFile(path.join(directory, unusualPath), "export const valid = true;\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const changes = await repository.changes();
+      const file = changes.files.find((candidate) => candidate.path === unusualPath);
+      expect(file).toBeDefined();
+      if (!file) throw new Error("literal-backslash fixture missing");
+      expect((await repository.diff(file.id)).diff.hunks).toHaveLength(1);
+      await repository.stage({
+        fileId: file.id,
+        operationRevision: changes.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+      expect(git(directory, ["ls-files", "-z"])).toContain(`${unusualPath}\0`);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("renders and comments on an untracked file containing one empty line", async () => {
+    const directory = await committedRepository({ "base.txt": "base\n" });
+    await writeFile(path.join(directory, "blank.txt"), "\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const changes = await repository.changes();
+      const file = changes.files.find((candidate) => candidate.path === "blank.txt");
+      if (!file) throw new Error("blank-line fixture missing");
+      const response = await repository.diff(file.id);
+      expect(response.diff.additions).toBe(1);
+      expect(response.diff.hunks[0]?.lines).toContainEqual(
+        expect.objectContaining({ kind: "addition", text: "", newLine: 1 }),
+      );
+      const comment = await repository.createComment({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        hunkHeader: response.diff.hunks[0]?.header ?? "",
+        excerpt: [],
+        body: "Decide whether this empty line is intentional.",
+      });
+      expect(comment.comment.excerpt).toEqual([""]);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("bounds previews for a match inside a very long source line", async () => {
+    const directory = await committedRepository({ "base.txt": "base\n" });
+    await writeFile(
+      path.join(directory, "minified.js"),
+      `${"a".repeat(300_000)} targetWord ${"b".repeat(300_000)}\n`,
+    );
+    const repository = await GitRepository.open(directory);
+    try {
+      const result = await repository.search("targetWord", "minified.js");
+      expect(result.currentFile).toHaveLength(1);
+      expect(result.currentFile[0]?.preview).toContain("targetWord");
+      expect(result.currentFile[0]?.preview.length).toBeLessThanOrEqual(514);
+      expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThan(2_000);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("handles deletion, rename, binary, symlink, mode-only, and unusual paths", async () => {
+    const renameContents = Array.from({ length: 40 }, (_, index) => `rename line ${index}\n`).join("");
+    const directory = await committedRepository({
+      "delete.txt": "remove me\n",
+      "rename-old.txt": renameContents,
+      "mode.sh": "#!/bin/sh\nexit 0\n",
+      "binary.dat": new Uint8Array([0, 1, 2, 3]),
+    });
+    await rm(path.join(directory, "delete.txt"));
+    git(directory, ["mv", "rename-old.txt", "renamed file.txt"]);
+    await writeFile(
+      path.join(directory, "renamed file.txt"),
+      renameContents.replace("rename line 20\n", "renamed line 20\n"),
+    );
+    await chmod(path.join(directory, "mode.sh"), 0o755);
+    await writeFile(path.join(directory, "binary.dat"), new Uint8Array([0, 9, 8, 7]));
+    await symlink("mode.sh", path.join(directory, "link to mode"));
+    const oddPath = "--odd $name [x]\n.ts";
+    await writeFile(path.join(directory, oddPath), "const odd = true;\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const changes = await repository.changes();
+      expect(changes.files.map((file) => file.path)).toEqual(
+        expect.arrayContaining([
+          "delete.txt",
+          "renamed file.txt",
+          "mode.sh",
+          "binary.dat",
+          "link to mode",
+          oddPath,
+        ]),
+      );
+      const binary = changes.files.find((file) => file.path === "binary.dat");
+      const mode = changes.files.find((file) => file.path === "mode.sh");
+      const link = changes.files.find((file) => file.path === "link to mode");
+      const odd = changes.files.find((file) => file.path === oddPath);
+      if (!binary || !mode || !link || !odd) throw new Error("edge fixture missing");
+      expect((await repository.diff(binary.id)).diff.binary).toBe(true);
+      const modeDiff = await repository.diff(mode.id);
+      expect(modeDiff.diff.hunks).toHaveLength(0);
+      expect(modeDiff.diff.header.join("\n")).toContain("new mode 100755");
+      expect((await repository.diff(link.id)).diff.header.join("\n")).toContain(
+        "new file mode 120000",
+      );
+      await expect(
+        repository.createComment({
+          fileId: binary.id,
+          contentRevision: binary.contentRevision,
+          side: "new",
+          startLine: 1,
+          endLine: 1,
+          hunkHeader: "@@ -1 +1 @@",
+          excerpt: [],
+          body: "Invalid binary anchor",
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      const stagePath = async (pathName: string) => {
+        const current = await repository.changes();
+        const file = current.files.find((candidate) => candidate.path === pathName);
+        if (!file) throw new Error(`stage fixture missing: ${pathName}`);
+        await repository.stage({
+          fileId: file.id,
+          operationRevision: current.operationRevision,
+          contentRevision: file.contentRevision,
+        });
+      };
+      for (const pathName of [
+        "delete.txt",
+        "renamed file.txt",
+        "binary.dat",
+        "mode.sh",
+        "link to mode",
+        oddPath,
+      ]) {
+        await stagePath(pathName);
+      }
+      expect(git(directory, ["ls-files", "--", "delete.txt"])).toBe("");
+      expect(git(directory, ["ls-files", "-s", "--", "link to mode"])).toStartWith("120000 ");
+      expect(git(directory, ["diff", "--cached", "--summary", "--", "mode.sh"])).toContain(
+        "mode change 100644 => 100755",
+      );
+      expect(git(directory, ["diff", "--cached", "--name-only", "--", "binary.dat"])).toBe(
+        "binary.dat\n",
+      );
+      expect(git(directory, ["diff", "--cached", "--name-status", "-M"])).toMatch(
+        /R\d+\trename-old\.txt\trenamed file\.txt/,
+      );
+      expect(git(directory, ["diff", "--cached", "--name-only", "-z"])).toContain(oddPath);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("merges delete-plus-recreate status and bounds huge serialized diffs", async () => {
+    const directory = await committedRepository({ "same.txt": "old value\n" });
+    git(directory, ["rm", "-q", "--", "same.txt"]);
+    await writeFile(path.join(directory, "same.txt"), "new value\n");
+    await writeFile(path.join(directory, "huge.txt"), `${'"\\'.repeat(1_200_000)}\n`);
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const changes = await repository.changes();
+      const sameFiles = changes.files.filter((file) => file.path === "same.txt");
+      expect(sameFiles).toHaveLength(1);
+      expect(sameFiles[0]).toMatchObject({ staged: true, unstaged: true, kind: "modified" });
+      const sameDiff = await repository.diff(sameFiles[0]!.id);
+      const sameLines = sameDiff.diff.hunks.flatMap((hunk) => hunk.lines);
+      expect(sameLines).toContainEqual(expect.objectContaining({ kind: "deletion", text: "old value" }));
+      expect(sameLines).toContainEqual(expect.objectContaining({ kind: "addition", text: "new value" }));
+
+      const huge = changes.files.find((file) => file.path === "huge.txt");
+      if (!huge) throw new Error("huge fixture missing");
+      const hugeDiff = await repository.diff(huge.id);
+      expect(hugeDiff.diff.tooLarge).toBe(true);
+      expect(new TextEncoder().encode(JSON.stringify(hugeDiff)).byteLength).toBeLessThanOrEqual(
+        2 * 1024 * 1024,
+      );
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("reloads state under an interprocess-style lock without losing updates", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-state-"));
+    temporaryDirectories.push(directory);
+    git(directory, ["init", "-q"]);
+    await writeFile(path.join(directory, "state.ts"), "export const state = true;\n");
+    const first = await GitRepository.open(directory);
+    const second = await GitRepository.open(directory);
+    try {
+      const changes = await first.changes();
+      const file = changes.files[0];
+      if (!file) throw new Error("state fixture missing");
+      const diff = await first.diff(file.id);
+      await first.setReview({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        reviewed: true,
+      });
+      await second.createComment({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        hunkHeader: diff.diff.hunks[0]?.header ?? "",
+        excerpt: [],
+        body: "Keep both writes.",
+      });
+      const state = await first.reviewState();
+      expect(state.reviews).toHaveLength(1);
+      expect(state.comments).toHaveLength(1);
+      const stored = JSON.parse(await readFile(first.store.filePath, "utf8")) as {
+        reviews: unknown[];
+        comments: unknown[];
+      };
+      expect(stored.reviews).toHaveLength(1);
+      expect(stored.comments).toHaveLength(1);
+      expect((await readdir(first.store.directory)).some((name) => name.endsWith(".tmp"))).toBe(false);
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
+
+  test("streams Git output into a bounded prefix", async () => {
+    const directory = await committedRepository({ "large.txt": "x".repeat(64 * 1024) });
+    const objectId = git(directory, ["rev-parse", "HEAD:large.txt"]).trim();
+    const result = await runGit(directory, ["cat-file", "blob", objectId], {
+      maxOutputBytes: 128,
+      truncateOutput: true,
+    });
+    expect(result.stdout).toHaveLength(128);
+    expect(result.stdoutTruncated).toBe(true);
+  });
+
+  test("does not let inherited Git repository variables redirect commands", async () => {
+    const directory = await committedRepository({ "target.txt": "target\n" });
+    const other = await committedRepository({ "other.txt": "other\n" });
+    const previousGitDirectory = process.env.GIT_DIR;
+    const previousWorkTree = process.env.GIT_WORK_TREE;
+    try {
+      process.env.GIT_DIR = path.join(other, ".git");
+      process.env.GIT_WORK_TREE = other;
+      const result = await runGit(directory, ["rev-parse", "--show-toplevel"]);
+      expect(decoder.decode(result.stdout).trim()).toBe(await realpath(directory));
+    } finally {
+      if (previousGitDirectory === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previousGitDirectory;
+      if (previousWorkTree === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = previousWorkTree;
+    }
+  });
+
+  test("changes the operation revision when the branch label changes at the same commit", async () => {
+    const directory = await committedRepository({ "branch.txt": "base\n" });
+    await writeFile(path.join(directory, "branch.txt"), "working change\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const before = await repository.changes();
+      git(directory, ["switch", "-q", "-c", "same-commit-branch"]);
+      const after = await repository.changes();
+      expect(after.repository.head).toBe(before.repository.head);
+      expect(after.repository.branch).toBe("same-commit-branch");
+      expect(after.operationRevision).not.toBe(before.operationRevision);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("coalesces overlapping unborn-repository snapshots without publishing a false clean state", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-concurrent-"));
+    temporaryDirectories.push(directory);
+    git(directory, ["init", "-q"]);
+    git(directory, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await writeFile(path.join(directory, "first.ts"), "export const first = 1;\n");
+    await writeFile(path.join(directory, "second.ts"), "export const second = 2;\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const snapshots = await Promise.all(
+        Array.from({ length: 50 }, () => repository.changes()),
+      );
+      expect(snapshots.every((snapshot) => snapshot.repository.branch === "main")).toBe(true);
+      expect(snapshots.every((snapshot) => snapshot.repository.unborn)).toBe(true);
+      expect(snapshots.every((snapshot) => snapshot.files.length === 2)).toBe(true);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("accepts a genuinely clean tree after confirming the empty snapshot", async () => {
+    const directory = await committedRepository({ "clean.ts": "export const clean = true;\n" });
+    await writeFile(path.join(directory, "clean.ts"), "export const clean = false;\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const changed = await repository.changes();
+      expect(changed.files).toHaveLength(1);
+      git(directory, ["restore", "--", "clean.ts"]);
+      const clean = await repository.changes();
+      expect(clean.files).toHaveLength(0);
+      expect(clean.repository.branch).toBe(changed.repository.branch);
+      expect(clean.repository.head).toBe(changed.repository.head);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("uses Git-normalized modes when deciding whether reviews became stale", async () => {
+    const directory = await committedRepository({ "review.sh": "echo base\n" });
+    await writeFile(path.join(directory, "review.sh"), "echo changed\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "review.sh");
+      if (!file) throw new Error("mode revision fixture missing");
+      const diff = await repository.diff(file.id);
+      await repository.setReview({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        reviewed: true,
+      });
+      await repository.createComment({
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        hunkHeader: diff.diff.hunks[0]?.header ?? "",
+        excerpt: [],
+        body: "Keep the changed command.",
+      });
+
+      await chmod(path.join(directory, "review.sh"), 0o600);
+      const permissionOnly = await repository.changes();
+      expect(permissionOnly.files[0]?.contentRevision).toBe(file.contentRevision);
+      expect(permissionOnly.files[0]?.reviewed).toBe(true);
+      expect((await repository.reviewState()).comments[0]?.stale).toBe(false);
+
+      await chmod(path.join(directory, "review.sh"), 0o700);
+      const executable = await repository.changes();
+      expect(executable.files[0]?.contentRevision).not.toBe(file.contentRevision);
+      expect(executable.files[0]?.reviewed).toBe(false);
+      expect((await repository.reviewState()).comments[0]?.stale).toBe(true);
+    } finally {
+      repository.close();
+    }
+  });
+});
