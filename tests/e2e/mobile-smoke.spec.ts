@@ -9,7 +9,8 @@ async function openFixture(page: Page) {
   const currentFile = page.getByRole("region", { name: "Current file" });
   await expect(currentFile).toContainText("src/review.ts");
   await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
-  await expect(page.locator(".diff-row").first()).toBeVisible();
+  await expect(page.locator(".pierre-code-view diffs-container")).toBeVisible();
+  await expect(page.locator("diffs-container [data-line]").first()).toBeVisible();
   return currentFile;
 }
 
@@ -41,7 +42,7 @@ test.describe("mobile fixture review", () => {
 
   test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const currentFile = await openFixture(page);
     await dismissPwaNotices(page);
 
@@ -60,6 +61,63 @@ test.describe("mobile fixture review", () => {
 
     const fontValue = page.locator(".font-value");
     await expect(fontValue).toHaveText("11px");
+    const codeHost = page.locator("diffs-container").first();
+    const renderedFont = () =>
+      codeHost.evaluate((host) => {
+        const line = host.shadowRoot?.querySelector<HTMLElement>("[data-line]");
+        const hostStyle = getComputedStyle(host);
+        return {
+          fontSize: line ? getComputedStyle(line).fontSize : "",
+          hostFontSize: hostStyle.fontSize,
+          lineHeight: line
+            ? Math.round(Number.parseFloat(getComputedStyle(line).lineHeight) * 100) / 100
+            : 0,
+          textInflationDisabled: Array.from(
+            host.shadowRoot?.querySelectorAll("style") ?? [],
+          ).some((style) =>
+            style.textContent?.includes("-webkit-text-size-adjust: 100%"),
+          ),
+        };
+      });
+    await expect.poll(renderedFont).toEqual({
+      fontSize: "11px",
+      hostFontSize: "11px",
+      lineHeight: 17.05,
+      textInflationDisabled: true,
+    });
+
+    const fileSwitchControls = testInfo.project.name.includes("landscape")
+      ? page.getByRole("navigation", { name: "Review actions" })
+      : currentFile;
+    await fileSwitchControls.getByRole("button", { name: "Next file" }).click();
+    await expect(currentFile).toContainText("src/format.ts");
+    await expect.poll(renderedFont).toEqual({
+      fontSize: "11px",
+      hostFontSize: "11px",
+      lineHeight: 17.05,
+      textInflationDisabled: true,
+    });
+    await fileSwitchControls.getByRole("button", { name: "Previous file" }).click();
+    await expect(currentFile).toContainText("src/review.ts");
+
+    await expect
+      .poll(() =>
+        codeHost.evaluate((host) =>
+          Boolean(host.shadowRoot?.querySelector("[data-disable-line-numbers]")),
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        codeHost.evaluate((host) => {
+          const number = host.shadowRoot?.querySelector<HTMLElement>("[data-column-number]");
+          return number?.getBoundingClientRect().width ?? 100;
+        }),
+      )
+      .toBeLessThanOrEqual(6);
+    await page.getByRole("button", { name: "Show line numbers" }).click();
+    await expect(page.getByRole("button", { name: "Hide line numbers" })).toBeVisible();
+
     const increaseFont = page.getByRole("button", { name: "Increase diff font size" });
     for (let size = 12; size <= 16; size += 1) await increaseFont.click();
     await expect(fontValue).toHaveText("16px");
@@ -72,13 +130,13 @@ test.describe("mobile fixture review", () => {
       )
       .toBe("16px");
 
-    const scroller = page.locator(".diff-scroller");
+    const scroller = page.locator("diffs-container [data-code]").first();
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
       .toBeGreaterThan(20);
 
-    const oldGutter = page.getByRole("button", { name: "Select old line 1", exact: true });
-    const firstCode = page.locator(".code-line").first();
+    const oldGutter = page.getByRole("button", { name: "Select new line 1", exact: true });
+    const firstCode = page.locator("diffs-container [data-line]").first();
     const before = {
       gutterX: await oldGutter.evaluate((element) => element.getBoundingClientRect().x),
       codeX: await firstCode.evaluate((element) => element.getBoundingClientRect().x),
@@ -96,10 +154,27 @@ test.describe("mobile fixture review", () => {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
     ).toBe(true);
+    await page.getByRole("button", { name: "Wrap long lines" }).click();
+    await expect(page.getByRole("button", { name: "Keep long lines on one line" })).toBeVisible();
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
+      .toBeLessThanOrEqual(1);
+    expect(
+      await page.evaluate(() => localStorage.getItem("couch-review:line-wrap")),
+    ).toBe("true");
+    await expect(page.getByRole("button", { name: "Find “load” in project" }).first()).toBeVisible();
+    expect(
+      await codeHost.evaluate((host) =>
+        host.shadowRoot?.querySelectorAll("[data-char]").length ?? 0,
+      ),
+    ).toBeGreaterThan(0);
 
     const actions = page.getByRole("navigation", { name: "Review actions" });
-    const nextHunk = actions.getByRole("button", { name: "Next hunk" });
-    const previousHunk = actions.getByRole("button", { name: "Previous hunk" });
+    const hunkActions = testInfo.project.name.includes("landscape")
+      ? page.locator(".compact-hunk-nav")
+      : actions.locator(".hunk-nav");
+    const nextHunk = hunkActions.getByRole("button", { name: "Next hunk" });
+    const previousHunk = hunkActions.getByRole("button", { name: "Previous hunk" });
     await expect(previousHunk).toBeDisabled();
     await nextHunk.click();
     await expect(nextHunk).toBeDisabled();
@@ -109,15 +184,16 @@ test.describe("mobile fixture review", () => {
 
     await actions.getByRole("button", { name: "Next file" }).click();
     await expect(currentFile).toContainText("src/format.ts");
-    // The compact bottom bar intentionally hides its duplicate previous-file
-    // icon below 420px; the sticky file header always keeps this action.
-    await currentFile.getByRole("button", { name: "Previous file" }).click();
+    const previousFile = testInfo.project.name.includes("landscape")
+      ? actions.getByRole("button", { name: "Previous file" })
+      : currentFile.getByRole("button", { name: "Previous file" });
+    await previousFile.click();
     await expect(currentFile).toContainText("src/review.ts");
   });
 
   test("searches, comments on a replacement, stages, and reviews with one-tap advance", async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.addInitScript(() => {
       Object.defineProperty(Navigator.prototype, "clipboard", {
         configurable: true,
@@ -133,7 +209,9 @@ test.describe("mobile fixture review", () => {
     const currentFile = await openFixture(page);
     await dismissPwaNotices(page);
 
-    await page.locator(".word-button", { hasText: /^load$/ }).first().click();
+    const loadToken = page.getByRole("button", { name: "Find “load” in project" }).first();
+    await loadToken.focus();
+    await page.keyboard.press("Enter");
     const search = page.getByRole("dialog", { name: "Project search" });
     await expect(search).toBeVisible();
     const currentHit = search.getByRole("button", { name: /src\/review\.ts:2:16/ });
@@ -145,7 +223,9 @@ test.describe("mobile fixture review", () => {
     await expect(search.getByRole("button", { name: /src\/format\.ts:2:10/ })).toBeVisible();
     await search.getByRole("button", { name: "Close search" }).click();
 
-    await page.getByRole("button", { name: "Select old line 2" }).click();
+    await page.getByRole("button", { name: "Show line numbers" }).click();
+    await page.getByRole("button", { name: "Select old line 2" }).focus();
+    await page.keyboard.press("Space");
     await page.getByRole("button", { name: "Select new line 2" }).click();
     const selection = page.getByRole("status").filter({
       hasText: "Old lines 2 / new lines 2",
@@ -161,10 +241,13 @@ test.describe("mobile fixture review", () => {
     await editor.getByRole("button", { name: "Add comment" }).click();
     await expect(page.getByText("Comment added", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Open comments (1)" }).click();
+    const inlineChip = page.getByRole("button", { name: /Open comment at src\/review\.ts/ });
+    await expect(inlineChip).toContainText("Keep the loaded result intact");
+    await inlineChip.click();
     const tray = page.getByRole("dialog", { name: "Review comments" });
     await expect(tray).toContainText("src/review.ts:old L2 / new L2");
     await expect(tray).toContainText("Keep the loaded result intact");
+    await expect(tray.locator('[data-comment-id="fixture-comment-1"]')).toBeFocused();
     await tray.getByRole("button", { name: "Copy 1 for Codex" }).click();
 
     const manualCopy = page.getByRole("dialog", { name: "Copy comments manually" });
@@ -179,13 +262,69 @@ test.describe("mobile fixture review", () => {
     const stage = actions.getByRole("button", { name: "Stage current file" });
     await stage.click();
     await expect(page.getByText("File staged", { exact: true })).toBeVisible();
-    await expect(stage).toBeDisabled();
+    await expect(actions.getByRole("button", { name: "Unstage current file" })).toBeVisible();
     await expect(currentFile.locator(".status-pill.staged")).toHaveText("staged");
 
-    await actions.getByRole("button", { name: "Review + next" }).click();
+    const landscape = testInfo.project.name.includes("landscape");
+    await actions
+      .getByRole("button", { name: landscape ? "Review current file" : "Review + next" })
+      .click();
+    if (landscape) {
+      await expect(currentFile).toContainText("src/review.ts");
+      await actions.getByRole("button", { name: "Next file" }).click();
+    }
     await expect(currentFile).toContainText("src/format.ts");
     await expect(page.getByText("Marked reviewed", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  });
+
+  test("landscape phones keep the viewer full width while the drawer overlays it", async ({
+    page,
+  }, testInfo) => {
+    test.skip(!testInfo.project.name.includes("landscape"), "Landscape-only layout coverage.");
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const workspace = page.getByRole("region", { name: "Unified diff" });
+    const before = await workspace.boundingBox();
+    expect(before).not.toBeNull();
+    expect(before!.x).toBeLessThanOrEqual(1);
+    expect(Math.abs(before!.width - (await page.evaluate(() => window.innerWidth)))).toBeLessThanOrEqual(1);
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    const drawer = page.getByRole("complementary", { name: "Changed files" });
+    await expect(drawer).toBeVisible();
+    const after = await workspace.boundingBox();
+    expect(after).not.toBeNull();
+    expect(after!.x).toBeCloseTo(before!.x, 0);
+    expect(after!.width).toBeCloseTo(before!.width, 0);
+    await expect(drawer).toHaveCSS("position", "fixed");
+    await drawer.getByRole("button", { name: "Close changed files" }).click();
+
+    const topBar = page.locator(".top-bar");
+    const fileBar = page.locator(".file-bar");
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    await expect(fileBar).toHaveCount(0);
+    await expect
+      .poll(() => topBar.evaluate((element) => element.getBoundingClientRect().height))
+      .toBeLessThanOrEqual(42);
+    await expect(actions).toHaveCSS("position", "fixed");
+    await expect
+      .poll(() => actions.evaluate((element) => element.getBoundingClientRect().width))
+      .toBeLessThan(360);
+    await expect(actions.getByRole("button")).toHaveCount(4);
+    await expect(page.locator(".compact-hunk-nav")).toBeVisible();
+    await expect(page.locator(".compact-comments-button")).toBeVisible();
+
+    const currentFile = page.getByRole("region", { name: "Current file" });
+    await actions.getByRole("button", { name: "Review current file" }).click();
+    await expect(currentFile).toContainText("src/review.ts");
+    await expect(actions.getByRole("button", { name: "Unreview current file" })).toBeVisible();
+
+    await actions.getByRole("button", { name: "Stage current file" }).click();
+    await expect(actions.getByRole("button", { name: "Unstage current file" })).toBeVisible();
+    await actions.getByRole("button", { name: "Unstage current file" }).click();
+    await expect(actions.getByRole("button", { name: "Stage current file" })).toBeVisible();
   });
 });
 

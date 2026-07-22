@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 
 import type {
   ChangeKind,
@@ -8,6 +9,8 @@ import type {
 } from "../shared/contracts.ts";
 
 const decoder = new TextDecoder("utf-8", { fatal: false });
+const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_STDERR_BYTES = 1024 * 1024;
 
 export interface GitResult {
   stdout: Uint8Array;
@@ -39,46 +42,9 @@ export class GitCommandError extends Error {
   }
 }
 
-async function readCappedStream(
-  stream: ReadableStream<Uint8Array>,
-  maximumBytes: number,
-): Promise<{ bytes: Uint8Array; truncated: boolean }> {
-  const chunks: Uint8Array[] = [];
-  let keptBytes = 0;
-  let truncated = false;
-  const reader = stream.getReader();
-  try {
-    while (true) {
-      const result = await reader.read();
-      if (result.done) break;
-      const chunk = result.value;
-      const remaining = Math.max(0, maximumBytes - keptBytes);
-      if (chunk.byteLength > remaining) truncated = true;
-      if (remaining > 0) {
-        const kept = chunk.byteLength <= remaining ? chunk : chunk.subarray(0, remaining);
-        chunks.push(kept);
-        keptBytes += kept.byteLength;
-      }
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(keptBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return { bytes, truncated };
-}
-
-export async function runGit(
-  root: string,
-  args: readonly string[],
-  options: RunGitOptions = {},
-): Promise<GitResult> {
-  const command = ["git", "--literal-pathspecs", ...args];
-  const input = options.input;
+function gitEnvironment(
+  overrides: Record<string, string | undefined> | undefined,
+): Record<string, string | undefined> {
   const environment: Record<string, string | undefined> = { ...globalThis.process.env };
   for (const variable of [
     "GIT_DIR",
@@ -99,7 +65,7 @@ export async function runGit(
   ]) {
     delete environment[variable];
   }
-  Object.assign(environment, options.env);
+  Object.assign(environment, overrides);
   Object.assign(environment, {
     GIT_LITERAL_PATHSPECS: "1",
     GIT_PAGER: "cat",
@@ -107,53 +73,85 @@ export async function runGit(
     LC_ALL: "C",
     LANG: "C",
   });
-  const process = Bun.spawn(command, {
-    cwd: root,
-    env: environment,
-    stdin:
-      input === undefined
-        ? "ignore"
-        : typeof input === "string"
-          ? new Blob([input])
-          : new Blob([Buffer.from(input)]),
-    stdout: "pipe",
-    stderr: "pipe",
+  return environment;
+}
+
+export async function runGit(
+  root: string,
+  args: readonly string[],
+  options: RunGitOptions = {},
+): Promise<GitResult> {
+  const maximumBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const input = options.input;
+  const subprocessBufferBytes = Math.max(maximumBytes, MAX_STDERR_BYTES) + 1;
+
+  // Use Node's buffered child-process path to avoid transient empty reads from
+  // Bun's streaming subprocess capture while preserving byte-for-byte output.
+  return new Promise<GitResult>((resolve, reject) => {
+    const child = execFile(
+      "git",
+      ["--literal-pathspecs", ...args],
+      {
+        cwd: root,
+        env: gitEnvironment(options.env),
+        encoding: "buffer",
+        maxBuffer: subprocessBufferBytes,
+        timeout: timeoutMs,
+        windowsHide: true,
+      },
+      (error, rawStdout, rawStderr) => {
+        const stdout = Buffer.from(rawStdout);
+        const rawErrorCode = error?.code;
+        const bufferExceeded = rawErrorCode === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        const stdoutBufferExceeded =
+          bufferExceeded && /stdout/i.test(error?.message ?? "");
+        const stderrBufferExceeded =
+          bufferExceeded && /stderr/i.test(error?.message ?? "");
+        const stdoutTruncated = stdout.byteLength > maximumBytes || stdoutBufferExceeded;
+        const stderrTruncated =
+          rawStderr.byteLength > MAX_STDERR_BYTES || stderrBufferExceeded;
+        const stderr = `${decoder.decode(rawStderr.subarray(0, MAX_STDERR_BYTES))}${
+          stderrTruncated ? "\n[stderr truncated]" : ""
+        }`;
+
+        if (error?.killed && !bufferExceeded) {
+          reject(new Error(`git command timed out after ${timeoutMs}ms`));
+          return;
+        }
+        if (stderrBufferExceeded) {
+          reject(new Error("git command stderr exceeded the safety limit"));
+          return;
+        }
+        if (stdoutTruncated && !options.truncateOutput) {
+          reject(new Error("git command output exceeded the safety limit"));
+          return;
+        }
+        if (error && typeof rawErrorCode !== "number" && !stdoutBufferExceeded) {
+          reject(error);
+          return;
+        }
+
+        const exitCode = typeof rawErrorCode === "number" ? rawErrorCode : 0;
+        if (!(options.allowExitCodes ?? [0]).includes(exitCode)) {
+          reject(new GitCommandError(args, exitCode, stderr));
+          return;
+        }
+        resolve({
+          stdout: Uint8Array.from(stdout.subarray(0, maximumBytes)),
+          stdoutTruncated,
+          stderr,
+          exitCode,
+        });
+      },
+    );
+
+    // Git can close stdin before Node finishes writing when a command fails.
+    // Its exit code and stderr carry the useful error in that case.
+    child.stdin?.on("error", () => undefined);
+    if (input === undefined) child.stdin?.end();
+    else child.stdin?.end(typeof input === "string" ? input : Buffer.from(input));
   });
-
-  const stdoutPromise = readCappedStream(
-    process.stdout,
-    options.maxOutputBytes ?? 16 * 1024 * 1024,
-  );
-  const stderrPromise = readCappedStream(process.stderr, 1024 * 1024);
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    const exitCode = await Promise.race([
-      process.exited,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          process.kill();
-          reject(new Error(`git command timed out after ${options.timeoutMs ?? 15_000}ms`));
-        }, options.timeoutMs ?? 15_000);
-      }),
-    ]);
-    const [stdoutResult, stderrResult] = await Promise.all([stdoutPromise, stderrPromise]);
-    const stderr = `${decoder.decode(stderrResult.bytes)}${stderrResult.truncated ? "\n[stderr truncated]" : ""}`;
-    if (stdoutResult.truncated && !options.truncateOutput) {
-      throw new Error("git command output exceeded the safety limit");
-    }
-    if (!(options.allowExitCodes ?? [0]).includes(exitCode)) {
-      throw new GitCommandError(args, exitCode, stderr);
-    }
-    return {
-      stdout: stdoutResult.bytes,
-      stdoutTruncated: stdoutResult.truncated,
-      stderr,
-      exitCode,
-    };
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
 
 export function decodeGitOutput(output: Uint8Array): string {

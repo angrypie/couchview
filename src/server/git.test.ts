@@ -8,13 +8,21 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseGrepOutput, parsePorcelainV2, parseUnifiedDiff, runGit } from "./git.ts";
+import {
+  parseGrepOutput,
+  parsePorcelainV2,
+  parseUnifiedDiff,
+  runGit,
+  type GitResult,
+} from "./git.ts";
 import { GitRepository } from "./repository.ts";
 
 const temporaryDirectories: string[] = [];
@@ -249,6 +257,88 @@ describe("GitRepository", () => {
       });
       expect(staged.file).toMatchObject({ staged: true, unstaged: false, reviewed: true, commentCount: 1 });
       expect(staged.file?.contentRevision).toBe(file.contentRevision);
+
+      const unstaged = await repository.stage({
+        fileId: file.id,
+        operationRevision: staged.operationRevision,
+        contentRevision: file.contentRevision,
+        staged: false,
+      });
+      expect(unstaged.file).toMatchObject({
+        staged: false,
+        unstaged: true,
+        reviewed: true,
+        commentCount: 1,
+      });
+      expect(unstaged.file?.contentRevision).toBe(file.contentRevision);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("unstages a tracked file without changing its working contents", async () => {
+    const directory = await committedRepository({ "tracked.ts": "export const value = 1;\n" });
+    await writeFile(path.join(directory, "tracked.ts"), "export const value = 2;\n");
+    git(directory, ["add", "--", "tracked.ts"]);
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "tracked.ts");
+      expect(file).toMatchObject({ staged: true, unstaged: false });
+      if (!file) throw new Error("tracked fixture missing");
+
+      const result = await repository.stage({
+        fileId: file.id,
+        operationRevision: before.operationRevision,
+        contentRevision: file.contentRevision,
+        staged: false,
+      });
+
+      expect(result.file).toMatchObject({ staged: false, unstaged: true });
+      expect(git(directory, ["diff", "--cached", "--name-only"]).trim()).toBe("");
+      expect(await readFile(path.join(directory, "tracked.ts"), "utf8")).toBe(
+        "export const value = 2;\n",
+      );
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("keeps same-stat working changes visible after rewriting a temporary index", async () => {
+    const directory = await committedRepository({
+      "racy.bin": new Uint8Array([0, 1, 2, 3]),
+      "other.txt": "before\n",
+    });
+    const racyPath = path.join(directory, "racy.bin");
+    const originalMetadata = await stat(racyPath);
+    await writeFile(racyPath, new Uint8Array([0, 9, 8, 7]));
+    await utimes(racyPath, originalMetadata.atime, originalMetadata.mtime);
+    await utimes(
+      path.join(directory, ".git", "index"),
+      originalMetadata.atime,
+      originalMetadata.mtime,
+    );
+    await writeFile(path.join(directory, "other.txt"), "after\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      const other = before.files.find((file) => file.path === "other.txt");
+      expect(before.files.map((file) => file.path)).toContain("racy.bin");
+      if (!other) throw new Error("other fixture missing");
+
+      await repository.stage({
+        fileId: other.id,
+        operationRevision: before.operationRevision,
+        contentRevision: other.contentRevision,
+      });
+
+      const after = await repository.changes();
+      expect(after.files.map((file) => file.path)).toContain("racy.bin");
+      expect(git(directory, ["diff", "--name-only", "--", "racy.bin"])).toBe(
+        "racy.bin\n",
+      );
     } finally {
       repository.close();
     }
@@ -753,8 +843,10 @@ describe("GitRepository", () => {
     }
   });
 
-  test("streams Git output into a bounded prefix", async () => {
-    const directory = await committedRepository({ "large.txt": "x".repeat(64 * 1024) });
+  test("returns a bounded prefix when Git output exceeds the subprocess buffer", async () => {
+    const directory = await committedRepository({
+      "large.txt": "x".repeat(2 * 1024 * 1024),
+    });
     const objectId = git(directory, ["rev-parse", "HEAD:large.txt"]).trim();
     const result = await runGit(directory, ["cat-file", "blob", objectId], {
       maxOutputBytes: 128,
@@ -793,6 +885,86 @@ describe("GitRepository", () => {
       expect(after.repository.head).toBe(before.repository.head);
       expect(after.repository.branch).toBe("same-commit-branch");
       expect(after.operationRevision).not.toBe(before.operationRevision);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("retries when the first status read is missing repository identity", async () => {
+    const directory = await committedRepository({ "retry.ts": "export const value = 1;\n" });
+    await writeFile(path.join(directory, "retry.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    const internals = repository as unknown as {
+      readSnapshotInputs: () => Promise<[GitResult, GitResult]>;
+    };
+    const readSnapshotInputs = internals.readSnapshotInputs.bind(repository);
+    let reads = 0;
+    internals.readSnapshotInputs = async () => {
+      const results = await readSnapshotInputs();
+      reads += 1;
+      return reads === 1
+        ? [{ ...results[0], stdout: new Uint8Array() }, results[1]]
+        : results;
+    };
+
+    try {
+      const snapshot = await repository.changes();
+      expect(snapshot.repository.branch).toBe("main");
+      expect(snapshot.repository.head).not.toBeNull();
+      expect(snapshot.files.map((file) => file.path)).toContain("retry.ts");
+      expect(reads).toBe(2);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("keeps the last verified snapshot when status capture is incomplete", async () => {
+    const directory = await committedRepository({ "stable.ts": "export const value = 1;\n" });
+    await writeFile(path.join(directory, "stable.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    const internals = repository as unknown as {
+      readSnapshotInputs: () => Promise<[GitResult, GitResult]>;
+    };
+
+    try {
+      const verified = await repository.changes();
+      const readSnapshotInputs = internals.readSnapshotInputs.bind(repository);
+      internals.readSnapshotInputs = async () => {
+        const results = await readSnapshotInputs();
+        return [{ ...results[0], stdout: new Uint8Array() }, results[1]];
+      };
+
+      const refreshes = await Promise.all([
+        repository.changes(),
+        repository.changes(),
+        repository.changes(),
+      ]);
+      expect(refreshes).toEqual([verified, verified, verified]);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("does not let a background status refresh retrigger the repository watcher", async () => {
+    const directory = await committedRepository({ "watch.ts": "export const value = 1;\n" });
+    await writeFile(path.join(directory, "watch.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    const internals = repository as unknown as {
+      readSnapshotInputs: () => Promise<[GitResult, GitResult]>;
+    };
+    const readSnapshotInputs = internals.readSnapshotInputs.bind(repository);
+    let reads = 0;
+    internals.readSnapshotInputs = async () => {
+      reads += 1;
+      return readSnapshotInputs();
+    };
+    repository.startWatching(() => undefined);
+
+    try {
+      const snapshot = await repository.changes();
+      expect(snapshot.files.map((file) => file.path)).toContain("watch.ts");
+      await Bun.sleep(500);
+      expect(reads).toBe(1);
     } finally {
       repository.close();
     }

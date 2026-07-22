@@ -65,5 +65,9 @@ export default defineConfig({
       name: "mobile-430-chromium",
       use: { ...devices["Pixel 7"], viewport: { width: 430, height: 932 } },
     },
+    {
+      name: "mobile-landscape-chromium",
+      use: { ...devices["Pixel 7"], viewport: { width: 844, height: 390 } },
+    },
   ],
 });

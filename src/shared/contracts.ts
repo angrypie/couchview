@@ -214,6 +214,7 @@ export interface StageFileRequest {
   fileId: string;
   operationRevision: string;
   contentRevision: string;
+  staged?: boolean;
 }
 
 export interface StageFileResponse {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
 
 mock.module("virtual:pwa-register/react", () => ({
   useRegisterSW: () => ({
@@ -10,21 +11,118 @@ mock.module("virtual:pwa-register/react", () => ({
 }));
 
 GlobalRegistrator.register();
+
+const React = await import("react");
+const viewerCommentJumps: string[] = [];
+const viewerHunkJumps: number[] = [];
+interface MockDiffViewerProps {
+  comments: readonly ReviewComment[];
+  diff: FileDiff;
+  lineNumbersVisible: boolean;
+  lineWrapEnabled: boolean;
+  onCommentClick(comment: ReviewComment): void;
+  onIdentifierClick(identifier: string): void;
+  onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
+}
+mock.module("./DiffViewer.tsx", () => ({
+  DiffViewer: React.forwardRef(function MockDiffViewer(
+    {
+      comments,
+      diff,
+      lineNumbersVisible,
+      lineWrapEnabled,
+      onCommentClick,
+      onIdentifierClick,
+      onLineNumberClick,
+    }: MockDiffViewerProps,
+    ref: React.ForwardedRef<unknown>,
+  ) {
+    React.useImperativeHandle(ref, () => ({
+      scrollToLine() {},
+      scrollToHunk(hunkIndex: number) {
+        viewerHunkJumps.push(hunkIndex);
+      },
+      scrollToComment(comment: ReviewComment) {
+        viewerCommentJumps.push(comment.id);
+      },
+      scrollToTop() {},
+    }));
+    return (
+      <div
+        className="pierre-code-view"
+        data-line-wrap={String(lineWrapEnabled)}
+        data-testid="pierre-code-view"
+      >
+        {diff.hunks.flatMap((hunk) =>
+          hunk.lines.map((line) => (
+            <div data-kind={line.kind} key={`${hunk.id}:${line.id}`}>
+              {lineNumbersVisible && line.oldLine !== null && (
+                <button
+                  aria-label={`Select old line ${line.oldLine}`}
+                  onClick={() => onLineNumberClick(line.oldLine!, "old")}
+                  type="button"
+                >
+                  {line.oldLine}
+                </button>
+              )}
+              {lineNumbersVisible && line.newLine !== null && (
+                <button
+                  aria-label={`Select new line ${line.newLine}`}
+                  onClick={() => onLineNumberClick(line.newLine!, "new")}
+                  type="button"
+                >
+                  {line.newLine}
+                </button>
+              )}
+              {line.text.split(/([A-Za-z_$][\w$-]*)/g).map((token, index) =>
+                /^[A-Za-z_$][\w$-]*$/.test(token) ? (
+                  <button
+                    key={`${index}:${token}`}
+                    onClick={() => onIdentifierClick(token)}
+                    title={`Find “${token}” in project`}
+                    type="button"
+                  >
+                    {token}
+                  </button>
+                ) : (
+                  <span key={`${index}:${token}`}>{token}</span>
+                ),
+              )}
+            </div>
+          )),
+        )}
+        {comments
+          .filter((comment) => comment.fileId === diff.fileId && !comment.stale)
+          .map((comment) => (
+            <button
+              aria-label={`Open comment at ${comment.path}`}
+              key={comment.id}
+              onClick={() => onCommentClick(comment)}
+              type="button"
+            >
+              {comment.body}
+            </button>
+          ))}
+      </div>
+    );
+  }),
+}));
+
 Object.defineProperty(HTMLElement.prototype, "clientHeight", {
   configurable: true,
   get() {
-    return this.classList.contains("diff-scroller") ? 640 : 44;
+    return this.classList.contains("pierre-code-view") ? 640 : 44;
   },
 });
 Object.defineProperty(HTMLElement.prototype, "clientWidth", {
   configurable: true,
   get() {
-    return this.classList.contains("diff-scroller") ? 375 : 120;
+    return this.classList.contains("pierre-code-view") ? 375 : 120;
   },
 });
 HTMLElement.prototype.getBoundingClientRect = function () {
-  const width = this.classList.contains("diff-scroller") ? 375 : 120;
-  const height = this.classList.contains("diff-scroller") ? 640 : 44;
+  const width = this.classList.contains("pierre-code-view") ? 375 : 120;
+  const height = this.classList.contains("pierre-code-view") ? 640 : 44;
   return {
     x: 0,
     y: 0,
@@ -67,7 +165,7 @@ Object.defineProperty(window, "ResizeObserver", {
   configurable: true,
   value: ResizeObserverStub,
 });
-const { cleanup, fireEvent, render, screen, waitFor } = await import(
+const { cleanup, fireEvent, render, screen, waitFor, within } = await import(
   "@testing-library/react"
 );
 const { App } = await import("./App.tsx");
@@ -237,12 +335,16 @@ describe("Couch Review app", () => {
   let comments: Array<Record<string, unknown>> = [];
   let reviews: Array<Record<string, unknown>> = [];
   let requests: Array<{ path: string; method: string; body: unknown }> = [];
+  let servedFirstDiff: FileDiff = structuredClone(firstDiff);
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
     comments = [];
     reviews = [];
     requests = [];
+    servedFirstDiff = structuredClone(firstDiff);
+    viewerCommentJumps.length = 0;
+    viewerHunkJumps.length = 0;
     localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -290,7 +392,7 @@ describe("Couch Review app", () => {
       if (url.pathname === "/api/comments" && method === "GET") {
         return Response.json({ reviews, comments });
       }
-      if (url.pathname === "/api/files/first/diff") return Response.json({ diff: firstDiff });
+      if (url.pathname === "/api/files/first/diff") return Response.json({ diff: servedFirstDiff });
       if (url.pathname === "/api/files/second/diff") return Response.json({ diff: secondDiff });
       if (url.pathname === "/api/search") {
         const query = url.searchParams.get("q") ?? "";
@@ -330,6 +432,14 @@ describe("Couch Review app", () => {
         };
         reviews = [review];
         return Response.json({ review });
+      }
+      if (url.pathname === "/api/files/first/stage" && method === "POST") {
+        const staged = (body as { staged?: boolean }).staged ?? true;
+        files[0]!.staged = staged;
+        files[0]!.unstaged = !staged;
+        files[0]!.indexStatus = staged ? "M" : ".";
+        files[0]!.worktreeStatus = staged ? "." : "M";
+        return Response.json({ file: files[0], operationRevision: `operation-${staged ? 2 : 3}` });
       }
       if (url.pathname === "/api/files/first/comments" && method === "POST") {
         const now = new Date().toISOString();
@@ -378,6 +488,104 @@ describe("Couch Review app", () => {
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
   });
 
+  test("uses compact landscape actions without advancing and toggles staging", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: (query: string) => ({
+        matches: query.includes("orientation: landscape"),
+        media: query,
+        onchange: null,
+        addEventListener() {},
+        removeEventListener() {},
+        addListener() {},
+        removeListener() {},
+        dispatchEvent: () => false,
+      }),
+    });
+    const { container } = render(<App />);
+
+    await screen.findByText("src/first.ts");
+    expect(container.querySelector(".app-shell.compact-landscape")).toBeTruthy();
+    expect(container.querySelector(".file-bar")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Previous file" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Next file" })).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Review current file" }));
+    await waitFor(() =>
+      expect(
+        requests.find((request) => request.path === "/api/files/first/review")?.body,
+      ).toMatchObject({ reviewed: true }),
+    );
+    expect(screen.getByText("src/first.ts")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByRole("button", { name: "Unstage current file" });
+    expect(
+      requests.find((request) => request.path === "/api/files/first/stage")?.body,
+    ).toMatchObject({ staged: true });
+
+    fireEvent.click(screen.getByRole("button", { name: "Unstage current file" }));
+    await screen.findByRole("button", { name: "Stage current file" });
+    expect(
+      requests.filter((request) => request.path === "/api/files/first/stage").at(-1)?.body,
+    ).toMatchObject({ staged: false });
+  });
+
+  test("hides line numbers by default and remembers the 123 toggle", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    expect(screen.queryByRole("button", { name: "Select old line 1" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
+    expect(await screen.findByRole("button", { name: "Select old line 1" })).toBeTruthy();
+    expect(localStorage.getItem("couch-review:line-numbers")).toBe("true");
+
+    cleanup();
+    render(<App />);
+    await screen.findByText("src/first.ts");
+    expect(screen.getByRole("button", { name: "Hide line numbers" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Select new line 1" })).toBeTruthy();
+  });
+
+  test("wraps long lines on request and remembers the display preference", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    expect((await screen.findByTestId("pierre-code-view")).dataset.lineWrap).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Wrap long lines" }));
+    expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
+    expect(screen.getByTestId("pierre-code-view").dataset.lineWrap).toBe("true");
+    expect(localStorage.getItem("couch-review:line-wrap")).toBe("true");
+
+    cleanup();
+    render(<App />);
+    await screen.findByText("src/first.ts");
+    expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
+    expect((await screen.findByTestId("pierre-code-view")).dataset.lineWrap).toBe("true");
+  });
+
+  test("routes hunk navigation through the viewer handle", async () => {
+    const secondHunk = structuredClone(servedFirstDiff.hunks[0]!);
+    secondHunk.id = "hunk-2";
+    secondHunk.header = "@@ -11,2 +11,2 @@";
+    secondHunk.oldStart = 11;
+    secondHunk.newStart = 11;
+    secondHunk.lines = secondHunk.lines.map((line) => ({
+      ...line,
+      oldLine: line.oldLine === null ? null : line.oldLine + 10,
+      newLine: line.newLine === null ? null : line.newLine + 10,
+    }));
+    servedFirstDiff.hunks.push(secondHunk);
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    const nextHunk = screen.getByRole("button", { name: "Next hunk" }) as HTMLButtonElement;
+    await waitFor(() => expect(nextHunk.disabled).toBe(false));
+    fireEvent.click(nextHunk);
+    expect(viewerHunkJumps).toEqual([1]);
+    expect(nextHunk.disabled).toBe(true);
+  });
+
   test("searches a clicked identifier and opens a source preview", async () => {
     render(<App />);
 
@@ -403,6 +611,7 @@ describe("Couch Review app", () => {
     render(<App />);
 
     await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
     fireEvent.click(await screen.findByRole("button", { name: "Select old line 1" }));
     fireEvent.click(await screen.findByRole("button", { name: "Select new line 1" }));
     await screen.findByText(/Old lines 1 \/ new lines 1/);
@@ -419,12 +628,44 @@ describe("Couch Review app", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-    await screen.findByText("Use the safe loader.");
+    expect(await screen.findAllByText("Use the safe loader.")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /Copy 1 for Codex/ }));
     await screen.findByRole("dialog", { name: "Copy comments manually" });
     const copyField = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(copyField.value).toContain("src/first.ts:old L1 / new L1");
     expect(copyField.value).toContain("Use the safe loader.");
+  });
+
+  test("opens an inline comment chip and focuses its tray card", async () => {
+    comments = [fixtureComment("comment-1", "Inline correction")];
+    files[0]!.commentCount = 1;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(await screen.findByRole("button", { name: /Open comment at/ }));
+    await screen.findByRole("dialog", { name: "Review comments" });
+    await waitFor(() => {
+      expect((document.activeElement as HTMLElement | null)?.dataset.commentId).toBe(
+        "comment-1",
+      );
+    });
+  });
+
+  test("jumps from the comment tray through the viewer handle", async () => {
+    comments = [fixtureComment("comment-1", "Jump target")];
+    files[0]!.commentCount = 1;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
+    const tray = await screen.findByRole("dialog", { name: "Review comments" });
+    fireEvent.click(
+      within(tray).getByRole("button", {
+        name: "src/first.ts:old L1 / new L1",
+      }),
+    );
+    await waitFor(() => expect(viewerCommentJumps).toEqual(["comment-1"]));
+    expect(await screen.findByText(/Old lines 1 \/ new lines 1/)).toBeTruthy();
   });
 
   test("edits and deletes an existing comment", async () => {
@@ -434,7 +675,7 @@ describe("Couch Review app", () => {
 
     await screen.findByText("src/first.ts");
     fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-    await screen.findByText("Original correction");
+    expect(await screen.findAllByText("Original correction")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /Edit comment at/ }));
     const editor = screen.getByPlaceholderText(/Describe the issue/) as HTMLTextAreaElement;
     expect(editor.value).toBe("Original correction");
@@ -443,7 +684,7 @@ describe("Couch Review app", () => {
     await waitFor(() => expect(comments[0]?.body).toBe("Updated correction"));
 
     fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-    await screen.findByText("Updated correction");
+    expect(await screen.findAllByText("Updated correction")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /Delete comment at/ }));
     await waitFor(() => expect(comments).toHaveLength(0));
     expect(await screen.findByText(/Tap a line number/)).toBeTruthy();

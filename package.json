@@ -22,7 +22,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tanstack/react-virtual": "^3.14.7",
+    "@pierre/diffs": "1.2.12",
     "lucide-react": "^1.25.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

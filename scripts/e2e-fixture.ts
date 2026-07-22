@@ -41,7 +41,7 @@ const initialFiles: ChangeFile[] = [
 		unstaged: true,
 		conflicted: false,
 		binary: false,
-		additions: 5,
+		additions: 4,
 		deletions: 2,
 		contentRevision: "fixture-review-v1",
 		reviewed: false,
@@ -79,21 +79,21 @@ const diffs: Record<string, DiffResponse> = {
 			binary: false,
 			tooLarge: false,
 			header: ["diff --git a/src/review.ts b/src/review.ts"],
-			additions: 5,
+			additions: 4,
 			deletions: 2,
 			hunks: [
 				{
 					id: "fixture-review-hunk-1",
-					header: "@@ -1,5 +1,6 @@",
+					header: "@@ -1,3 +1,4 @@",
 					oldStart: 1,
-					oldLines: 5,
+					oldLines: 3,
 					newStart: 1,
-					newLines: 6,
+					newLines: 4,
 					lines: [
 						{
 							id: "r1",
 							kind: "context",
-							text: "export function review(path: string) {",
+							text: "export function review(path: string, options: ReviewOptionsWithAnIntentionallyLongName, repository: RepositorySnapshotWithMetadata) {",
 							oldLine: 1,
 							newLine: 1,
 							noNewline: false,
@@ -134,11 +134,11 @@ const diffs: Record<string, DiffResponse> = {
 				},
 				{
 					id: "fixture-review-hunk-2",
-					header: "@@ -12,3 +13,5 @@",
+					header: "@@ -12,3 +13,4 @@",
 					oldStart: 12,
 					oldLines: 3,
 					newStart: 13,
-					newLines: 5,
+					newLines: 4,
 					lines: [
 						{
 							id: "r6",
@@ -477,10 +477,11 @@ const server = Bun.serve({
 					{ error: { code: "not_found", message: "Fixture file not found" } },
 					404,
 				);
-			file.staged = true;
-			file.unstaged = false;
-			file.indexStatus = file.kind === "added" ? "A" : "M";
-			file.worktreeStatus = ".";
+			const staged = body.staged ?? true;
+			file.staged = staged;
+			file.unstaged = !staged;
+			file.indexStatus = staged ? (file.kind === "added" ? "A" : "M") : ".";
+			file.worktreeStatus = staged ? "." : file.kind === "added" ? "?" : "M";
 			operationRevision = `fixture-operation-${Date.now()}`;
 			return json({ file, operationRevision });
 		}

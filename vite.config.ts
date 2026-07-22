@@ -108,6 +108,9 @@ export default defineConfig(({ mode }) => {
     build: {
       assetsInlineLimit: 0,
     },
+    worker: {
+      format: "es",
+    },
     server: {
       host: webHost,
       port: webPort,

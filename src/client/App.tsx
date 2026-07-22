@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import type { SelectedLineRange } from "@pierre/diffs";
 import {
   AlertTriangle,
   Check,
@@ -33,6 +33,7 @@ import {
   Trash2,
   Undo2,
   WifiOff,
+  WrapText,
   X,
 } from "lucide-react";
 import {
@@ -55,6 +56,11 @@ import {
   formatCommentReference,
 } from "./commentExport.ts";
 import { usePwaUpdate } from "./usePwaUpdate.ts";
+import {
+  DiffViewer,
+  type DiffViewerHandle,
+} from "./DiffViewer.tsx";
+import { selectedRangeFromEndpoints } from "./diffAdapter.ts";
 
 type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
@@ -84,6 +90,8 @@ interface LineSelection {
   hunkId: string;
   anchorIndex: number;
   focusIndex: number;
+  anchorSide: SelectableSide;
+  focusSide: SelectableSide;
 }
 
 interface UndoReview {
@@ -142,6 +150,34 @@ function useStoredNumber(key: string, fallback: number): [number, (value: number
         localStorage.setItem(key, String(next));
       } catch {
         // Font resizing still works when persistent storage is unavailable.
+      }
+    },
+    [key],
+  );
+
+  return [value, update];
+}
+
+function useStoredBoolean(
+  key: string,
+  fallback: boolean,
+): [boolean, (value: boolean) => void] {
+  const [value, setValue] = useState(() => {
+    try {
+      const stored = localStorage.getItem(key);
+      return stored === null ? fallback : stored === "true";
+    } catch {
+      return fallback;
+    }
+  });
+
+  const update = useCallback(
+    (next: boolean) => {
+      setValue(next);
+      try {
+        localStorage.setItem(key, String(next));
+      } catch {
+        // The toggle still works when persistent storage is unavailable.
       }
     },
     [key],
@@ -271,29 +307,6 @@ function highlightMatch(text: string, query: string): ReactNode {
   );
 }
 
-function CodeWords({ text, onWord }: { text: string; onWord: (word: string) => void }) {
-  const tokens = useMemo(() => text.split(/([A-Za-z_$][\w$-]*)/g), [text]);
-  return (
-    <>
-      {tokens.map((token, index) =>
-        /^[A-Za-z_$][\w$-]*$/.test(token) ? (
-          <button
-            className="word-button"
-            key={`${index}:${token}`}
-            onClick={() => onWord(token)}
-            title={`Find “${token}” in project`}
-            type="button"
-          >
-            {token}
-          </button>
-        ) : (
-          <span key={`${index}:${token}`}>{token}</span>
-        ),
-      )}
-    </>
-  );
-}
-
 export function App() {
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
@@ -314,6 +327,14 @@ export function App() {
     "couch-review:font-size",
     DEFAULT_FONT_SIZE,
   );
+  const [lineNumbersVisible, setLineNumbersVisible] = useStoredBoolean(
+    "couch-review:line-numbers",
+    false,
+  );
+  const [lineWrapEnabled, setLineWrapEnabled] = useStoredBoolean(
+    "couch-review:line-wrap",
+    false,
+  );
   const [currentHunk, setCurrentHunk] = useState(0);
   const [selection, setSelection] = useState<LineSelection | null>(null);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
@@ -333,9 +354,12 @@ export function App() {
   const [toast, setToast] = useState<ToastState | null>(null);
   const [copyFallbackText, setCopyFallbackText] = useState("");
   const [pendingCommentJump, setPendingCommentJump] = useState<ReviewComment | null>(null);
+  const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
 
-  const desktop = useMediaQuery("(min-width: 760px)");
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  const desktop = useMediaQuery("(min-width: 760px) and (min-height: 600px)");
+  const landscape = useMediaQuery("(orientation: landscape) and (max-height: 599px)");
+  const compactLandscape = landscape && !desktop;
+  const diffViewerRef = useRef<DiffViewerHandle>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const toastCounter = useRef(0);
   const currentFileIdRef = useRef<string | null>(null);
@@ -348,62 +372,6 @@ export function App() {
   const pwa = usePwaUpdate();
 
   const rows = useMemo(() => rowsForDiff(diff), [diff]);
-  const hunkRowIndexes = useMemo(
-    () =>
-      rows.flatMap((row, index) => (row.type === "hunk" ? [index] : [])),
-    [rows],
-  );
-  const hunkOffsets = useMemo(() => {
-    let offset = 0;
-    const offsets: number[] = [];
-    for (const row of rows) {
-      if (row.type === "hunk") {
-        offsets.push(offset);
-        offset += 30;
-      } else {
-        offset += fontSize * 1.55;
-      }
-    }
-    return offsets;
-  }, [fontSize, rows]);
-
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollerRef.current,
-    initialRect: {
-      width: typeof window === "undefined" ? 375 : window.innerWidth,
-      height: typeof window === "undefined" ? 640 : window.innerHeight,
-    },
-    estimateSize: (index) => (rows[index]?.type === "hunk" ? 30 : fontSize * 1.55),
-    getItemKey: (index) => rows[index]?.key ?? index,
-    overscan: 28,
-  });
-  const fallbackVirtualItems = useMemo(() => {
-    if (rows.length > 200) return [];
-
-    let start = 0;
-    return rows.map((row, index) => {
-      const size = row.type === "hunk" ? 30 : fontSize * 1.55;
-      const item = {
-        index,
-        key: row.key,
-        start,
-        size,
-      };
-      start += size;
-      return item;
-    });
-  }, [fontSize, rows]);
-  const measuredVirtualItems = virtualizer.getVirtualItems();
-  // ResizeObserver may not have measured the scroller on its first frame (and is
-  // absent in some embedded webviews). Keep small diffs usable while it catches up.
-  const visibleVirtualItems =
-    measuredVirtualItems.length > 0 ? measuredVirtualItems : fallbackVirtualItems;
-  const virtualCanvasHeight =
-    measuredVirtualItems.length > 0
-      ? virtualizer.getTotalSize()
-      : (fallbackVirtualItems.at(-1)?.start ?? 0) +
-        (fallbackVirtualItems.at(-1)?.size ?? 0);
 
   const activeFile = useMemo(
     () => files.find((file) => file.id === currentFileId) ?? null,
@@ -498,6 +466,30 @@ export function App() {
       ),
     };
   }, [selectedRows, selection]);
+
+  const selectedViewerRange = useMemo<SelectedLineRange | null>(() => {
+    if (!selection) return null;
+    const anchorRow = rows[selection.anchorIndex];
+    const focusRow = rows[selection.focusIndex];
+    if (anchorRow?.type !== "line" || focusRow?.type !== "line") return null;
+
+    const anchorLine = sideLine(anchorRow.line, selection.anchorSide);
+    const focusLine = sideLine(focusRow.line, selection.focusSide);
+    if (anchorLine === null || focusLine === null) return null;
+
+    return selectedRangeFromEndpoints(
+      {
+        lineNumber: anchorLine,
+        rowIndex: selection.anchorIndex,
+        side: selection.anchorSide,
+      },
+      {
+        lineNumber: focusLine,
+        rowIndex: selection.focusIndex,
+        side: selection.focusSide,
+      },
+    );
+  }, [rows, selection]);
 
   const showToast = useCallback((message: string, undo?: UndoReview) => {
     toastCounter.current += 1;
@@ -682,8 +674,7 @@ export function App() {
 
   useEffect(() => {
     document.documentElement.style.setProperty("--code-size", `${fontSize}px`);
-    virtualizer.measure();
-  }, [fontSize, virtualizer]);
+  }, [fontSize]);
 
   useEffect(() => {
     if (!searchOpen || searchQuery.trim().length < 1 || !activeFile) {
@@ -727,7 +718,7 @@ export function App() {
     setCurrentFileId(fileId);
     setDrawerOpen(false);
     setCommentTrayOpen(false);
-    scrollerRef.current?.scrollTo({ top: 0, left: 0 });
+    diffViewerRef.current?.scrollToTop();
   }, []);
 
   const navigateFile = useCallback(
@@ -741,17 +732,16 @@ export function App() {
 
   const navigateHunk = useCallback(
     (direction: -1 | 1) => {
-      if (hunkRowIndexes.length === 0) return;
+      const hunkCount = diff?.hunks.length ?? 0;
+      if (hunkCount === 0) return;
       const nextHunk = Math.min(
-        hunkRowIndexes.length - 1,
+        hunkCount - 1,
         Math.max(0, currentHunk + direction),
       );
-      const rowIndex = hunkRowIndexes[nextHunk];
-      if (rowIndex === undefined) return;
       setCurrentHunk(nextHunk);
-      virtualizer.scrollToIndex(rowIndex, { align: "start", behavior: "smooth" });
+      diffViewerRef.current?.scrollToHunk(nextHunk);
     },
-    [currentHunk, hunkRowIndexes, virtualizer],
+    [currentHunk, diff],
   );
 
   const openWordSearch = useCallback((word: string) => {
@@ -772,41 +762,50 @@ export function App() {
             hunkId: row.hunk.id,
             anchorIndex: rowIndex,
             focusIndex: rowIndex,
+            anchorSide: side,
+            focusSide: side,
           };
         }
         const nextSide: DiffSide =
           current.side === "mixed" || current.side !== side ? "mixed" : side;
-        return { ...current, side: nextSide, focusIndex: rowIndex };
+        return {
+          ...current,
+          side: nextSide,
+          focusIndex: rowIndex,
+          focusSide: side,
+        };
       });
     },
     [],
   );
 
-  const isRowSelected = useCallback(
-    (rowIndex: number, row: LineRow) => {
-      if (!selection || selection.hunkId !== row.hunk.id) return false;
-      const low = Math.min(selection.anchorIndex, selection.focusIndex);
-      const high = Math.max(selection.anchorIndex, selection.focusIndex);
-      return (
-        rowIndex >= low &&
-        rowIndex <= high &&
-        (selection.side === "mixed"
-          ? row.line.oldLine !== null || row.line.newLine !== null
-          : sideLine(row.line, selection.side) !== null)
+  const handleVisibleLineChange = useCallback(
+    (lineNumber: number, side: SelectableSide) => {
+      const row = rows.find(
+        (candidate): candidate is LineRow =>
+          candidate.type === "line" &&
+          candidate.line.kind !== "metadata" &&
+          sideLine(candidate.line, side) === lineNumber,
       );
+      if (row) setCurrentHunk(row.hunkIndex);
     },
-    [selection],
+    [rows],
   );
 
-  const rowHasComment = useCallback(
-    (row: LineRow) => {
-      if (!activeFile) return false;
-      return comments.some((comment) => {
-        if (comment.stale || comment.fileId !== activeFile.id) return false;
-        return lineMatchesComment(row.line, comment);
-      });
+  const handleViewerLineNumberClick = useCallback(
+    (lineNumber: number, side: SelectableSide) => {
+      const rowIndex = rows.findIndex(
+        (candidate) =>
+          candidate.type === "line" &&
+          candidate.line.kind !== "metadata" &&
+          sideLine(candidate.line, side) === lineNumber,
+      );
+      const row = rows[rowIndex];
+      if (rowIndex >= 0 && row?.type === "line") {
+        handleGutterClick(rowIndex, row, side);
+      }
     },
-    [activeFile, comments],
+    [handleGutterClick, rows],
   );
 
   const setReviewed = useCallback(
@@ -878,8 +877,9 @@ export function App() {
     [bootstrap, files, refreshReviewState, showToast],
   );
 
-  const stageActiveFile = useCallback(async () => {
+  const toggleStageActiveFile = useCallback(async () => {
     if (!activeFile || !bootstrap || stageBusy) return;
+    const shouldStage = !activeFile.staged || activeFile.unstaged;
     setStageBusy(true);
     try {
       const response = await api.stage(
@@ -887,6 +887,7 @@ export function App() {
           fileId: activeFile.id,
           operationRevision,
           contentRevision: activeFile.contentRevision,
+          staged: shouldStage,
         },
         bootstrap.csrfToken,
       );
@@ -895,7 +896,7 @@ export function App() {
       if (currentFileIdRef.current === activeFile.id) {
         await loadDiff(activeFile.id);
       }
-      showToast("File staged");
+      showToast(shouldStage ? "File staged" : "File unstaged");
     } catch (error) {
       showToast(messageOf(error));
       if (error instanceof ApiError && error.status === 409) void refreshChanges();
@@ -1097,6 +1098,22 @@ export function App() {
     [currentFileId, files, selectFile, showToast],
   );
 
+  const openInlineComment = useCallback((comment: ReviewComment) => {
+    setFocusedCommentId(comment.id);
+    setCommentTrayOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (!commentTrayOpen || !focusedCommentId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const card = [...document.querySelectorAll<HTMLElement>("[data-comment-id]")]
+        .find((element) => element.dataset.commentId === focusedCommentId);
+      card?.scrollIntoView?.({ block: "nearest" });
+      card?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [commentTrayOpen, focusedCommentId]);
+
   useEffect(() => {
     if (!pendingCommentJump || !diff || pendingCommentJump.fileId !== diff.fileId) return;
     const matchingRowIndexes = rows.flatMap((row, index) =>
@@ -1107,19 +1124,34 @@ export function App() {
     const firstRowIndex = matchingRowIndexes[0];
     const lastRowIndex = matchingRowIndexes.at(-1);
     if (firstRowIndex !== undefined && lastRowIndex !== undefined) {
-      virtualizer.scrollToIndex(firstRowIndex, { align: "center", behavior: "smooth" });
-      const row = rows[firstRowIndex];
-      if (row?.type === "line") {
+      diffViewerRef.current?.scrollToComment(pendingCommentJump);
+      const firstRow = rows[firstRowIndex];
+      const lastRow = rows[lastRowIndex];
+      if (firstRow?.type === "line" && lastRow?.type === "line") {
+        const sideFor = (
+          row: LineRow,
+          boundary: "first" | "last",
+        ): SelectableSide => {
+          if (pendingCommentJump.side === "old") return "old";
+          if (pendingCommentJump.side === "new") return "new";
+          if (boundary === "last" && row.line.newLine !== null) return "new";
+          if (row.line.oldLine !== null) return "old";
+          return "new";
+        };
+        const anchorSide = sideFor(firstRow, "first");
+        const focusSide = sideFor(lastRow, "last");
         setSelection({
           side: pendingCommentJump.side,
-          hunkId: row.hunk.id,
+          hunkId: firstRow.hunk.id,
           anchorIndex: firstRowIndex,
           focusIndex: lastRowIndex,
+          anchorSide,
+          focusSide,
         });
       }
     }
     setPendingCommentJump(null);
-  }, [diff, pendingCommentJump, rows, virtualizer]);
+  }, [diff, pendingCommentJump, rows]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1218,7 +1250,7 @@ export function App() {
 
   if (phase === "loading") {
     return (
-      <main className="app-shell">
+      <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
         <div className="loading-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
           <LoaderCircle className="state-icon spinner" size={30} />
           <h1 className="state-title">Opening repository…</h1>
@@ -1230,7 +1262,7 @@ export function App() {
 
   if (phase === "error") {
     return (
-      <main className="app-shell">
+      <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
         <div className="error-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
           <AlertTriangle className="state-icon" size={32} />
           <h1 className="state-title">Couldn’t open Couch Review</h1>
@@ -1250,9 +1282,10 @@ export function App() {
     ? comments.filter((comment) => comment.fileId === activeFile.id)
     : [];
   const currentCommentCount = comments.filter((comment) => !comment.stale).length;
+  const activeFileFullyStaged = Boolean(activeFile?.staged && !activeFile.unstaged);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
       {drawerVisible && (
         <>
           {!desktop && (
@@ -1383,19 +1416,111 @@ export function App() {
         >
           <Menu size={20} />
         </button>
-        <div className="repo-heading">
-          <div className="repo-name">
+        {compactLandscape ? (
+          <div
+            aria-label="Current file"
+            className="compact-file-context"
+            role="region"
+          >
             <span className={`connection-dot ${connected ? "" : "offline"}`} />
-            <span>{bootstrap?.repository.name ?? "Couch Review"}</span>
+            <span
+              className="compact-repo-name"
+              title={`${bootstrap?.repository.name ?? "Couch Review"} · ${bootstrap?.repository.branch ?? "detached"}`}
+            >
+              {bootstrap?.repository.name ?? "Couch Review"}
+            </span>
+            <span className="compact-context-divider">/</span>
+            <span className="file-path" title={activeFile?.path}>
+              {activeFile?.path ?? "No changed file"}
+            </span>
+            {activeFile && (
+              <div className="compact-file-meta">
+                <span className="status-pill compact-change-kind">{changeLabel(activeFile)}</span>
+                <span className="additions">+{activeFile.additions ?? diff?.additions ?? 0}</span>
+                <span className="deletions">−{activeFile.deletions ?? diff?.deletions ?? 0}</span>
+                {activeFile.reviewed && <span className="status-pill reviewed">reviewed</span>}
+                {stageLabel(activeFile) && (
+                  <span className={`status-pill ${stageLabel(activeFile)}`}>
+                    {stageLabel(activeFile)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <div className="repo-meta">
-            <GitBranch size={10} />
-            <span>{bootstrap?.repository.branch ?? "detached"}</span>
-            <span>·</span>
-            <span>{reviewedCount}/{files.length} reviewed</span>
+        ) : (
+          <div className="repo-heading">
+            <div className="repo-name">
+              <span className={`connection-dot ${connected ? "" : "offline"}`} />
+              <span>{bootstrap?.repository.name ?? "Couch Review"}</span>
+            </div>
+            <div className="repo-meta">
+              <GitBranch size={10} />
+              <span>{bootstrap?.repository.branch ?? "detached"}</span>
+              <span>·</span>
+              <span>{reviewedCount}/{files.length} reviewed</span>
+            </div>
           </div>
-        </div>
-        <div className="font-controls" aria-label="Diff font size">
+        )}
+        {compactLandscape && (
+          <div className="landscape-tools">
+            <div className="compact-hunk-nav" aria-label="Hunk navigation">
+              <button
+                aria-label="Previous hunk"
+                className="icon-button"
+                disabled={currentHunk <= 0}
+                onClick={() => navigateHunk(-1)}
+                title="Previous hunk (K)"
+                type="button"
+              >
+                <ChevronUp size={16} />
+              </button>
+              <button
+                aria-label="Next hunk"
+                className="icon-button"
+                disabled={currentHunk >= (diff?.hunks.length ?? 0) - 1}
+                onClick={() => navigateHunk(1)}
+                title="Next hunk (J)"
+                type="button"
+              >
+                <ChevronDown size={16} />
+              </button>
+            </div>
+            <button
+              aria-label={`Open comments (${comments.length})`}
+              className="icon-button compact-comments-button"
+              onClick={() => {
+                setFocusedCommentId(null);
+                setCommentTrayOpen(true);
+              }}
+              title="Review comments"
+              type="button"
+            >
+              <MessageSquareText size={17} />
+              {comments.length > 0 && <span className="badge">{comments.length}</span>}
+            </button>
+          </div>
+        )}
+        <div className="font-controls" aria-label="Diff display controls">
+          <button
+            aria-label={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
+            aria-pressed={lineNumbersVisible}
+            className={`number-toggle ${lineNumbersVisible ? "active" : ""}`}
+            onClick={() => setLineNumbersVisible(!lineNumbersVisible)}
+            title={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
+            type="button"
+          >
+            123
+          </button>
+          <button
+            aria-label={lineWrapEnabled ? "Keep long lines on one line" : "Wrap long lines"}
+            aria-pressed={lineWrapEnabled}
+            className={`wrap-toggle ${lineWrapEnabled ? "active" : ""}`}
+            onClick={() => setLineWrapEnabled(!lineWrapEnabled)}
+            title={lineWrapEnabled ? "Keep long lines on one line" : "Wrap long lines"}
+            type="button"
+          >
+            <WrapText aria-hidden="true" size={16} />
+          </button>
           <button
             aria-label="Decrease diff font size"
             className="icon-button compact-button"
@@ -1418,13 +1543,13 @@ export function App() {
         </div>
       </header>
 
-      {!connected && (
+      {!connected && !compactLandscape && (
         <div className="disconnected-banner" style={{ gridColumn: desktop ? 2 : undefined }}>
           <WifiOff size={12} /> Disconnected — reconnecting to the local server
         </div>
       )}
 
-      <section className="file-bar" aria-label="Current file">
+      {!compactLandscape && <section className="file-bar" aria-label="Current file">
         <button
           aria-label="Previous file"
           className="icon-button"
@@ -1463,7 +1588,7 @@ export function App() {
         >
           <ChevronRight size={20} />
         </button>
-      </section>
+      </section>}
 
       <section className="workspace" aria-label="Unified diff">
         {files.length === 0 ? (
@@ -1520,100 +1645,21 @@ export function App() {
               <pre className="metadata-preview">{diff.header.join("\n")}</pre>
             ) : null}
           </div>
-        ) : (
-          <div
-            className="diff-scroller"
-            onScroll={() => {
-              const top = scrollerRef.current?.scrollTop ?? 0;
-              const target = top + 35;
-              let low = 0;
-              let high = Math.max(0, hunkOffsets.length - 1);
-              while (low < high) {
-                const middle = Math.ceil((low + high) / 2);
-                if ((hunkOffsets[middle] ?? 0) <= target) low = middle;
-                else high = middle - 1;
-              }
-              setCurrentHunk(low);
-            }}
-            ref={scrollerRef}
-          >
-            {diff?.tooLarge && (
-              <div className="truncated-banner" role="status">
-                <AlertTriangle size={13} /> Showing the first 2 MiB or 20,000 rows.
-              </div>
-            )}
-            <div className="diff-canvas" style={{ height: virtualCanvasHeight }}>
-              {visibleVirtualItems.map((item) => {
-                const row = rows[item.index];
-                if (!row) return null;
-                if (row.type === "hunk") {
-                  return (
-                    <div
-                      className="hunk-row"
-                      data-index={item.index}
-                      key={row.key}
-                      style={{ transform: `translateY(${item.start}px)` }}
-                    >
-                      <span>{row.hunk.header}</span>
-                      <span className="hunk-count">
-                        {row.hunkIndex + 1}/{diff?.hunks.length ?? 0}
-                      </span>
-                    </div>
-                  );
-                }
-
-                const selected = isRowSelected(item.index, row);
-                const hasComment = rowHasComment(row);
-                return (
-                  <div
-                    className={`diff-row ${row.line.kind} ${selected ? "selected" : ""} ${hasComment ? "commented" : ""}`}
-                    data-index={item.index}
-                    key={row.key}
-                    style={{
-                      height: item.size,
-                      transform: `translateY(${item.start}px)`,
-                    }}
-                  >
-                    {row.line.oldLine === null ? (
-                      <span className="line-number" />
-                    ) : (
-                      <button
-                        aria-label={`Select old line ${row.line.oldLine}`}
-                        className="line-number"
-                        onClick={() => handleGutterClick(item.index, row, "old")}
-                        type="button"
-                      >
-                        {row.line.oldLine}
-                      </button>
-                    )}
-                    {row.line.newLine === null ? (
-                      <span className="line-number" />
-                    ) : (
-                      <button
-                        aria-label={`Select new line ${row.line.newLine}`}
-                        className="line-number"
-                        onClick={() => handleGutterClick(item.index, row, "new")}
-                        type="button"
-                      >
-                        {row.line.newLine}
-                      </button>
-                    )}
-                    <span className="line-marker" aria-hidden="true">
-                      {row.line.kind === "addition"
-                        ? "+"
-                        : row.line.kind === "deletion"
-                          ? "−"
-                          : " "}
-                    </span>
-                    <code className="code-line">
-                      <CodeWords onWord={openWordSearch} text={row.line.text} />
-                    </code>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        ) : diff ? (
+          <DiffViewer
+            comments={comments}
+            diff={diff}
+            fontSize={fontSize}
+            lineNumbersVisible={lineNumbersVisible}
+            lineWrapEnabled={lineWrapEnabled}
+            onCommentClick={openInlineComment}
+            onIdentifierClick={openWordSearch}
+            onLineNumberClick={handleViewerLineNumberClick}
+            onVisibleLineChange={handleVisibleLineChange}
+            ref={diffViewerRef}
+            selectedRange={selectedViewerRange}
+          />
+        ) : null}
 
         {selectedLineRange && !commentComposerOpen && (
           <div className="selection-banner" role="status">
@@ -1663,7 +1709,7 @@ export function App() {
             <ChevronRight size={18} />
           </button>
         </div>
-        <div className="nav-pair" aria-label="Hunk navigation">
+        <div className="nav-pair hunk-nav" aria-label="Hunk navigation">
           <button
             aria-label="Previous hunk"
             className="icon-button"
@@ -1677,7 +1723,7 @@ export function App() {
           <button
             aria-label="Next hunk"
             className="icon-button"
-            disabled={currentHunk >= hunkRowIndexes.length - 1}
+            disabled={currentHunk >= (diff?.hunks.length ?? 0) - 1}
             onClick={() => navigateHunk(1)}
             title="Next hunk (J)"
             type="button"
@@ -1686,10 +1732,11 @@ export function App() {
           </button>
         </div>
         <button
-          className={`action-button ${activeFile?.reviewed ? "success" : ""}`}
+          aria-label={activeFile?.reviewed ? "Unreview current file" : compactLandscape ? "Review current file" : "Review + next"}
+          className={`action-button review-action ${activeFile?.reviewed ? "success" : ""}`}
           disabled={!activeFile || reviewBusy}
-          onClick={() => activeFile && void setReviewed(activeFile, !activeFile.reviewed, true)}
-          title="Mark reviewed and advance"
+          onClick={() => activeFile && void setReviewed(activeFile, !activeFile.reviewed, !compactLandscape)}
+          title={compactLandscape ? "Toggle reviewed" : "Mark reviewed and advance"}
           type="button"
         >
           {reviewBusy ? (
@@ -1700,20 +1747,15 @@ export function App() {
             <Check size={16} />
           )}
           <span className="action-copy">
-            {activeFile?.reviewed ? "Unreview" : "Review + next"}
+            {activeFile?.reviewed ? "Unreview" : compactLandscape ? "Review" : "Review + next"}
           </span>
         </button>
         <button
-          aria-label="Stage current file"
-          className="icon-button"
-          disabled={
-            !activeFile ||
-            stageBusy ||
-            !activeFile.unstaged ||
-            (activeFile.staged && !activeFile.unstaged)
-          }
-          onClick={() => void stageActiveFile()}
-          title={activeFile?.staged && !activeFile.unstaged ? "File staged" : "Stage file"}
+          aria-label={activeFileFullyStaged ? "Unstage current file" : "Stage current file"}
+          className="icon-button stage-action"
+          disabled={!activeFile || stageBusy}
+          onClick={() => void toggleStageActiveFile()}
+          title={activeFileFullyStaged ? "Unstage file" : "Stage file"}
           type="button"
         >
           {stageBusy ? (
@@ -1721,11 +1763,15 @@ export function App() {
           ) : (
             <GitPullRequestArrow color={activeFile?.staged ? "var(--accent)" : undefined} size={19} />
           )}
+          <span className="stage-copy">{activeFileFullyStaged ? "Unstage" : "Stage"}</span>
         </button>
         <button
           aria-label={`Open comments (${comments.length})`}
-          className="icon-button"
-          onClick={() => setCommentTrayOpen(true)}
+          className="icon-button comments-action"
+          onClick={() => {
+            setFocusedCommentId(null);
+            setCommentTrayOpen(true);
+          }}
           title="Review comments"
           type="button"
         >
@@ -1972,7 +2018,12 @@ export function App() {
                 </div>
               ) : (
                 comments.map((comment) => (
-                  <article className="comment-card" key={comment.id}>
+                  <article
+                    className={`comment-card ${focusedCommentId === comment.id ? "focused" : ""}`}
+                    data-comment-id={comment.id}
+                    key={comment.id}
+                    tabIndex={-1}
+                  >
                     <button
                       className="text-button"
                       disabled={comment.stale}
