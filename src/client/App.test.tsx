@@ -402,6 +402,11 @@ describe("Couchview app", () => {
   let releaseStageResponse: (() => void) | null = null;
   let emitSseDuringStage = false;
   let removeActiveFileOnStage = false;
+  let commitMessageFailure = false;
+  let delayCommitMessageResponse = false;
+  let commitMessageRequestAborted = false;
+  let releaseCommitMessageResponse: (() => void) | null = null;
+  let commitMessageAvailable = true;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
@@ -420,6 +425,11 @@ describe("Couchview app", () => {
     releaseStageResponse = null;
     emitSseDuringStage = false;
     removeActiveFileOnStage = false;
+    commitMessageFailure = false;
+    delayCommitMessageResponse = false;
+    commitMessageRequestAborted = false;
+    releaseCommitMessageResponse = null;
+    commitMessageAvailable = true;
     EventSourceStub.instances.length = 0;
     viewerCommentJumps.length = 0;
     viewerHunkJumps.length = 0;
@@ -478,6 +488,36 @@ describe("Couchview app", () => {
           repositories: catalog,
           defaultRepositoryId: repository.id,
           catalogRevision: 1,
+          restart: {
+            available: true,
+            reason: null,
+          },
+          commitMessage: {
+            available: commitMessageAvailable,
+            reason: commitMessageAvailable
+              ? null
+              : "Codex CLI is unavailable in this test.",
+          },
+        });
+      }
+      if (url.pathname === "/api/restart" && method === "POST") {
+        return Response.json(
+          {
+            status: "restarting",
+            previousInstanceId: "fixture-instance",
+          },
+          { status: 202 },
+        );
+      }
+      if (url.pathname === "/api/instance" && method === "GET") {
+        return Response.json({
+          service: "couchview",
+          protocolVersion: 1,
+          version: "0.1.0",
+          instanceId: "fixture-instance",
+          bindHost: "127.0.0.1",
+          port: 4173,
+          accessOrigins: ["http://127.0.0.1:4173"],
         });
       }
       if (url.pathname === "/api/repositories") {
@@ -709,6 +749,36 @@ describe("Couchview app", () => {
           },
           { status: 201 },
         );
+      }
+      if (nestedPath === "commit-message" && method === "POST") {
+        if (commitMessageFailure) {
+          return Response.json(
+            {
+              error: {
+                code: "codex_failed",
+                message: "Codex could not generate a commit message",
+              },
+            },
+            { status: 502 },
+          );
+        }
+        if (delayCommitMessageResponse) {
+          await new Promise<void>((resolve, reject) => {
+            releaseCommitMessageResponse = resolve;
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                commitMessageRequestAborted = true;
+                reject(new DOMException("The request was aborted.", "AbortError"));
+              },
+              { once: true },
+            );
+          });
+        }
+        return Response.json({
+          message: "feat(review): generate commit messages with Codex",
+          operationRevision: currentOperationRevision,
+        });
       }
       if (nestedPath === "files/first/comments" && method === "POST") {
         const now = new Date().toISOString();
@@ -1120,6 +1190,28 @@ describe("Couchview app", () => {
     });
   });
 
+  test("starts a rebuild and waits for the replacement server", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    fireEvent.click(
+      within(picker).getByRole("button", {
+        name: "Rebuild & restart Couchview",
+      }),
+    );
+
+    expect(await screen.findByText("Restarting Couchview…")).toBeTruthy();
+    expect(
+      requests.some(
+        (request) =>
+          request.path === "/api/restart" &&
+          request.method === "POST",
+      ),
+    ).toBe(true);
+  });
+
   test("shows unavailable repositories and confirms Forget", async () => {
     catalog[1] = { ...catalog[1]!, available: false };
     render(<App />);
@@ -1284,8 +1376,29 @@ describe("Couchview app", () => {
     const composer = await screen.findByRole("dialog", {
       name: "Commit staged changes",
     });
-    fireEvent.change(within(composer).getByPlaceholderText("Commit message…"), {
-      target: { value: "Commit from the phone" },
+    expect(
+      requests.some(
+        (request) =>
+          request.path === "/api/repositories/repo/commit-message",
+      ),
+    ).toBe(false);
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Generate with Codex" }),
+    );
+    const generated = await within(composer).findByDisplayValue(
+      "feat(review): generate commit messages with Codex",
+    );
+    expect(
+      requests.find(
+        (request) =>
+          request.path === "/api/repositories/repo/commit-message",
+      ),
+    ).toMatchObject({
+      method: "POST",
+      body: { operationRevision: "operation-2" },
+    });
+    fireEvent.change(generated, {
+      target: { value: "fix(review): edit the generated commit message" },
     });
     fireEvent.click(
       within(composer).getByRole("button", { name: "Commit staged changes" }),
@@ -1297,11 +1410,101 @@ describe("Couchview app", () => {
     ).toMatchObject({
       method: "POST",
       body: {
-        message: "Commit from the phone",
+        message: "fix(review): edit the generated commit message",
         operationRevision: "operation-2",
       },
     });
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
+  });
+
+  test("preserves a commit draft when Codex generation fails", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByRole("button", { name: "Unstage current file" });
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Commit 1 staged file" }),
+    );
+    const composer = await screen.findByRole("dialog", {
+      name: "Commit staged changes",
+    });
+    const input = within(composer).getByPlaceholderText("Commit message…");
+    fireEvent.change(input, {
+      target: { value: "fix(review): preserve this draft" },
+    });
+    commitMessageFailure = true;
+    fireEvent.click(
+      within(composer).getByRole("button", {
+        name: "Regenerate with Codex",
+      }),
+    );
+
+    await screen.findByText("Codex could not generate a commit message");
+    expect((input as HTMLTextAreaElement).value).toBe(
+      "fix(review): preserve this draft",
+    );
+  });
+
+  test("aborts Codex generation when the commit editor closes", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByRole("button", { name: "Unstage current file" });
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Commit 1 staged file" }),
+    );
+    const composer = await screen.findByRole("dialog", {
+      name: "Commit staged changes",
+    });
+    delayCommitMessageResponse = true;
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Generate with Codex" }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.path === "/api/repositories/repo/commit-message",
+        ),
+      ).toBe(true),
+    );
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Close commit editor" }),
+    );
+
+    await waitFor(() => expect(commitMessageRequestAborted).toBe(true));
+    expect(screen.queryByRole("dialog", { name: "Commit staged changes" })).toBeNull();
+    releaseCommitMessageResponse?.();
+  });
+
+  test("explains when Codex commit generation is unavailable", async () => {
+    commitMessageAvailable = false;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByRole("button", { name: "Unstage current file" });
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Commit 1 staged file" }),
+    );
+    const composer = await screen.findByRole("dialog", {
+      name: "Commit staged changes",
+    });
+    expect(
+      (
+        within(composer).getByRole("button", {
+          name: "Generate with Codex",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(
+      within(composer).getByText("Codex CLI is unavailable in this test."),
+    ).toBeTruthy();
   });
 
   test("groups package scripts by subproject and streams a completed run", async () => {

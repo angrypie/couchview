@@ -6,6 +6,7 @@ const repositoryFilesApiPath = (repositoryId: string) =>
 export const API_ROUTES = {
   bootstrap: "/api/bootstrap",
   instance: "/api/instance",
+  restart: "/api/restart",
   repositories: "/api/repositories",
   controlRepositories: "/api/control/repositories",
   repository: repositoryApiPath,
@@ -26,6 +27,8 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/source`,
   commit: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/commit`,
+  commitMessage: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/commit-message`,
   comments: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/comments`,
   comment: (repositoryId: string, commentId: string) =>
@@ -104,6 +107,8 @@ export interface BootstrapResponse {
   repositories: RepositoryCatalogEntry[];
   defaultRepositoryId: string | null;
   catalogRevision: number;
+  restart: RestartCapability;
+  commitMessage: CommitMessageCapability;
 }
 
 export interface InstanceResponse {
@@ -114,6 +119,21 @@ export interface InstanceResponse {
   bindHost: string;
   port: number;
   accessOrigins: string[];
+}
+
+export interface RestartCapability {
+  available: boolean;
+  reason: string | null;
+}
+
+export interface RestartResponse {
+  status: "restarting";
+  previousInstanceId: string;
+}
+
+export interface CommitMessageCapability {
+  available: boolean;
+  reason: string | null;
 }
 
 export interface RegisterRepositoryRequest {
@@ -325,6 +345,15 @@ export interface CommitRequest {
 
 export interface CommitResponse {
   commit: string;
+  operationRevision: string;
+}
+
+export interface GenerateCommitMessageRequest {
+  operationRevision: string;
+}
+
+export interface GenerateCommitMessageResponse {
+  message: string;
   operationRevision: string;
 }
 

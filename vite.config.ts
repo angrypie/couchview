@@ -79,10 +79,15 @@ export default defineConfig(({ mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: false,
           skipWaiting: false,
-          // Keep only the disconnected shell and Vite's hashed assets offline.
-          // Repository/API data and unhashed public icons must never enter the
-          // precache.
-          globPatterns: ["index.html", "assets/**/*.{js,css,svg,png,woff,woff2}"],
+          // Keep the disconnected shell and the most common Couchview
+          // languages warm without downloading Pierre's complete grammar and
+          // theme catalog on every service-worker update. Other hashed assets
+          // load on demand and retain the server's immutable browser cache.
+          globPatterns: [
+            "index.html",
+            "assets/index-*.{js,css}",
+            "assets/{javascript,typescript,jsx,tsx,json,css,html,markdown}-*.js",
+          ],
           navigateFallback: "index.html",
           navigateFallbackDenylist: [apiPath],
           runtimeCaching: [
@@ -98,7 +103,7 @@ export default defineConfig(({ mode }) => {
         integration: {
           // vite-plugin-pwa always adds the generated web manifest as an
           // additional Workbox entry. Remove that unhashed entry so the
-          // precache contract stays limited to index.html + hashed assets.
+          // precache contract stays limited to the selected shell assets.
           beforeBuildServiceWorker(options) {
             options.workbox.additionalManifestEntries =
               options.workbox.additionalManifestEntries?.filter((entry) =>

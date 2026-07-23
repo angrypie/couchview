@@ -34,6 +34,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Sparkles,
   Square,
   SquareTerminal,
   Trash2,
@@ -87,6 +88,7 @@ type StageFilter = "all" | "unstaged" | "staged";
 type SearchScope = "current" | "other";
 type DrawerView = "files" | "commands";
 type BulkStageScope = "all" | "reviewed";
+type RestartPhase = "building" | "restarting" | "loading" | null;
 
 interface HunkRow {
   type: "hunk";
@@ -195,6 +197,24 @@ function rememberDiff(
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function waitForDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The request was aborted.", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException("The request was aborted.", "AbortError"));
+    };
+    const timeout = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function failureOf(error: unknown, context: string): FailureState {
@@ -604,6 +624,7 @@ export function App() {
   const [commitComposerOpen, setCommitComposerOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitBusy, setCommitBusy] = useState(false);
+  const [commitMessageBusy, setCommitMessageBusy] = useState(false);
   const [packageScripts, setPackageScripts] =
     useState<PackageScriptsResponse>(emptyPackageScripts);
   const [packageRuns, setPackageRuns] = useState<PackageRunSummary[]>([]);
@@ -628,6 +649,7 @@ export function App() {
   const [copyFallbackText, setCopyFallbackText] = useState("");
   const [pendingCommentJump, setPendingCommentJump] = useState<ReviewComment | null>(null);
   const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
+  const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
 
   const desktop = useMediaQuery("(min-width: 760px) and (min-height: 600px)");
   const landscape = useMediaQuery("(orientation: landscape) and (max-height: 599px)");
@@ -656,6 +678,8 @@ export function App() {
   const sourceRequestRef = useRef<{ generation: number; controller: AbortController } | null>(
     null,
   );
+  const commitMessageRequestRef = useRef<AbortController | null>(null);
+  const restartRequestRef = useRef<AbortController | null>(null);
   const pwa = usePwaUpdate();
 
   filesRef.current = files;
@@ -694,6 +718,10 @@ export function App() {
 
   const reviewedCount = files.filter((file) => file.reviewed).length;
   const stagedCount = files.filter((file) => file.staged).length;
+  const commitMessageCapability = bootstrap?.commitMessage ?? {
+    available: false,
+    reason: "Commit message generation is unavailable from this Couchview server.",
+  };
   const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
   const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
   const commandsAvailable =
@@ -1060,6 +1088,8 @@ export function App() {
       packageRunEventSourceRef.current?.close();
       packageRunEventSourceRef.current = null;
       searchRequestRef.current?.abort();
+      commitMessageRequestRef.current?.abort();
+      commitMessageRequestRef.current = null;
       const controller = new AbortController();
       repositoryRequestRef.current = controller;
       diffRequestRef.current?.controller.abort();
@@ -1092,6 +1122,7 @@ export function App() {
       setCopyFallbackText("");
       setCommitComposerOpen(false);
       setCommitMessage("");
+      setCommitMessageBusy(false);
       setPackageScripts(emptyPackageScripts);
       setPackageRuns([]);
       setPackageCommandsLoading(false);
@@ -1201,6 +1232,8 @@ export function App() {
     packageRunEventSourceRef.current = null;
     pendingStageMutationRef.current = null;
     searchRequestRef.current?.abort();
+    commitMessageRequestRef.current?.abort();
+    commitMessageRequestRef.current = null;
     diffRequestRef.current?.controller.abort();
     sourceRequestRef.current?.controller.abort();
     repositoryIdRef.current = null;
@@ -1231,6 +1264,7 @@ export function App() {
     setPendingCommentJump(null);
     setCommitComposerOpen(false);
     setCommitMessage("");
+    setCommitMessageBusy(false);
     setPackageScripts(emptyPackageScripts);
     setPackageRuns([]);
     setPackageCommandsLoading(false);
@@ -1296,6 +1330,8 @@ export function App() {
       eventSourceRef.current?.close();
       packageRunEventSourceRef.current?.close();
       searchRequestRef.current?.abort();
+      commitMessageRequestRef.current?.abort();
+      restartRequestRef.current?.abort();
     };
   }, [loadApp]);
 
@@ -1631,6 +1667,60 @@ export function App() {
     setRepositoryPickerOpen(true);
     void refreshRepositories().catch((error) => showToast(messageOf(error)));
   }, [refreshRepositories, showToast]);
+
+  const rebuildAndRestart = useCallback(async () => {
+    if (!bootstrap?.restart.available || restartPhase) return;
+    const controller = new AbortController();
+    restartRequestRef.current?.abort();
+    restartRequestRef.current = controller;
+    setRepositoryPickerOpen(false);
+    setRestartPhase("building");
+    try {
+      const response = await api.restart(bootstrap.csrfToken, controller.signal);
+      if (controller.signal.aborted) return;
+      setRestartPhase("restarting");
+      const deadline = Date.now() + 60_000;
+      let nextInstance = null;
+      while (!controller.signal.aborted && Date.now() < deadline) {
+        await waitForDelay(250, controller.signal);
+        try {
+          const candidate = await api.instance(controller.signal);
+          if (candidate.instanceId !== response.previousInstanceId) {
+            nextInstance = candidate;
+            break;
+          }
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          // The listener is expected to disappear briefly during the handoff.
+        }
+      }
+      if (!nextInstance) {
+        throw new Error(
+          "Couchview did not come back within 60 seconds. Start it from the terminal.",
+        );
+      }
+      setRestartPhase("loading");
+      try {
+        const registration = await navigator.serviceWorker?.getRegistration();
+        await registration?.unregister();
+        if ("caches" in window) {
+          const cacheNames = await window.caches.keys();
+          await Promise.all(cacheNames.map((name) => window.caches.delete(name)));
+        }
+      } catch {
+        // A network reload still refreshes non-PWA and restricted browser sessions.
+      }
+      window.location.reload();
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      setRestartPhase(null);
+      showToast(messageOf(error));
+    } finally {
+      if (restartRequestRef.current === controller) {
+        restartRequestRef.current = null;
+      }
+    }
+  }, [bootstrap, restartPhase, showToast]);
 
   const selectRepository = useCallback(
     (entry: RepositoryCatalogEntry) => {
@@ -2205,6 +2295,73 @@ export function App() {
     ],
   );
 
+  const closeCommitComposer = useCallback(() => {
+    commitMessageRequestRef.current?.abort();
+    commitMessageRequestRef.current = null;
+    setCommitMessageBusy(false);
+    setCommitComposerOpen(false);
+  }, []);
+
+  const generateCommitMessage = useCallback(async () => {
+    if (
+      !bootstrap ||
+      !repositoryId ||
+      !commitMessageCapability.available ||
+      commitMessageBusy ||
+      stagedCount === 0
+    ) {
+      return;
+    }
+    const activeRepositoryId = repositoryId;
+    const requestedRevision = operationRevision;
+    const controller = new AbortController();
+    commitMessageRequestRef.current?.abort();
+    commitMessageRequestRef.current = controller;
+    setCommitMessageBusy(true);
+    try {
+      const response = await api.generateCommitMessage(
+        activeRepositoryId,
+        { operationRevision: requestedRevision },
+        bootstrap.csrfToken,
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        commitMessageRequestRef.current !== controller ||
+        repositoryIdRef.current !== activeRepositoryId ||
+        operationRevisionRef.current !== response.operationRevision
+      ) {
+        return;
+      }
+      setCommitMessage(response.message);
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
+      reportFailure(error, "Generate commit message");
+      if (error instanceof ApiError && error.status === 409) {
+        void refreshChanges();
+      }
+    } finally {
+      if (commitMessageRequestRef.current === controller) {
+        commitMessageRequestRef.current = null;
+        setCommitMessageBusy(false);
+      }
+    }
+  }, [
+    bootstrap,
+    commitMessageBusy,
+    commitMessageCapability.available,
+    operationRevision,
+    refreshChanges,
+    reportFailure,
+    repositoryId,
+    stagedCount,
+  ]);
+
   const commitStagedChanges = useCallback(
     async (event?: FormEvent) => {
       event?.preventDefault();
@@ -2676,7 +2833,7 @@ export function App() {
         if (copyFallbackText) setCopyFallbackText("");
         else if (failureDetailsOpen) setFailureDetailsOpen(false);
         else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
-        else if (commitComposerOpen) setCommitComposerOpen(false);
+        else if (commitComposerOpen) closeCommitComposer();
         else if (selectedPackageRunId) setSelectedPackageRunId(null);
         else if (commentComposerOpen) setCommentComposerOpen(false);
         else if (commentTrayOpen) setCommentTrayOpen(false);
@@ -2699,6 +2856,7 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeFile,
+    closeCommitComposer,
     commitComposerOpen,
     commentComposerOpen,
     commentTrayOpen,
@@ -3105,6 +3263,9 @@ export function App() {
                     className="action-button commit-action"
                     disabled={stagedCount === 0 || commitBusy}
                     onClick={() => {
+                      commitMessageRequestRef.current?.abort();
+                      commitMessageRequestRef.current = null;
+                      setCommitMessageBusy(false);
                       setDrawerOpen(false);
                       setCommitMessage("");
                       setCommitComposerOpen(true);
@@ -3605,6 +3766,28 @@ export function App() {
               )}
             </div>
             <footer className="sheet-footer">
+              {bootstrap?.restart && (
+                <>
+                  <button
+                    className="action-button secondary repository-restart-action"
+                    disabled={!bootstrap.restart.available || restartPhase !== null}
+                    onClick={() => void rebuildAndRestart()}
+                    type="button"
+                  >
+                    {restartPhase === "building" ? (
+                      <LoaderCircle className="spinner" size={16} />
+                    ) : (
+                      <RefreshCw size={16} />
+                    )}
+                    Rebuild &amp; restart Couchview
+                  </button>
+                  <div className="progress-label">
+                    {bootstrap.restart.available
+                      ? "Builds this Couchview checkout, then reloads the current review."
+                      : bootstrap.restart.reason}
+                  </div>
+                </>
+              )}
               <div className="progress-label">
                 Run <code>couchview</code> inside another Git project to add it.
               </div>
@@ -3814,7 +3997,7 @@ export function App() {
           <button
             aria-label="Close commit editor"
             className="sheet-scrim"
-            onClick={() => setCommitComposerOpen(false)}
+            onClick={closeCommitComposer}
             type="button"
           />
           <form
@@ -3835,7 +4018,7 @@ export function App() {
               <button
                 aria-label="Close commit editor"
                 className="icon-button"
-                onClick={() => setCommitComposerOpen(false)}
+                onClick={closeCommitComposer}
                 type="button"
               >
                 <X size={19} />
@@ -3848,24 +4031,60 @@ export function App() {
                 maxLength={20_000}
                 onChange={(event) => setCommitMessage(event.target.value)}
                 placeholder="Commit message…"
+                readOnly={commitMessageBusy}
                 value={commitMessage}
               />
             </div>
             <div />
-            <footer className="sheet-footer">
-              <button
-                className="action-button"
-                disabled={!commitMessage.trim() || commitBusy}
-                style={{ width: "100%" }}
-                type="submit"
-              >
-                {commitBusy ? (
-                  <LoaderCircle className="spinner" size={16} />
-                ) : (
-                  <GitCommitHorizontal size={16} />
-                )}
-                Commit staged changes
-              </button>
+            <footer className="sheet-footer commit-footer">
+              <div className="commit-actions">
+                <button
+                  className="action-button secondary"
+                  disabled={
+                    !commitMessageCapability.available ||
+                    commitMessageBusy ||
+                    commitBusy ||
+                    stagedCount === 0
+                  }
+                  onClick={() => void generateCommitMessage()}
+                  title={commitMessageCapability.reason ?? undefined}
+                  type="button"
+                >
+                  {commitMessageBusy ? (
+                    <LoaderCircle className="spinner" size={16} />
+                  ) : (
+                    <Sparkles size={16} />
+                  )}
+                  {commitMessageBusy
+                    ? "Generating…"
+                    : commitMessage.trim()
+                      ? "Regenerate with Codex"
+                      : "Generate with Codex"}
+                </button>
+                <button
+                  className="action-button"
+                  disabled={
+                    !commitMessage.trim() ||
+                    commitBusy ||
+                    commitMessageBusy
+                  }
+                  type="submit"
+                >
+                  {commitBusy ? (
+                    <LoaderCircle className="spinner" size={16} />
+                  ) : (
+                    <GitCommitHorizontal size={16} />
+                  )}
+                  Commit staged changes
+                </button>
+              </div>
+              <div className="progress-label commit-generation-copy">
+                {commitMessageCapability.available
+                  ? commitMessageBusy
+                    ? "Generating a one-line Conventional Commit from staged changes…"
+                    : "Only staged changes are sent to Codex. Committing remains a separate action."
+                  : commitMessageCapability.reason}
+              </div>
             </footer>
           </form>
         </>
@@ -4280,6 +4499,22 @@ export function App() {
           </div>
         )}
       </div>
+
+      {restartPhase && (
+        <div aria-live="assertive" className="restart-overlay" role="status">
+          <LoaderCircle className="spinner" size={30} />
+          <h2 className="state-title">
+            {restartPhase === "building"
+              ? "Building Couchview…"
+              : restartPhase === "restarting"
+                ? "Restarting Couchview…"
+                : "Loading the new build…"}
+          </h2>
+          <p className="state-copy">
+            Keep this page open. Your repository selection and review state will be restored.
+          </p>
+        </div>
+      )}
     </main>
   );
 }

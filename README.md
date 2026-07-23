@@ -71,6 +71,13 @@ bun run build
 bun run start -- --repo /absolute/path/to/project --port 4173
 ```
 
+After changing Couchview itself, open the repository picker and choose **Rebuild & restart
+Couchview**. The running production server executes `bun run build` in its own Couchview
+checkout, builds into a temporary directory so a failed build cannot replace the current
+UI, then relaunches on the same host and port and reloads the current review. This action
+is intentionally unavailable in development mode, where Vite already reloads client
+changes, and when `STATIC_DIR` points at a custom build.
+
 For application development, run the Bun API and Vite UI together:
 
 ```sh
@@ -89,7 +96,7 @@ Development also binds both processes to `0.0.0.0` by default and prints the pho
 - Save any number of independent comments. The comments tray can jump to, edit, or delete them. Copy exports every current, non-stale comment as Markdown with repository-relative paths, exact old/new ranges, excerpts, and correction text. Clipboard denial opens the same text in a selectable dialog; copying never deletes comments.
 - Mark reviewed to record the current content revision and automatically advance to the next unreviewed file. In compact landscape mode, Review only toggles the mark because Next is a separate adjacent control. Undo is offered. A later content change clears the review and marks existing comment anchors stale.
 - Stage writes the whole file to the real Git index; once fully staged, the same control becomes Unstage and restores that path in the index from `HEAD` without changing its working copy. Review and stage are independent actions, and a stale operation is rejected instead of changing the index.
-- Commit is available from the changed-files drawer once at least one path is staged. It commits exactly the current Git index with the supplied message; unstaged working-tree edits remain local, and stale or conflicted states are rejected.
+- Commit is available from the changed-files drawer once at least one path is staged. It commits exactly the current Git index with the supplied message; unstaged working-tree edits remain local, and stale or conflicted states are rejected. **Generate with Codex** uses the signed-in local Codex CLI to propose an editable, single-line Conventional Commit from the staged patch; generation never stages or commits changes.
 - When tracked or non-ignored `package.json` files are present, the drawer adds a **Commands** view. Scripts are grouped by subproject, run with the package manager declared by the project or indicated by its nearest lockfile, and stream stdout and stderr into a reconnectable output sheet. Long-running scripts keep running when the sheet closes and can be stopped explicitly.
 - If Git fails or stops producing output, Couchview shows the operation-specific message instead of treating an empty response as a valid diff. Open **Details** to see a diagnostic ID, failure kind, exit code, and bounded Git output, or copy the complete diagnostic for reporting.
 - Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk and comment actions in the dock; compact landscape moves hunk/comments into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
@@ -101,11 +108,11 @@ Binary and metadata-only changes remain reviewable and stageable but do not acce
 
 On desktop Chrome or Edge over localhost, use the install icon in the address bar or the in-app install guidance. On iPhone or iPad, PWA installation requires Couchview to be served through HTTPS; a plain LAN-IP URL can open the review UI but is not a secure context. When HTTPS is available, open Couchview in Safari, tap **Share**, then **Add to Home Screen**. Launching the installed app uses the standalone, edge-to-edge interface.
 
-The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. When a new service worker is ready, Couchview asks before reloading the active review.
+The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. When a new service worker is ready, Couchview asks before reloading the active review.
 
 ## Local state and security
 
-The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. LAN binding is the default, so run Couchview only on a trusted network or pass `--host 127.0.0.1`; the tool can read selected repositories, stage files in their indexes, and execute their declared package scripts.
+The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. LAN binding is the default, so run Couchview only on a trusted network or pass `--host 127.0.0.1`; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, and send staged change context to Codex.
 
 Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
@@ -118,6 +125,16 @@ Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME
 Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo` and `--port` take precedence. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
+
+Commit-message generation requires `codex` on the server `PATH` and an existing
+`codex login`. Couchview sends Codex only a bounded staged patch, staged path metadata,
+and up to ten recent commit subjects. The ephemeral Codex process runs from a temporary
+non-repository directory in a read-only sandbox using `gpt-5.6-luna`; it cannot inspect
+unstaged files through the supplied workspace.
+
+The rebuild-and-restart action runs only Couchview's fixed `bun run build` command and
+relaunches the same CLI path, repository, bind host, and port. It accepts no command or path
+from the browser and uses the same origin and CSRF protections as other mutations.
 
 ## Test and verification commands
 

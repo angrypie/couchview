@@ -29,6 +29,7 @@ import type {
 	DeleteCommentResponse,
 	DiffResponse,
 	FileDiff,
+	GenerateCommitMessageRequest,
 	RepositorySummary,
 	ReviewStateResponse,
 	SearchResponse,
@@ -62,6 +63,9 @@ const FULL_DIFF_CONTEXT_LINES = 2_147_483_647;
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const MAX_SEARCH_PREVIEW_CHARS = 512;
+const MAX_COMMIT_MESSAGE_PATCH_BYTES = 256 * 1024;
+const MAX_COMMIT_MESSAGE_FILE_BYTES = 64 * 1024;
+const MAX_COMMIT_MESSAGE_HISTORY_BYTES = 16 * 1024;
 const EMPTY_SNAPSHOT_CONFIRMATIONS = 2;
 const EMPTY_SNAPSHOT_CONFIRMATION_DELAY_MS = 75;
 const STATUS_SNAPSHOT_ARGS = [
@@ -1018,6 +1022,104 @@ export class GitRepository {
 		});
 	}
 
+	async commitMessageContext(
+		input: GenerateCommitMessageRequest,
+	): Promise<string> {
+		if (!input || typeof input !== "object" || Array.isArray(input)) {
+			throw new HttpError(
+				400,
+				"invalid_request",
+				"Commit message request is invalid",
+			);
+		}
+		assertNonEmptyString(input.operationRevision, "operation revision", 200);
+		const before = await this.getSnapshot(true);
+		this.validateCommitMessageSnapshot(before, input.operationRevision);
+		const stagedFiles = before.files.filter((file) => file.staged);
+
+		const fileLines: string[] = [];
+		let fileBytes = 0;
+		let filesTruncated = false;
+		for (const file of stagedFiles) {
+			const line = JSON.stringify({
+				status: file.indexStatus,
+				kind: file.kind,
+				path: file.path,
+				...(file.previousPath ? { previousPath: file.previousPath } : {}),
+			});
+			const lineBytes = Buffer.byteLength(`${line}\n`);
+			if (fileBytes + lineBytes > MAX_COMMIT_MESSAGE_FILE_BYTES) {
+				filesTruncated = true;
+				break;
+			}
+			fileLines.push(line);
+			fileBytes += lineBytes;
+		}
+		if (filesTruncated) fileLines.push("[additional staged files omitted]");
+
+		const [patchResult, historyResult] = await Promise.all([
+			runGit(
+				this.root,
+				[
+					"diff",
+					"--cached",
+					"--no-color",
+					"--no-ext-diff",
+					"--no-textconv",
+					"--find-renames",
+					"--patch",
+					"--",
+				],
+				{
+					maxOutputBytes: MAX_COMMIT_MESSAGE_PATCH_BYTES,
+					timeoutMs: 30_000,
+					truncateOutput: true,
+				},
+			),
+			before.repository.head
+				? runGit(
+						this.root,
+						["log", "-10", "--format=%s", before.repository.head],
+						{
+							maxOutputBytes: MAX_COMMIT_MESSAGE_HISTORY_BYTES,
+							truncateOutput: true,
+						},
+					)
+				: Promise.resolve(null),
+		]);
+		const after = await this.getSnapshot(true);
+		this.validateCommitMessageSnapshot(after, input.operationRevision);
+
+		const recentSubjects = historyResult
+			? decodeGitOutput(historyResult.stdout)
+					.split("\n")
+					.filter(Boolean)
+					.map((subject) => JSON.stringify(subject))
+			: [];
+		const patch = decodeGitOutput(patchResult.stdout);
+		return [
+			`Repository: ${JSON.stringify(before.repository.name)}`,
+			`Branch: ${JSON.stringify(before.repository.branch ?? "detached")}`,
+			"",
+			"STAGED FILES:",
+			...fileLines,
+			"",
+			"RECENT COMMIT SUBJECTS:",
+			...(recentSubjects.length > 0 ? recentSubjects : ["[no previous commits]"]),
+			"",
+			`STAGED PATCH${patchResult.stdoutTruncated ? " (truncated)" : ""}:`,
+			patch,
+		].join("\n");
+	}
+
+	async assertCommitMessageRevision(operationRevision: string): Promise<void> {
+		assertNonEmptyString(operationRevision, "operation revision", 200);
+		this.validateCommitMessageSnapshot(
+			await this.getSnapshot(true),
+			operationRevision,
+		);
+	}
+
 	async reviewState(): Promise<ReviewStateResponse> {
 		const [snapshot, state] = await Promise.all([
 			this.getSnapshot(),
@@ -1517,6 +1619,33 @@ export class GitRepository {
 		if (!file)
 			throw new HttpError(404, "file_not_found", "Changed file not found");
 		return file;
+	}
+
+	private validateCommitMessageSnapshot(
+		snapshot: Snapshot,
+		operationRevision: string,
+	): void {
+		if (snapshot.operationRevision !== operationRevision) {
+			throw new HttpError(
+				409,
+				"operation_changed",
+				"Project changes changed; refresh before generating a commit message",
+			);
+		}
+		if (snapshot.files.some((file) => file.conflicted)) {
+			throw new HttpError(
+				409,
+				"unresolved_conflicts",
+				"Resolve Git conflicts before generating a commit message",
+			);
+		}
+		if (!snapshot.files.some((file) => file.staged)) {
+			throw new HttpError(
+				409,
+				"nothing_staged",
+				"Nothing is staged to describe",
+			);
+		}
 	}
 
 	private requireCurrentContent(

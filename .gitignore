@@ -1,5 +1,7 @@
 node_modules/
 dist/
+.couchview-build-*/
+dist.previous-*/
 playwright-report/
 test-results/
 coverage/

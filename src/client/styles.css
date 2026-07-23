@@ -1023,6 +1023,24 @@ textarea:focus-visible,
   min-height: 140px;
 }
 
+.commit-input[readonly] {
+  color: var(--muted);
+}
+
+.commit-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.commit-actions .action-button {
+  width: 100%;
+}
+
+.commit-generation-copy {
+  min-height: 14px;
+}
+
 .bottom-sheet {
   position: fixed;
   z-index: 60;
@@ -1221,6 +1239,30 @@ textarea:focus-visible,
 .repository-picker .sheet-footer code {
   color: #b9c9e5;
   font: inherit;
+}
+
+.repository-restart-action {
+  width: 100%;
+  min-height: 40px;
+}
+
+.restart-overlay {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 11px;
+  color: var(--text);
+  background: rgb(11 13 16 / 94%);
+  text-align: center;
+}
+
+.restart-overlay .state-copy {
+  max-width: 360px;
 }
 
 .sheet-grabber {

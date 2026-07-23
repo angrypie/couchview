@@ -10,6 +10,7 @@ import {
   type BootstrapResponse,
   type ChangesResponse,
   type CommitResponse,
+  type GenerateCommitMessageResponse,
   type PackageRunEvent,
   type PackageRunResponse,
   type PackageRunsResponse,
@@ -21,10 +22,12 @@ import {
   type StageFileResponse,
   type StageFilesResponse,
 } from "../shared/contracts.ts";
+import type { CommitMessageGenerator } from "./commitMessage.ts";
 import {
   accessOriginsForHost,
   createCouchviewApp,
   type CouchviewApp,
+  type CouchviewAppOptions,
 } from "./server.ts";
 import { GitCommandError } from "./git.ts";
 
@@ -38,7 +41,11 @@ afterEach(async () => {
   );
 });
 
-async function fixture(revisionPollIntervalMs?: number) {
+async function fixture(
+  revisionPollIntervalMs?: number,
+  restart?: CouchviewAppOptions["restart"],
+  commitMessages?: CommitMessageGenerator,
+) {
   const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-"));
   temporaryDirectories.push(directory);
   expect(Bun.spawnSync(["git", "init", "-q", directory]).exitCode).toBe(0);
@@ -53,6 +60,8 @@ async function fixture(revisionPollIntervalMs?: number) {
     port: 3001,
     stateDatabasePath: path.join(stateDirectory, "state.sqlite"),
     revisionPollIntervalMs,
+    restart,
+    commitMessages,
   });
   applications.push(app);
   return app;
@@ -242,6 +251,23 @@ describe("Couchview HTTP security and routes", () => {
     expect(bootstrapResponse.status).toBe(200);
     const bootstrap = (await bootstrapResponse.json()) as BootstrapResponse;
     expect(bootstrap.csrfToken).toHaveLength(43);
+    expect(bootstrap.restart).toEqual({
+      available: false,
+      reason: "Restart is unavailable for this Couchview process.",
+    });
+    const unavailableRestart = await app.fetch(
+      request(API_ROUTES.restart, {
+        method: "POST",
+        headers: {
+          [CSRF_HEADER]: bootstrap.csrfToken,
+          origin: "http://127.0.0.1:3001",
+        },
+      }),
+    );
+    expect(unavailableRestart.status).toBe(409);
+    expect((await unavailableRestart.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "restart_unavailable" },
+    });
 
     const changes = (await (
       await app.fetch(request(API_ROUTES.files(app.repository.id)))
@@ -312,6 +338,130 @@ describe("Couchview HTTP security and routes", () => {
     const commit = (await committed.json()) as CommitResponse;
     expect(commit.commit).toMatch(/^[0-9a-f]{40}$/);
     expect((await app.repository.changes()).files).toHaveLength(0);
+  });
+
+  test("generates a protected staged-only commit message and rejects stale output", async () => {
+    const contexts: string[] = [];
+    let mutateDuringGeneration = false;
+    let app!: CouchviewApp;
+    const commitMessages: CommitMessageGenerator = {
+      capability: { available: true, reason: null },
+      async generate(context) {
+        contexts.push(context);
+        if (mutateDuringGeneration) {
+          await writeFile(
+            path.join(app.repository.root, "sample.ts"),
+            "const sample = \"changed while generating\";\n",
+          );
+        }
+        return "feat(review): generate commit messages";
+      },
+      close() {},
+    };
+    app = await fixture(undefined, undefined, commitMessages);
+    await writeFile(
+      path.join(app.repository.root, "unstaged.txt"),
+      "not part of the staged context\n",
+    );
+    expect(
+      Bun.spawnSync(
+        ["git", "-C", app.repository.root, "add", "--", "sample.ts"],
+      ).exitCode,
+    ).toBe(0);
+    const changes = await app.repository.changes();
+    const requestBody = JSON.stringify({
+      operationRevision: changes.operationRevision,
+    });
+
+    const unprotected = await app.fetch(
+      request(API_ROUTES.commitMessage(app.repository.id), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3001",
+        },
+        body: requestBody,
+      }),
+    );
+    expect(unprotected.status).toBe(403);
+    expect(contexts).toHaveLength(0);
+
+    const generated = await app.fetch(
+      request(API_ROUTES.commitMessage(app.repository.id), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [CSRF_HEADER]: app.csrfToken,
+          origin: "http://127.0.0.1:3001",
+        },
+        body: requestBody,
+      }),
+    );
+    expect(generated.status).toBe(200);
+    expect((await generated.json()) as GenerateCommitMessageResponse).toEqual({
+      message: "feat(review): generate commit messages",
+      operationRevision: changes.operationRevision,
+    });
+    expect(contexts[0]).toContain('"path":"sample.ts"');
+    expect(contexts[0]).toContain("+const sample = true;");
+    expect(contexts[0]).not.toContain("not part of the staged context");
+
+    mutateDuringGeneration = true;
+    const stale = await app.fetch(
+      request(API_ROUTES.commitMessage(app.repository.id), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [CSRF_HEADER]: app.csrfToken,
+          origin: "http://127.0.0.1:3001",
+        },
+        body: requestBody,
+      }),
+    );
+    expect(stale.status).toBe(409);
+    expect((await stale.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "operation_changed" },
+    });
+  });
+
+  test("reports and secures the rebuild-and-restart action", async () => {
+    let restartRequests = 0;
+    const app = await fixture(undefined, {
+      available: true,
+      reason: null,
+      request: async () => {
+        restartRequests += 1;
+      },
+    });
+    const bootstrap = (await (
+      await app.fetch(request(API_ROUTES.bootstrap))
+    ).json()) as BootstrapResponse;
+    expect(bootstrap.restart).toEqual({ available: true, reason: null });
+
+    const rejected = await app.fetch(
+      request(API_ROUTES.restart, {
+        method: "POST",
+        headers: { origin: "http://127.0.0.1:3001" },
+      }),
+    );
+    expect(rejected.status).toBe(403);
+    expect(restartRequests).toBe(0);
+
+    const accepted = await app.fetch(
+      request(API_ROUTES.restart, {
+        method: "POST",
+        headers: {
+          [CSRF_HEADER]: bootstrap.csrfToken,
+          origin: "http://127.0.0.1:3001",
+        },
+      }),
+    );
+    expect(accepted.status).toBe(202);
+    expect(await accepted.json()).toEqual({
+      status: "restarting",
+      previousInstanceId: app.instanceId,
+    });
+    expect(restartRequests).toBe(1);
   });
 
   test("bulk stages an exact validated set of files", async () => {

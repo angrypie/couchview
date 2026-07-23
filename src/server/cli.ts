@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { randomUUID } from "node:crypto";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,8 +10,10 @@ import {
   type ApiErrorBody,
   type InstanceResponse,
   type RegisterRepositoryResponse,
+  type RestartCapability,
 } from "../shared/contracts.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
+import { HttpError } from "./errors.ts";
 import {
   createCouchviewApp,
   hostForUrl,
@@ -31,6 +35,68 @@ interface RunningRegistration {
 interface StartServerRuntime {
   fetch: typeof globalThis.fetch;
   serve: typeof Bun.serve;
+}
+
+const restartDelayMs = 250;
+
+export function restartCapability(
+  environment: NodeJS.ProcessEnv = process.env,
+): RestartCapability {
+  if (environment.NODE_ENV === "development") {
+    return {
+      available: false,
+      reason: "Development mode reloads source changes automatically.",
+    };
+  }
+  if (environment.STATIC_DIR) {
+    return {
+      available: false,
+      reason: "Restart is unavailable when Couchview uses a custom STATIC_DIR.",
+    };
+  }
+  return { available: true, reason: null };
+}
+
+function fileMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+export async function replaceStaticBuild(
+  candidateDirectory: string,
+  staticDirectory: string,
+): Promise<void> {
+  const backupDirectory = `${staticDirectory}.previous-${randomUUID()}`;
+  let previousBuildMoved = false;
+  try {
+    await rename(staticDirectory, backupDirectory);
+    previousBuildMoved = true;
+  } catch (error) {
+    if (!fileMissing(error)) throw error;
+  }
+  try {
+    await rename(candidateDirectory, staticDirectory);
+  } catch (error) {
+    if (previousBuildMoved) {
+      try {
+        await rename(backupDirectory, staticDirectory);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          "Could not install the new Couchview build or restore the previous build",
+        );
+      }
+    }
+    throw error;
+  }
+  if (previousBuildMoved) {
+    try {
+      await rm(backupDirectory, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(
+        `Couchview could not remove the previous build backup: ${(error as Error).message}`,
+      );
+    }
+  }
 }
 
 export function parseCli(argv: string[]): CliOptions {
@@ -279,6 +345,9 @@ export async function startServer(
   }
 
   const defaultStaticDirectory = fileURLToPath(new URL("../../dist/", import.meta.url));
+  const staticDirectory = path.resolve(Bun.env.STATIC_DIR ?? defaultStaticDirectory);
+  const appRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const cliPath = fileURLToPath(import.meta.url);
   const allowedOrigins = (Bun.env.ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())
@@ -286,12 +355,88 @@ export async function startServer(
   if (Bun.env.NODE_ENV === "development") {
     allowedOrigins.push("http://127.0.0.1:5173", "http://localhost:5173");
   }
+  const capability = restartCapability();
+  let restartInProgress = false;
+  let relaunch: () => void = () => undefined;
   const app = await createCouchviewApp({
     root: options.root,
     host: options.host,
     port: options.port,
-    staticDirectory: path.resolve(Bun.env.STATIC_DIR ?? defaultStaticDirectory),
+    staticDirectory,
     allowedOrigins,
+    restart: {
+      ...capability,
+      request: capability.available
+        ? async () => {
+            if (restartInProgress) {
+              throw new HttpError(
+                409,
+                "restart_in_progress",
+                "Couchview is already rebuilding.",
+              );
+            }
+            restartInProgress = true;
+            console.log("Rebuilding Couchview before restart...");
+            const candidateDirectory = path.join(
+              appRoot,
+              `.couchview-build-${randomUUID()}`,
+            );
+            let exitCode: number;
+            try {
+              const build = Bun.spawn(
+                [
+                  process.execPath,
+                  "run",
+                  "build",
+                  "--outDir",
+                  candidateDirectory,
+                ],
+                {
+                  cwd: appRoot,
+                  env: process.env,
+                  stdin: "ignore",
+                  stdout: "inherit",
+                  stderr: "inherit",
+                  timeout: 5 * 60_000,
+                },
+              );
+              exitCode = await build.exited;
+            } catch (error) {
+              restartInProgress = false;
+              await rm(candidateDirectory, { recursive: true, force: true });
+              console.error(`Couchview build could not start: ${(error as Error).message}`);
+              throw new HttpError(
+                500,
+                "restart_build_failed",
+                "The Couchview build could not start. Check the server terminal for details.",
+              );
+            }
+            if (exitCode !== 0) {
+              restartInProgress = false;
+              await rm(candidateDirectory, { recursive: true, force: true });
+              throw new HttpError(
+                500,
+                "restart_build_failed",
+                "The Couchview build failed. Check the server terminal for details.",
+              );
+            }
+            try {
+              await replaceStaticBuild(candidateDirectory, staticDirectory);
+            } catch (error) {
+              restartInProgress = false;
+              await rm(candidateDirectory, { recursive: true, force: true });
+              console.error(`Couchview could not install its new build: ${(error as Error).message}`);
+              throw new HttpError(
+                500,
+                "restart_build_install_failed",
+                "The new Couchview build could not replace the current build. Check the server terminal for details.",
+              );
+            }
+            console.log("Couchview build finished. Restarting...");
+            setTimeout(relaunch, restartDelayMs);
+          }
+        : undefined,
+    },
   });
 
   let server: ReturnType<typeof Bun.serve>;
@@ -348,6 +493,44 @@ export async function startServer(
     process.off("SIGTERM", stop);
     app.close();
     void server.stop();
+  };
+  relaunch = () => {
+    if (stopped) return;
+    const repositoryRoot = app.repository.root;
+    stopped = true;
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+    app.close();
+    server.stop(true);
+    try {
+      const replacement = Bun.spawn(
+        [
+          process.execPath,
+          "run",
+          cliPath,
+          "--repo",
+          repositoryRoot,
+          "--host",
+          options.host,
+          "--port",
+          String(options.port),
+        ],
+        {
+          cwd: appRoot,
+          env: {
+            ...process.env,
+            COUCHVIEW_DISABLE_REUSE: "1",
+          },
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        },
+      );
+      replacement.unref();
+    } catch (error) {
+      console.error(`Couchview could not relaunch: ${(error as Error).message}`);
+      process.exitCode = 1;
+    }
   };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);

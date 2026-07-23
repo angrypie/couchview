@@ -399,7 +399,13 @@ test.describe("mobile fixture review", () => {
 
     const composer = page.getByRole("dialog", { name: "Commit staged changes" });
     await expect(composer).toContainText("unstaged edits stay local");
-    await composer.getByPlaceholder("Commit message…").fill("Review changes on phone");
+    await expect(composer).toContainText("Only staged changes are sent to Codex");
+    await composer.getByRole("button", { name: "Generate with Codex" }).click();
+    const message = composer.getByPlaceholder("Commit message…");
+    await expect(message).toHaveValue(
+      "feat(review): generate commit messages with Codex",
+    );
+    await message.fill("fix(review): edit generated message on phone");
     await composer.getByRole("button", { name: "Commit staged changes" }).click();
 
     await expect(page.getByText("Committed abc1234", { exact: true })).toBeVisible();
@@ -627,10 +633,34 @@ test.describe("production PWA", () => {
       return urls;
     });
     expect(cacheUrls.some((url) => new URL(url).pathname.startsWith("/api/"))).toBe(false);
-    expect(cacheUrls.some((url) => new URL(url).pathname === "/index.html")).toBe(true);
-    expect(cacheUrls.some((url) => /\/assets\/[^/]+-[^/]+\.(?:js|css)$/.test(new URL(url).pathname))).toBe(
+    const cachePaths = cacheUrls.map((url) => new URL(url).pathname);
+    expect(cachePaths).toContain("/index.html");
+    expect(cachePaths.some((pathname) => /\/assets\/index-[^/]+\.js$/.test(pathname))).toBe(
       true,
     );
+    expect(cachePaths.some((pathname) => /\/assets\/index-[^/]+\.css$/.test(pathname))).toBe(
+      true,
+    );
+    for (const language of [
+      "javascript",
+      "typescript",
+      "jsx",
+      "tsx",
+      "json",
+      "css",
+      "html",
+      "markdown",
+    ]) {
+      expect(
+        cachePaths.some((pathname) =>
+          new RegExp(`/assets/${language}-[^/]+\\.js$`).test(pathname)
+        ),
+      ).toBe(true);
+    }
+    expect(cachePaths.some((pathname) => /\/assets\/cpp-[^/]+\.js$/.test(pathname))).toBe(
+      false,
+    );
+    expect(cachePaths.length).toBeLessThan(20);
 
     await page.evaluate(() => {
       const event = new Event("beforeinstallprompt", { cancelable: true });

@@ -9,6 +9,8 @@ import {
 	type CreateCommentRequest,
 	CSRF_HEADER,
 	type DiffResponse,
+	type GenerateCommitMessageRequest,
+	type GenerateCommitMessageResponse,
 	type PackageRunEvent,
 	type PackageRunSummary,
 	type PackageScriptsResponse,
@@ -436,6 +438,14 @@ const server = Bun.serve({
 				repositories: repositoryCatalog,
 				defaultRepositoryId: repository.id,
 				catalogRevision: 1,
+				restart: {
+					available: false,
+					reason: "Restart is unavailable in the browser test fixture.",
+				},
+				commitMessage: {
+					available: true,
+					reason: null,
+				},
 			} satisfies BootstrapResponse);
 		}
 
@@ -802,6 +812,37 @@ const server = Bun.serve({
 				} satisfies CommitResponse,
 				201,
 			);
+		}
+
+		if (nestedPath === "commit-message" && request.method === "POST") {
+			const body = (await request.json()) as GenerateCommitMessageRequest;
+			if (body.operationRevision !== operationRevision) {
+				return json(
+					{
+						error: {
+							code: "operation_changed",
+							message:
+								"Project changes changed; refresh before generating a commit message",
+						},
+					},
+					409,
+				);
+			}
+			if (!files.some((file) => file.staged)) {
+				return json(
+					{
+						error: {
+							code: "nothing_staged",
+							message: "Nothing is staged to describe",
+						},
+					},
+					409,
+				);
+			}
+			return json({
+				message: "feat(review): generate commit messages with Codex",
+				operationRevision,
+			} satisfies GenerateCommitMessageResponse);
 		}
 
 		if (fileRoute?.[2] === "comments" && request.method === "POST") {

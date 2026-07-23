@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseCli, startServer } from "./cli.ts";
+import {
+  parseCli,
+  replaceStaticBuild,
+  restartCapability,
+  startServer,
+} from "./cli.ts";
 import { createCouchviewApp, type CouchviewApp } from "./server.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
@@ -166,6 +171,66 @@ describe("parseCli", () => {
 
   test.each(["1", "65535"])("accepts boundary port %s", (port) => {
     expect(parseCli(["--port", port]).port).toBe(Number(port));
+  });
+});
+
+describe("restartCapability", () => {
+  test("enables production source launches", () => {
+    expect(restartCapability({})).toEqual({
+      available: true,
+      reason: null,
+    });
+  });
+
+  test("explains development and custom static-directory launches", () => {
+    expect(restartCapability({ NODE_ENV: "development" })).toEqual({
+      available: false,
+      reason: "Development mode reloads source changes automatically.",
+    });
+    expect(restartCapability({ STATIC_DIR: "/tmp/custom-couchview-dist" })).toEqual({
+      available: false,
+      reason: "Restart is unavailable when Couchview uses a custom STATIC_DIR.",
+    });
+  });
+});
+
+describe("replaceStaticBuild", () => {
+  test("atomically promotes a successful build and removes the previous one", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "couchview-build-swap-"));
+    const current = path.join(root, "dist");
+    const candidate = path.join(root, ".couchview-build-candidate");
+    try {
+      await mkdir(current);
+      await mkdir(candidate);
+      await writeFile(path.join(current, "index.html"), "old");
+      await writeFile(path.join(candidate, "index.html"), "new");
+
+      await replaceStaticBuild(candidate, current);
+
+      expect(await Bun.file(path.join(current, "index.html")).text()).toBe("new");
+      expect(await readdir(root)).toEqual(["dist"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("restores the current build when promotion fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "couchview-build-restore-"));
+    const current = path.join(root, "dist");
+    const missingCandidate = path.join(root, "missing-build");
+    try {
+      await mkdir(current);
+      await writeFile(path.join(current, "index.html"), "old");
+
+      await expect(
+        replaceStaticBuild(missingCandidate, current),
+      ).rejects.toThrow();
+
+      expect(await Bun.file(path.join(current, "index.html")).text()).toBe("old");
+      expect(await readdir(root)).toEqual(["dist"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

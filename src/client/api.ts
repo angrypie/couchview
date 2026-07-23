@@ -7,6 +7,8 @@ import {
   type ChangesResponse,
   type CommitRequest,
   type CommitResponse,
+  type GenerateCommitMessageRequest,
+  type GenerateCommitMessageResponse,
   type CommentResponse,
   type CreateCommentRequest,
   type DeleteCommentRequest,
@@ -18,6 +20,8 @@ import {
   type PackageRunResponse,
   type PackageRunsResponse,
   type PackageScriptsResponse,
+  type InstanceResponse,
+  type RestartResponse,
   type SearchResponse,
   type SetReviewRequest,
   type SetReviewResponse,
@@ -107,6 +111,21 @@ function withQuery(
 export const api = {
   bootstrap(signal?: AbortSignal) {
     return request<BootstrapResponse>(API_ROUTES.bootstrap, { signal });
+  },
+
+  instance(signal?: AbortSignal) {
+    return request<InstanceResponse>(API_ROUTES.instance, { signal });
+  },
+
+  restart(csrfToken: string, signal?: AbortSignal) {
+    return request<RestartResponse>(
+      API_ROUTES.restart,
+      {
+        method: "POST",
+        signal,
+      },
+      csrfToken,
+    );
   },
 
   repositories(signal?: AbortSignal) {
@@ -203,6 +222,19 @@ export const api = {
   ) {
     return request<CommitResponse>(
       API_ROUTES.commit(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  generateCommitMessage(
+    repositoryId: string,
+    body: GenerateCommitMessageRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<GenerateCommitMessageResponse>(
+      API_ROUTES.commitMessage(repositoryId),
       { method: "POST", body: JSON.stringify(body), signal },
       csrfToken,
     );

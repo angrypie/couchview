@@ -527,6 +527,76 @@ describe("GitRepository", () => {
     }
   });
 
+  test("builds bounded commit-message context from the staged index only", async () => {
+    const directory = await committedRepository({
+      "tracked.ts": "export const value = 1;\n",
+    });
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const clean = await repository.changes();
+      await expect(
+        repository.commitMessageContext({
+          operationRevision: clean.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409, code: "nothing_staged" });
+
+      await writeFile(
+        path.join(directory, "tracked.ts"),
+        "export const value = 2;\n",
+      );
+      const changed = await repository.changes();
+      const file = changed.files[0];
+      if (!file) throw new Error("commit-message fixture missing");
+      await repository.stage({
+        fileId: file.id,
+        operationRevision: changed.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+      await writeFile(
+        path.join(directory, "tracked.ts"),
+        "export const value = 3;\n",
+      );
+      const partial = await repository.changes();
+      const context = await repository.commitMessageContext({
+        operationRevision: partial.operationRevision,
+      });
+
+      expect(context).toContain('"path":"tracked.ts"');
+      expect(context).toContain('"fixture"');
+      expect(context).toContain("+export const value = 2;");
+      expect(context).not.toContain("+export const value = 3;");
+      await expect(
+        repository.commitMessageContext({
+          operationRevision: changed.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409, code: "operation_changed" });
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("marks oversized staged patches as truncated commit-message context", async () => {
+    const directory = await committedRepository({ "large.txt": "before\n" });
+    await writeFile(
+      path.join(directory, "large.txt"),
+      `${"after context line\n".repeat(20_000)}`,
+    );
+    git(directory, ["add", "--", "large.txt"]);
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const changes = await repository.changes();
+      const context = await repository.commitMessageContext({
+        operationRevision: changes.operationRevision,
+      });
+      expect(context).toContain("STAGED PATCH (truncated):");
+      expect(Buffer.byteLength(context)).toBeLessThan(400 * 1024);
+    } finally {
+      repository.close();
+    }
+  });
+
   test("keeps same-stat working changes visible after rewriting a temporary index", async () => {
     const directory = await committedRepository({
       "racy.bin": new Uint8Array([0, 1, 2, 3]),
@@ -766,6 +836,14 @@ describe("GitRepository", () => {
       const conflicted = before.files.find((candidate) => candidate.path === "conflict.txt");
       expect(conflicted).toMatchObject({ conflicted: true, staged: true, unstaged: true });
       if (!conflicted) throw new Error("conflict fixture missing");
+      await expect(
+        repository.commitMessageContext({
+          operationRevision: before.operationRevision,
+        }),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "unresolved_conflicts",
+      });
       const diff = await repository.diff(conflicted.id);
       expect(diff.diff.hunks.flatMap((hunk) => hunk.lines).some((line) => line.text.includes("<<<<<<<")))
         .toBe(true);

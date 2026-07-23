@@ -12,6 +12,8 @@ import {
   type ApiErrorDiagnostic,
   type BootstrapResponse,
   type CommitRequest,
+  type GenerateCommitMessageRequest,
+  type GenerateCommitMessageResponse,
   type CreateCommentRequest,
   type DeleteCommentRequest,
   type ForgetRepositoryResponse,
@@ -22,6 +24,8 @@ import {
   type PackageScriptsResponse,
   type RegisterRepositoryRequest,
   type RegisterRepositoryResponse,
+  type RestartCapability,
+  type RestartResponse,
   type ServerEvent,
   type ServerEventType,
   type SetReviewRequest,
@@ -30,6 +34,10 @@ import {
   type StageFilesRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
+import {
+  CodexCommitMessageService,
+  type CommitMessageGenerator,
+} from "./commitMessage.ts";
 import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git.ts";
@@ -53,12 +61,17 @@ export interface CouchviewAppOptions {
   controlToken?: string;
   version?: string;
   revisionPollIntervalMs?: number;
+  restart?: RestartCapability & {
+    request?(): Promise<void>;
+  };
+  commitMessages?: CommitMessageGenerator;
 }
 
 export interface CouchviewApp {
   repository: GitRepository;
   repositories: RepositoryManager;
   packageCommands: PackageCommandService;
+  commitMessages: CommitMessageGenerator;
   database: StateDatabase;
   csrfToken: string;
   controlToken: string;
@@ -362,12 +375,16 @@ export async function createCouchviewApp(
   const database = await StateDatabase.open(options.stateDatabasePath);
   const repositories = new RepositoryManager(database);
   const packageCommands = new PackageCommandService();
+  const commitMessages =
+    options.commitMessages ?? new CodexCommitMessageService();
   let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
   let initialBackend: GitRepository;
   try {
     initial = await repositories.register(options.root);
     initialBackend = await repositories.get(initial.repository.id);
   } catch (error) {
+    commitMessages.close();
+    packageCommands.close();
     repositories.close();
     database.close();
     throw error;
@@ -509,6 +526,11 @@ export async function createCouchviewApp(
       }
     }
   }, 5_000);
+  const restart: RestartCapability & { request?(): Promise<void> } =
+    options.restart ?? {
+      available: false,
+      reason: "Restart is unavailable for this Couchview process.",
+    };
 
   const registerRepository = async (
     root: string,
@@ -555,8 +577,28 @@ export async function createCouchviewApp(
         repositories: await repositories.list(),
         defaultRepositoryId,
         catalogRevision: database.catalogRevision(),
+        restart: {
+          available: restart.available,
+          reason: restart.reason,
+        },
+        commitMessage: commitMessages.capability,
       };
       return json(response);
+    }
+    if (url.pathname === API_ROUTES.restart && request.method === "POST") {
+      if (!restart.available || !restart.request) {
+        throw new HttpError(
+          409,
+          "restart_unavailable",
+          restart.reason ?? "Restart is unavailable for this Couchview process.",
+        );
+      }
+      await restart.request();
+      const response: RestartResponse = {
+        status: "restarting",
+        previousInstanceId: instanceId,
+      };
+      return json(response, { status: 202 });
     }
     if (url.pathname === API_ROUTES.repositories && request.method === "GET") {
       return json({
@@ -639,6 +681,17 @@ export async function createCouchviewApp(
       const result = await repository.commit(input);
       await emitRepository(repositoryId, "changes", result.operationRevision);
       return json(result, { status: 201 });
+    }
+    if (nestedPath === "commit-message" && request.method === "POST") {
+      const input = await readJsonObject<GenerateCommitMessageRequest>(request);
+      const context = await repository.commitMessageContext(input);
+      const message = await commitMessages.generate(context, request.signal);
+      await repository.assertCommitMessageRevision(input.operationRevision);
+      const response: GenerateCommitMessageResponse = {
+        message,
+        operationRevision: input.operationRevision,
+      };
+      return json(response);
     }
     if (nestedPath === "package-scripts" && request.method === "GET") {
       const response: PackageScriptsResponse = await packageCommands.discover(
@@ -885,6 +938,7 @@ export async function createCouchviewApp(
     repository: initialBackend,
     repositories,
     packageCommands,
+    commitMessages,
     database,
     csrfToken,
     controlToken,
@@ -957,6 +1011,7 @@ export async function createCouchviewApp(
       }
       streams.clear();
       database.removeServerInstance(instanceId);
+      commitMessages.close();
       packageCommands.close();
       repositories.close();
       database.close();
