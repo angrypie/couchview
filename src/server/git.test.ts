@@ -17,12 +17,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  GitCommandError,
   parseGrepOutput,
   parsePorcelainV2,
   parseUnifiedDiff,
+  reconcileGitStdout,
   runGit,
   type GitResult,
 } from "./git.ts";
+import { StateDatabase } from "./database.ts";
 import { GitRepository } from "./repository.ts";
 
 const temporaryDirectories: string[] = [];
@@ -213,7 +216,9 @@ describe("GitRepository", () => {
         withFileTypes: true,
       })).filter((entry) => entry.isDirectory() && /^[0-9a-f]{2}$/.test(entry.name));
       expect(looseObjectDirectories).toHaveLength(0);
-      expect(await Bun.file(repository.store.filePath).exists()).toBe(false);
+      expect(await Bun.file(path.join(directory, ".git", "couch-review", "state.json")).exists()).toBe(
+        false,
+      );
       const before = await repository.changes();
       const file = before.files.find((candidate) => candidate.path === "sample file.ts");
       expect(file).toMatchObject({ kind: "untracked", staged: false, unstaged: true });
@@ -300,6 +305,117 @@ describe("GitRepository", () => {
       expect(await readFile(path.join(directory, "tracked.ts"), "utf8")).toBe(
         "export const value = 2;\n",
       );
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("returns complete file context while preserving compact review hunks", async () => {
+    const original = Array.from(
+      { length: 30 },
+      (_, index) => `line ${index + 1}`,
+    );
+    const directory = await committedRepository({
+      "complete.txt": `${original.join("\n")}\n`,
+    });
+    const changed = [...original];
+    changed[0] = "changed first";
+    changed[29] = "changed last";
+    await writeFile(path.join(directory, "complete.txt"), `${changed.join("\n")}\n`);
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const changes = await repository.changes();
+      const file = changes.files.find((candidate) => candidate.path === "complete.txt");
+      if (!file) throw new Error("complete-file fixture missing");
+
+      const response = await repository.diff(file.id);
+      expect(response.diff.hunks).toHaveLength(2);
+      expect(response.diff.fullFilePatch).toContain(" line 15\n");
+      expect(parseUnifiedDiff(response.diff.fullFilePatch ?? "").hunks).toHaveLength(1);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("commits only staged content and leaves later working edits unstaged", async () => {
+    const directory = await committedRepository({ "tracked.ts": "export const value = 1;\n" });
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const clean = await repository.changes();
+      await expect(
+        repository.commit({
+          message: "Nothing yet",
+          operationRevision: clean.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409, code: "nothing_staged" });
+
+      await writeFile(path.join(directory, "tracked.ts"), "export const value = 2;\n");
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "tracked.ts");
+      if (!file) throw new Error("tracked fixture missing");
+      const staged = await repository.stage({
+        fileId: file.id,
+        operationRevision: before.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+
+      await writeFile(path.join(directory, "tracked.ts"), "export const value = 3;\n");
+      const partial = await repository.changes();
+      expect(partial.files[0]).toMatchObject({ staged: true, unstaged: true });
+      await expect(
+        repository.commit({
+          message: "Use a stale snapshot",
+          operationRevision: staged.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409, code: "operation_changed" });
+
+      const committed = await repository.commit({
+        message: "Update tracked value\n\nKeep the working edit local.",
+        operationRevision: partial.operationRevision,
+      });
+      expect(committed.commit).toBe(git(directory, ["rev-parse", "HEAD"]).trim());
+      expect(git(directory, ["log", "-1", "--pretty=%B"])).toBe(
+        "Update tracked value\n\nKeep the working edit local.\n\n",
+      );
+      expect(git(directory, ["show", "HEAD:tracked.ts"])).toBe(
+        "export const value = 2;\n",
+      );
+      expect(await readFile(path.join(directory, "tracked.ts"), "utf8")).toBe(
+        "export const value = 3;\n",
+      );
+      expect((await repository.changes()).files[0]).toMatchObject({
+        staged: false,
+        unstaged: true,
+      });
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("reports a missing Git identity without changing the staged index", async () => {
+    const directory = await committedRepository({ "tracked.ts": "before\n" });
+    await writeFile(path.join(directory, "tracked.ts"), "after\n");
+    git(directory, ["add", "--", "tracked.ts"]);
+    git(directory, ["config", "user.useConfigOnly", "true"]);
+    git(directory, ["config", "user.name", ""]);
+    git(directory, ["config", "user.email", ""]);
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      await expect(
+        repository.commit({
+          message: "Cannot identify author",
+          operationRevision: before.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409, code: "git_identity_missing" });
+      expect((await repository.changes()).files[0]).toMatchObject({
+        staged: true,
+        unstaged: false,
+      });
+      expect(git(directory, ["log", "-1", "--pretty=%s"])).toBe("fixture\n");
     } finally {
       repository.close();
     }
@@ -769,7 +885,7 @@ describe("GitRepository", () => {
     } finally {
       repository.close();
     }
-  });
+  }, 10_000);
 
   test("merges delete-plus-recreate status and bounds huge serialized diffs", async () => {
     const directory = await committedRepository({ "same.txt": "old value\n" });
@@ -802,11 +918,14 @@ describe("GitRepository", () => {
 
   test("reloads state under an interprocess-style lock without losing updates", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "couch-review-state-"));
+    const stateDirectory = await mkdtemp(path.join(tmpdir(), "couch-review-database-"));
     temporaryDirectories.push(directory);
+    temporaryDirectories.push(stateDirectory);
     git(directory, ["init", "-q"]);
     await writeFile(path.join(directory, "state.ts"), "export const state = true;\n");
-    const first = await GitRepository.open(directory);
-    const second = await GitRepository.open(directory);
+    const database = await StateDatabase.open(path.join(stateDirectory, "state.sqlite"));
+    const first = await GitRepository.open(directory, database);
+    const second = await GitRepository.open(directory, database);
     try {
       const changes = await first.changes();
       const file = changes.files[0];
@@ -830,16 +949,16 @@ describe("GitRepository", () => {
       const state = await first.reviewState();
       expect(state.reviews).toHaveLength(1);
       expect(state.comments).toHaveLength(1);
-      const stored = JSON.parse(await readFile(first.store.filePath, "utf8")) as {
-        reviews: unknown[];
-        comments: unknown[];
-      };
+      const stored = database.reviewState(first.id);
       expect(stored.reviews).toHaveLength(1);
       expect(stored.comments).toHaveLength(1);
-      expect((await readdir(first.store.directory)).some((name) => name.endsWith(".tmp"))).toBe(false);
+      expect(await Bun.file(path.join(directory, ".git", "couch-review", "state.json")).exists()).toBe(
+        false,
+      );
     } finally {
       first.close();
       second.close();
+      database.close();
     }
   });
 
@@ -849,6 +968,7 @@ describe("GitRepository", () => {
     });
     const objectId = git(directory, ["rev-parse", "HEAD:large.txt"]).trim();
     const result = await runGit(directory, ["cat-file", "blob", objectId], {
+      binaryOutput: true,
       maxOutputBytes: 128,
       truncateOutput: true,
     });
@@ -856,14 +976,174 @@ describe("GitRepository", () => {
     expect(result.stdoutTruncated).toBe(true);
   });
 
+  test("recovers text output buffered by simple-git when the raw stream misses it", () => {
+    const buffered = "diff --git a/example.ts b/example.ts\0\n";
+    const result = reconcileGitStdout(new Uint8Array(), 0, buffered, 24);
+
+    expect(decoder.decode(result.output)).toBe(buffered.slice(0, 24));
+    expect(result).toMatchObject({
+      recovered: true,
+      totalBytes: Buffer.byteLength(buffered),
+      truncated: true,
+    });
+  });
+
+  test("returns complete diffs across overlapping simple-git requests", async () => {
+    const directory = await committedRepository({
+      "concurrent.ts": "export const value = 1;\n",
+    });
+    await writeFile(path.join(directory, "concurrent.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      const changes = await repository.changes();
+      const file = changes.files.find((candidate) => candidate.path === "concurrent.ts");
+      if (!file) throw new Error("concurrent diff fixture missing");
+
+      const diffs = await Promise.all(
+        Array.from({ length: 8 }, () => repository.diff(file.id)),
+      );
+      expect(diffs).toHaveLength(8);
+      expect(diffs.every((result) => result.diff.hunks.length > 0)).toBe(true);
+      expect(diffs.every((result) => result.diff.additions === 1)).toBe(true);
+      expect(diffs.every((result) => result.diff.deletions === 1)).toBe(true);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("keeps diff output complete while status snapshots overlap", async () => {
+    const directory = await committedRepository({
+      "mixed-concurrency.ts": "export const value = 1;\n",
+    });
+    await writeFile(
+      path.join(directory, "mixed-concurrency.ts"),
+      "export const value = 2;\n",
+    );
+    const repository = await GitRepository.open(directory);
+    try {
+      const changes = await repository.changes();
+      const file = changes.files.find(
+        (candidate) => candidate.path === "mixed-concurrency.ts",
+      );
+      if (!file) throw new Error("mixed concurrency fixture missing");
+
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          index % 2 === 0 ? repository.changes() : repository.diff(file.id),
+        ),
+      );
+      const diffs = results.filter(
+        (result): result is Awaited<ReturnType<typeof repository.diff>> =>
+          "diff" in result,
+      );
+      expect(diffs).toHaveLength(4);
+      expect(diffs.every((result) => result.diff.hunks.length > 0)).toBe(true);
+      expect(diffs.every((result) => result.diff.additions === 1)).toBe(true);
+      expect(diffs.every((result) => result.diff.deletions === 1)).toBe(true);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("closes source descriptors after hashing content revisions", async () => {
+    const directory = await committedRepository({
+      "descriptor.ts": "export const value = 1;\n",
+    });
+    const absolutePath = path.join(directory, "descriptor.ts");
+    await writeFile(absolutePath, "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    try {
+      for (let index = 0; index < 8; index += 1) {
+        await repository.changes();
+      }
+      if (process.platform === "darwin") {
+        const inspection = Bun.spawnSync([
+          "lsof",
+          "-a",
+          "-p",
+          String(process.pid),
+          "--",
+          absolutePath,
+        ]);
+        expect(decoder.decode(inspection.stdout)).not.toContain(absolutePath);
+      }
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("preserves Git stderr and operation metadata for failed commands", async () => {
+    const directory = await committedRepository({ "tracked.txt": "tracked\n" });
+    const error = await runGit(directory, ["rev-parse", "missing-review-ref"])
+      .catch((caught) => caught);
+    expect(error).toBeInstanceOf(GitCommandError);
+    expect(error).toMatchObject({
+      kind: "exit",
+      operation: "rev-parse",
+      exitCode: 128,
+    });
+    expect((error as GitCommandError).stderr).toContain("missing-review-ref");
+  });
+
+  test("retries an unexpectedly empty tracked diff and diagnoses a repeated empty result", async () => {
+    const directory = await committedRepository({
+      "empty-retry.ts": "export const value = 1;\n",
+    });
+    await writeFile(path.join(directory, "empty-retry.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    const changes = await repository.changes();
+    const file = changes.files.find((candidate) => candidate.path === "empty-retry.ts");
+    if (!file) throw new Error("empty diff retry fixture missing");
+    const internals = repository as unknown as {
+      readTrackedDiff: (
+        diffArgs: (contextLines: number) => readonly string[],
+        needsFullFilePatch: boolean,
+      ) => Promise<[GitResult, GitResult | null]>;
+    };
+    const readTrackedDiff = internals.readTrackedDiff.bind(repository);
+    const empty: GitResult = {
+      stdout: new Uint8Array(),
+      stdoutTruncated: false,
+      stderr: "",
+      exitCode: 0,
+    };
+    let reads = 0;
+    internals.readTrackedDiff = async (...args) => {
+      reads += 1;
+      return reads === 1 ? [empty, args[1] ? empty : null] : readTrackedDiff(...args);
+    };
+
+    try {
+      const recovered = await repository.diff(file.id);
+      expect(recovered.diff.hunks).not.toHaveLength(0);
+      expect(recovered.diff.additions).toBe(1);
+      expect(recovered.diff.deletions).toBe(1);
+      expect(reads).toBe(2);
+
+      internals.readTrackedDiff = async (_diffArgs, needsFullFilePatch) => [
+        empty,
+        needsFullFilePatch ? empty : null,
+      ];
+      const error = await repository.diff(file.id).catch((caught) => caught);
+      expect(error).toBeInstanceOf(GitCommandError);
+      expect(error).toMatchObject({ kind: "empty_output", operation: "diff" });
+    } finally {
+      repository.close();
+    }
+  });
+
   test("does not let inherited Git repository variables redirect commands", async () => {
     const directory = await committedRepository({ "target.txt": "target\n" });
     const other = await committedRepository({ "other.txt": "other\n" });
     const previousGitDirectory = process.env.GIT_DIR;
     const previousWorkTree = process.env.GIT_WORK_TREE;
+    const previousSshCommand = process.env.GIT_SSH_COMMAND;
+    const previousEditor = process.env.EDITOR;
     try {
       process.env.GIT_DIR = path.join(other, ".git");
       process.env.GIT_WORK_TREE = other;
+      process.env.GIT_SSH_COMMAND = "false";
+      process.env.EDITOR = "false";
       const result = await runGit(directory, ["rev-parse", "--show-toplevel"]);
       expect(decoder.decode(result.stdout).trim()).toBe(await realpath(directory));
     } finally {
@@ -871,6 +1151,10 @@ describe("GitRepository", () => {
       else process.env.GIT_DIR = previousGitDirectory;
       if (previousWorkTree === undefined) delete process.env.GIT_WORK_TREE;
       else process.env.GIT_WORK_TREE = previousWorkTree;
+      if (previousSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
+      else process.env.GIT_SSH_COMMAND = previousSshCommand;
+      if (previousEditor === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = previousEditor;
     }
   });
 
@@ -965,6 +1249,36 @@ describe("GitRepository", () => {
       expect(snapshot.files.map((file) => file.path)).toContain("watch.ts");
       await Bun.sleep(500);
       expect(reads).toBe(1);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("does not publish watcher events for ignored filesystem churn", async () => {
+    const directory = await committedRepository({
+      ".gitignore": ".runtime/\n",
+      "watch.ts": "export const value = 1;\n",
+    });
+    await writeFile(path.join(directory, "watch.ts"), "export const value = 2;\n");
+    const repository = await GitRepository.open(directory);
+    const internals = repository as unknown as {
+      refreshWatcher: (onChange: (revision: string) => void) => Promise<void>;
+    };
+    const baseline = await repository.changes();
+    const revisions: string[] = [];
+    const collectRevision = (revision: string) => revisions.push(revision);
+
+    try {
+      const runtimeDirectory = path.join(directory, ".runtime");
+      await mkdir(runtimeDirectory);
+      await writeFile(path.join(runtimeDirectory, "heartbeat.json"), "{}\n");
+      await internals.refreshWatcher(collectRevision);
+      expect(revisions).toEqual([]);
+
+      await writeFile(path.join(directory, "watch.ts"), "export const value = 3;\n");
+      await internals.refreshWatcher(collectRevision);
+      expect(revisions).toHaveLength(1);
+      expect(revisions[0]).not.toBe(baseline.operationRevision);
     } finally {
       repository.close();
     }

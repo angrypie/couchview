@@ -22,6 +22,8 @@ import path from "node:path";
 import type {
 	ChangeFile,
 	ChangesResponse,
+	CommitRequest,
+	CommitResponse,
 	CommentResponse,
 	CreateCommentRequest,
 	DeleteCommentResponse,
@@ -36,9 +38,12 @@ import type {
 	StageFileRequest,
 	StageFileResponse,
 } from "../shared/contracts.ts";
+import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import {
 	decodeGitOutput,
+	GitCommandError,
+	type GitResult,
 	type ParsedStatusEntry,
 	parseGrepOutput,
 	parsePorcelainV2,
@@ -50,6 +55,7 @@ import { ReviewStore } from "./state.ts";
 
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
 const MAX_DIFF_ROWS = 20_000;
+const FULL_DIFF_CONTEXT_LINES = 2_147_483_647;
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const MAX_SEARCH_PREVIEW_CHARS = 512;
@@ -153,6 +159,8 @@ export class GitRepository {
 	readonly id: string;
 	readonly emptyTree: string;
 	readonly store: ReviewStore;
+	readonly catalogAdded: boolean;
+	private readonly ownedDatabase: StateDatabase | null;
 	private stageQueue: Promise<void> = Promise.resolve();
 	private watcher: FSWatcher | null = null;
 	private watchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -164,66 +172,89 @@ export class GitRepository {
 		gitDirectory: string,
 		indexPath: string,
 		emptyTree: string,
+		database: StateDatabase,
+		ownedDatabase: StateDatabase | null,
 	) {
 		this.root = root;
 		this.gitDirectory = gitDirectory;
 		this.indexPath = indexPath;
 		this.emptyTree = emptyTree;
 		this.id = sha256(root, "\0", gitDirectory).slice(0, 24);
-		this.store = new ReviewStore(gitDirectory);
-	}
-
-	static async open(candidate: string): Promise<GitRepository> {
-		const candidateRoot = await realpath(candidate).catch(() => {
-			throw new HttpError(
-				400,
-				"repository_not_found",
-				"The repository directory does not exist",
-			);
-		});
-		const rootResult = await runGit(candidateRoot, [
-			"rev-parse",
-			"--show-toplevel",
-		]);
-		const root = await realpath(decodeGitOutput(rootResult.stdout).trim());
-		const gitDirectoryResult = await runGit(root, [
-			"rev-parse",
-			"--absolute-git-dir",
-		]);
-		const gitDirectory = await realpath(
-			decodeGitOutput(gitDirectoryResult.stdout).trim(),
-		);
-		const indexPathResult = await runGit(root, [
-			"rev-parse",
-			"--git-path",
-			"index",
-		]);
-		const rawIndexPath = decodeGitOutput(indexPathResult.stdout).trim();
-		const indexPath = path.isAbsolute(rawIndexPath)
-			? rawIndexPath
-			: path.resolve(root, rawIndexPath);
-		const emptyTreeResult = await runGit(
-			root,
-			["hash-object", "-t", "tree", "--stdin"],
-			{
-				input: new Uint8Array(),
-			},
-		);
-		return new GitRepository(
+		this.ownedDatabase = ownedDatabase;
+		this.catalogAdded = database.registerRepository({
+			id: this.id,
+			name: path.basename(root),
 			root,
 			gitDirectory,
-			indexPath,
-			decodeGitOutput(emptyTreeResult.stdout).trim(),
-		);
+		}).added;
+		this.store = new ReviewStore(database, this.id);
 	}
 
-	async bootstrap(csrfToken: string) {
-		const snapshot = await this.getSnapshot();
-		return {
-			repository: snapshot.repository,
-			csrfToken,
-			operationRevision: snapshot.operationRevision,
-		};
+	static async open(
+		candidate: string,
+		database?: StateDatabase,
+	): Promise<GitRepository> {
+		const ownedDatabase = database ? null : StateDatabase.memory();
+		const stateDatabase = database ?? ownedDatabase;
+		if (!stateDatabase) throw new Error("State database is unavailable");
+		try {
+			const candidateRoot = await realpath(candidate).catch(() => {
+				throw new HttpError(
+					400,
+					"repository_not_found",
+					"The repository directory does not exist",
+				);
+			});
+			const rootResult = await runGit(candidateRoot, [
+				"rev-parse",
+				"--show-toplevel",
+			]);
+			const root = await realpath(decodeGitOutput(rootResult.stdout).trim());
+			const gitDirectoryResult = await runGit(root, [
+				"rev-parse",
+				"--absolute-git-dir",
+			]);
+			const gitDirectory = await realpath(
+				decodeGitOutput(gitDirectoryResult.stdout).trim(),
+			);
+			const indexPathResult = await runGit(root, [
+				"rev-parse",
+				"--git-path",
+				"index",
+			]);
+			const rawIndexPath = decodeGitOutput(indexPathResult.stdout).trim();
+			const indexPath = path.isAbsolute(rawIndexPath)
+				? rawIndexPath
+				: path.resolve(root, rawIndexPath);
+			const emptyTreeDirectory = await mkdtemp(
+				path.join(tmpdir(), "couch-review-empty-tree-"),
+			);
+			let emptyTreeResult;
+			try {
+				const emptyTreeFile = path.join(emptyTreeDirectory, "empty");
+				await writeFile(emptyTreeFile, new Uint8Array());
+				emptyTreeResult = await runGit(root, [
+					"hash-object",
+					"-t",
+					"tree",
+					"--",
+					emptyTreeFile,
+				]);
+			} finally {
+				await rm(emptyTreeDirectory, { recursive: true, force: true });
+			}
+			return new GitRepository(
+				root,
+				gitDirectory,
+				indexPath,
+				decodeGitOutput(emptyTreeResult.stdout).trim(),
+				stateDatabase,
+				ownedDatabase,
+			);
+		} catch (error) {
+			ownedDatabase?.close();
+			throw error;
+		}
 	}
 
 	async changes(): Promise<ChangesResponse> {
@@ -241,6 +272,7 @@ export class GitRepository {
 		let patch = "";
 		let tooLarge = false;
 		let binary = false;
+		let fullFilePatch: string | null | undefined;
 
 		if (file.kind === "untracked") {
 			const working = await this.readWorkingFile(file.path, MAX_DIFF_BYTES + 1);
@@ -267,6 +299,7 @@ export class GitRepository {
 				snapshot.repository.head,
 			);
 			patch = replacement.patch;
+			fullFilePatch = replacement.fullFilePatch;
 			tooLarge = replacement.tooLarge;
 		} else {
 			const paths = [
@@ -276,8 +309,7 @@ export class GitRepository {
 				(value, index, all): value is string =>
 					Boolean(value) && all.indexOf(value) === index,
 			);
-			const result = await runGit(
-				this.root,
+			const diffArgs = (contextLines: number) =>
 				[
 					"-c",
 					"diff.suppressBlankEmpty=false",
@@ -285,16 +317,55 @@ export class GitRepository {
 					"--no-color",
 					"--no-ext-diff",
 					"--no-textconv",
-					"--unified=3",
+					`--unified=${contextLines}`,
 					"--find-renames",
 					snapshot.repository.head ?? this.emptyTree,
 					"--",
 					...paths,
-				],
-				{ maxOutputBytes: MAX_DIFF_BYTES, truncateOutput: true },
+				] as const;
+			const needsFullFilePatch = !["added", "deleted"].includes(file.kind);
+			let [result, fullResult] = await this.readTrackedDiff(
+				diffArgs,
+				needsFullFilePatch,
 			);
+			if (result.stdout.byteLength === 0) {
+				const refreshed = await this.getSnapshot(true);
+				const refreshedFile = refreshed.files.find(
+					(candidate) => candidate.id === file.id,
+				);
+				if (!refreshedFile) {
+					throw new HttpError(
+						409,
+						"content_changed",
+						"The file is no longer changed; refresh the review queue",
+					);
+				}
+				if (refreshedFile.contentRevision !== file.contentRevision) {
+					throw new HttpError(
+						409,
+						"content_changed",
+						"The file changed while its diff was loading; try again",
+					);
+				}
+				await new Promise((resolve) => setTimeout(resolve, 40));
+				[result, fullResult] = await this.readTrackedDiff(
+					diffArgs,
+					needsFullFilePatch,
+				);
+				if (result.stdout.byteLength === 0) {
+					throw new GitCommandError(
+						diffArgs(3),
+						0,
+						"Git reported this path as changed but returned no diff output on two attempts.",
+						"empty_output",
+					);
+				}
+			}
 			tooLarge = result.stdoutTruncated;
 			patch = decodeGitOutput(result.stdout);
+			if (fullResult) {
+				fullFilePatch = this.completeFullFilePatch(fullResult);
+			}
 		}
 
 		const parsed = patch
@@ -327,12 +398,21 @@ export class GitRepository {
 						: []),
 					...parsed.header,
 				],
+				...(fullFilePatch !== undefined ? { fullFilePatch } : {}),
 				hunks,
 				additions: parsed.additions,
 				deletions: parsed.deletions,
 			},
 		});
 		let response = buildDiff(parsed.hunks, tooLarge);
+		if (
+			fullFilePatch &&
+			new TextEncoder().encode(JSON.stringify(response)).byteLength >
+				MAX_DIFF_BYTES
+		) {
+			fullFilePatch = null;
+			response = buildDiff(parsed.hunks, tooLarge);
+		}
 		if (
 			new TextEncoder().encode(JSON.stringify(response)).byteLength >
 			MAX_DIFF_BYTES
@@ -367,6 +447,35 @@ export class GitRepository {
 			response = buildDiff(takeRows(low), true);
 		}
 		return response;
+	}
+
+	private completeFullFilePatch(result: {
+		stdout: Uint8Array;
+		stdoutTruncated: boolean;
+	}): string | null {
+		if (result.stdoutTruncated) return null;
+		const fullPatch = decodeGitOutput(result.stdout);
+		return parseUnifiedDiff(fullPatch, MAX_DIFF_ROWS).truncated
+			? null
+			: fullPatch;
+	}
+
+	private async readTrackedDiff(
+		diffArgs: (contextLines: number) => readonly string[],
+		needsFullFilePatch: boolean,
+	): Promise<[GitResult, GitResult | null]> {
+		return Promise.all([
+			runGit(this.root, diffArgs(3), {
+				maxOutputBytes: MAX_DIFF_BYTES,
+				truncateOutput: true,
+			}),
+			needsFullFilePatch
+				? runGit(this.root, diffArgs(FULL_DIFF_CONTEXT_LINES), {
+						maxOutputBytes: MAX_DIFF_BYTES,
+						truncateOutput: true,
+					})
+				: Promise.resolve(null),
+		]);
 	}
 
 	async search(query: string, currentPath: string): Promise<SearchResponse> {
@@ -656,6 +765,98 @@ export class GitRepository {
 		});
 	}
 
+	async commit(input: CommitRequest): Promise<CommitResponse> {
+		return this.withStageLock(async () => {
+			if (!input || typeof input !== "object" || Array.isArray(input)) {
+				throw new HttpError(
+					400,
+					"invalid_request",
+					"Commit request is invalid",
+				);
+			}
+			assertNonEmptyString(input.message, "commit message", 20_000);
+			assertNonEmptyString(input.operationRevision, "operation revision", 200);
+			if (input.message.includes("\0")) {
+				throw new HttpError(
+					400,
+					"invalid_request",
+					"Commit message is invalid",
+				);
+			}
+
+			const before = await this.getSnapshot(true);
+			if (before.operationRevision !== input.operationRevision) {
+				throw new HttpError(
+					409,
+					"operation_changed",
+					"Project changes changed; refresh before committing",
+				);
+			}
+			if (before.files.some((file) => file.conflicted)) {
+				throw new HttpError(
+					409,
+					"unresolved_conflicts",
+					"Resolve Git conflicts before committing",
+				);
+			}
+			if (!before.files.some((file) => file.staged)) {
+				throw new HttpError(
+					409,
+					"nothing_staged",
+					"Nothing is staged to commit",
+				);
+			}
+
+			const message = input.message.replace(/\r\n?/g, "\n").trim();
+			try {
+				await runGit(
+					this.root,
+					["commit", "--message", message, "--cleanup=whitespace"],
+					{
+						maxOutputBytes: 1024 * 1024,
+						timeoutMs: 120_000,
+					},
+				);
+			} catch (error) {
+				if (error instanceof GitCommandError) {
+					if (
+						/Author identity unknown|unable to auto-detect email address|Please tell me who you are|empty ident (?:name|email)/i.test(
+							error.stderr,
+						)
+					) {
+						throw new HttpError(
+							409,
+							"git_identity_missing",
+							"Configure Git user.name and user.email before committing",
+						);
+					}
+					if (/nothing to commit|no changes added to commit/i.test(error.stderr)) {
+						throw new HttpError(
+							409,
+							"nothing_staged",
+							"Nothing is staged to commit",
+						);
+					}
+					if (/index\.lock|another git process/i.test(error.stderr)) {
+						throw new HttpError(
+							423,
+							"git_index_locked",
+							"The Git index is busy; try again shortly",
+						);
+					}
+				}
+				throw error;
+			}
+
+			const head = await runGit(this.root, ["rev-parse", "HEAD"]);
+			const after = await this.getSnapshot(true);
+			return {
+				commit: decodeGitOutput(head.stdout).trim(),
+				operationRevision: after.operationRevision,
+			};
+		});
+	}
+
 	async reviewState(): Promise<ReviewStateResponse> {
 		const [snapshot, state] = await Promise.all([
 			this.getSnapshot(),
@@ -925,8 +1126,7 @@ export class GitRepository {
 						return;
 					if (this.watchTimer) clearTimeout(this.watchTimer);
 					this.watchTimer = setTimeout(() => {
-						void this.getSnapshot()
-							.then((snapshot) => onChange(snapshot.operationRevision))
+						void this.refreshWatcher(onChange)
 							.catch(() => undefined);
 					}, 180);
 				},
@@ -940,6 +1140,17 @@ export class GitRepository {
 		if (this.watchTimer) clearTimeout(this.watchTimer);
 		this.watcher?.close();
 		this.watcher = null;
+		this.ownedDatabase?.close();
+	}
+
+	private async refreshWatcher(
+		onChange: (operationRevision: string) => void,
+	): Promise<void> {
+		const previousRevision = this.lastSnapshot?.operationRevision ?? null;
+		const snapshot = await this.getSnapshot();
+		if (snapshot.operationRevision !== previousRevision) {
+			onChange(snapshot.operationRevision);
+		}
 	}
 
 	private async getSnapshot(fresh = false): Promise<Snapshot> {
@@ -1035,7 +1246,7 @@ export class GitRepository {
 
 		const files = await Promise.all(
 			parsed.entries.map(async (entry): Promise<ChangeFile> => {
-				const id = sha256(entry.path).slice(0, 24);
+				const id = sha256(this.id, "\0", entry.path).slice(0, 24);
 				const contentRevision = await this.contentRevision(entry, parsed.head);
 				const review = reviews.get(id);
 				return {
@@ -1082,7 +1293,10 @@ export class GitRepository {
 			files,
 			operationRevision,
 			entries: new Map(
-				parsed.entries.map((entry) => [sha256(entry.path).slice(0, 24), entry]),
+				parsed.entries.map((entry) => [
+					sha256(this.id, "\0", entry.path).slice(0, 24),
+					entry,
+				]),
 			),
 		};
 	}
@@ -1160,10 +1374,18 @@ export class GitRepository {
 					constants.O_RDONLY | constants.O_NOFOLLOW,
 				);
 				try {
-					for await (const chunk of handle.createReadStream({
-						autoClose: false,
-					})) {
-						hash.update(chunk);
+					const chunk = Buffer.allocUnsafe(64 * 1024);
+					let position = 0;
+					while (true) {
+						const { bytesRead } = await handle.read(
+							chunk,
+							0,
+							chunk.byteLength,
+							position,
+						);
+						if (bytesRead === 0) break;
+						hash.update(chunk.subarray(0, bytesRead));
+						position += bytesRead;
 					}
 				} finally {
 					await handle.close();
@@ -1232,10 +1454,22 @@ export class GitRepository {
 		let objectId: string;
 		if (metadata.isSymbolicLink()) {
 			mode = "120000";
-			const result = await runGit(this.root, ["hash-object", "-w", "--stdin"], {
-				input: await readlink(absolutePath),
-			});
-			objectId = decodeGitOutput(result.stdout).trim();
+			const temporaryDirectory = await mkdtemp(
+				path.join(tmpdir(), "couch-review-symlink-"),
+			);
+			try {
+				const temporaryFile = path.join(temporaryDirectory, "target");
+				await writeFile(temporaryFile, await readlink(absolutePath));
+				const result = await runGit(this.root, [
+					"hash-object",
+					"-w",
+					"--",
+					temporaryFile,
+				]);
+				objectId = decodeGitOutput(result.stdout).trim();
+			} finally {
+				await rm(temporaryDirectory, { recursive: true, force: true });
+			}
 		} else if (metadata.isFile()) {
 			const containedPath = await this.assertSafeRegularPath(absolutePath);
 			mode = metadata.mode & 0o100 ? "100755" : "100644";
@@ -1294,11 +1528,8 @@ export class GitRepository {
 		}
 		await runGit(
 			this.root,
-			["update-index", "--force-remove", "-z", "--stdin"],
-			{
-				env: { GIT_INDEX_FILE: indexPath },
-				input: new TextEncoder().encode(`${paths.join("\0")}\0`),
-			},
+			["update-index", "--force-remove", "--", ...paths],
+			{ env: { GIT_INDEX_FILE: indexPath } },
 		);
 	}
 
@@ -1324,14 +1555,18 @@ export class GitRepository {
 			),
 		];
 		if (conflicts.length === 0) return;
-		await runGit(
-			this.root,
-			["update-index", "--force-remove", "-z", "--stdin"],
-			{
-				env: { GIT_INDEX_FILE: indexPath },
-				input: new TextEncoder().encode(`${conflicts.join("\0")}\0`),
-			},
-		);
+		for (let offset = 0; offset < conflicts.length; offset += 256) {
+			await runGit(
+				this.root,
+				[
+					"update-index",
+					"--force-remove",
+					"--",
+					...conflicts.slice(offset, offset + 256),
+				],
+				{ env: { GIT_INDEX_FILE: indexPath } },
+			);
+		}
 	}
 
 	private resolveProjectPath(relativePath: string): string {
@@ -1472,7 +1707,11 @@ export class GitRepository {
 	private async diffDeletedThenRecreated(
 		relativePath: string,
 		head: string,
-	): Promise<{ patch: string; tooLarge: boolean }> {
+	): Promise<{
+		patch: string;
+		fullFilePatch: string | null;
+		tooLarge: boolean;
+	}> {
 		const treeEntry = await runGit(this.root, [
 			"ls-tree",
 			"-z",
@@ -1491,6 +1730,7 @@ export class GitRepository {
 		}
 		const [base, working] = await Promise.all([
 			runGit(this.root, ["cat-file", "blob", objectMatch[1]], {
+				binaryOutput: true,
 				maxOutputBytes: MAX_DIFF_BYTES + 1,
 				truncateOutput: true,
 			}),
@@ -1510,8 +1750,7 @@ export class GitRepository {
 				writeFile(oldPath, base.stdout.subarray(0, MAX_DIFF_BYTES)),
 				writeFile(newPath, working.bytes.subarray(0, MAX_DIFF_BYTES)),
 			]);
-			const result = await runGit(
-				this.root,
+			const diffArgs = (contextLines: number) =>
 				[
 					"-c",
 					"diff.suppressBlankEmpty=false",
@@ -1520,19 +1759,30 @@ export class GitRepository {
 					"--no-color",
 					"--no-ext-diff",
 					"--no-textconv",
-					"--unified=3",
+					`--unified=${contextLines}`,
 					"--",
 					oldPath,
 					newPath,
-				],
-				{
+				] as const;
+			const [result, fullResult] = await Promise.all([
+				runGit(this.root, diffArgs(3), {
 					allowExitCodes: [0, 1],
 					maxOutputBytes: MAX_DIFF_BYTES,
 					truncateOutput: true,
-				},
-			);
+				}),
+				tooLarge
+					? Promise.resolve(null)
+					: runGit(this.root, diffArgs(FULL_DIFF_CONTEXT_LINES), {
+							allowExitCodes: [0, 1],
+							maxOutputBytes: MAX_DIFF_BYTES,
+							truncateOutput: true,
+						}),
+			]);
 			return {
 				patch: decodeGitOutput(result.stdout),
+				fullFilePatch: fullResult
+					? this.completeFullFilePatch(fullResult)
+					: null,
 				tooLarge: tooLarge || result.stdoutTruncated,
 			};
 		} finally {

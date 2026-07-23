@@ -20,6 +20,7 @@ import {
   Copy,
   FileCode2,
   GitBranch,
+  GitCommitHorizontal,
   GitPullRequestArrow,
   ListFilter,
   LoaderCircle,
@@ -38,6 +39,7 @@ import {
 } from "lucide-react";
 import {
   API_ROUTES,
+  type ApiErrorDiagnostic,
   type BootstrapResponse,
   type ChangeFile,
   type DiffHunk,
@@ -45,6 +47,8 @@ import {
   type DiffSide,
   type FileDiff,
   type ReviewComment,
+  type RepositoryCatalogEntry,
+  type RepositorySummary,
   type SearchMatch,
   type SearchResponse,
   type ServerEvent,
@@ -94,6 +98,11 @@ interface LineSelection {
   focusSide: SelectableSide;
 }
 
+interface HunkNavigation {
+  previous: number | null;
+  next: number | null;
+}
+
 interface UndoReview {
   fileId: string;
   contentRevision: string;
@@ -104,6 +113,15 @@ interface ToastState {
   id: number;
   message: string;
   undo?: UndoReview;
+  details?: boolean;
+}
+
+interface FailureState {
+  context: string;
+  message: string;
+  code: string;
+  status: number | null;
+  diagnostic?: ApiErrorDiagnostic;
 }
 
 const MIN_FONT_SIZE = 9;
@@ -112,6 +130,47 @@ const DEFAULT_FONT_SIZE = 11;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
+}
+
+function failureOf(error: unknown, context: string): FailureState {
+  if (error instanceof ApiError) {
+    return {
+      context,
+      message: error.message,
+      code: error.code,
+      status: error.status,
+      diagnostic: error.diagnostic,
+    };
+  }
+  return {
+    context,
+    message: messageOf(error),
+    code: "client_error",
+    status: null,
+  };
+}
+
+function formatFailureDiagnostics(failure: FailureState): string {
+  const lines = [
+    `Context: ${failure.context}`,
+    `Message: ${failure.message}`,
+    `Code: ${failure.code}`,
+    `HTTP status: ${failure.status ?? "n/a"}`,
+  ];
+  if (failure.diagnostic) {
+    lines.push(
+      `Diagnostic ID: ${failure.diagnostic.id}`,
+      `Git operation: ${failure.diagnostic.operation}`,
+      `Failure kind: ${failure.diagnostic.kind}`,
+      `Exit code: ${failure.diagnostic.exitCode ?? "n/a"}`,
+      `Retryable: ${failure.diagnostic.retryable ? "yes" : "no"}`,
+      `Timeout: ${failure.diagnostic.timeoutMs ?? "n/a"} ms`,
+    );
+    if (failure.diagnostic.stderr) {
+      lines.push("", "Git output:", failure.diagnostic.stderr);
+    }
+  }
+  return lines.join("\n");
 }
 
 function useMediaQuery(query: string): boolean {
@@ -204,6 +263,59 @@ function rowsForDiff(diff: FileDiff | null): DisplayRow[] {
 
 function sideLine(line: DiffLine, side: SelectableSide): number | null {
   return side === "new" ? line.newLine : line.oldLine;
+}
+
+function navigationBeforeFirstHunk(): HunkNavigation {
+  return { previous: null, next: 0 };
+}
+
+function navigationAtHunk(hunkIndex: number, hunkCount: number): HunkNavigation {
+  return {
+    previous: hunkIndex > 0 ? hunkIndex - 1 : null,
+    next: hunkIndex + 1 < hunkCount ? hunkIndex + 1 : null,
+  };
+}
+
+function hunkRange(
+  hunk: DiffHunk,
+  side: SelectableSide,
+): { start: number; end: number } {
+  const lineNumbers = hunk.lines.flatMap((line) => {
+    const lineNumber = sideLine(line, side);
+    return lineNumber === null ? [] : [lineNumber];
+  });
+  if (lineNumbers.length > 0) {
+    return {
+      start: Math.min(...lineNumbers),
+      end: Math.max(...lineNumbers),
+    };
+  }
+  const start = side === "new" ? hunk.newStart : hunk.oldStart;
+  const lineCount = side === "new" ? hunk.newLines : hunk.oldLines;
+  return { start, end: start + Math.max(1, lineCount) - 1 };
+}
+
+function navigationAtVisibleLine(
+  hunks: readonly DiffHunk[],
+  lineNumber: number,
+  side: SelectableSide,
+): HunkNavigation {
+  for (let hunkIndex = 0; hunkIndex < hunks.length; hunkIndex += 1) {
+    const range = hunkRange(hunks[hunkIndex]!, side);
+    if (lineNumber < range.start) {
+      return {
+        previous: hunkIndex > 0 ? hunkIndex - 1 : null,
+        next: hunkIndex,
+      };
+    }
+    if (lineNumber <= range.end) {
+      return navigationAtHunk(hunkIndex, hunks.length);
+    }
+  }
+  return {
+    previous: hunks.length > 0 ? hunks.length - 1 : null,
+    next: null,
+  };
 }
 
 function lineMatchesComment(line: DiffLine, comment: ReviewComment): boolean {
@@ -310,6 +422,9 @@ function highlightMatch(text: string, query: string): ReactNode {
 export function App() {
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
+  const [repositoryId, setRepositoryId] = useState<string | null>(null);
+  const [repository, setRepository] = useState<RepositorySummary | null>(null);
+  const [repositoryLoading, setRepositoryLoading] = useState(false);
   const [files, setFiles] = useState<ChangeFile[]>([]);
   const [operationRevision, setOperationRevision] = useState("");
   const [currentFileId, setCurrentFileId] = useState<string | null>(null);
@@ -320,6 +435,8 @@ export function App() {
   const [diffLoading, setDiffLoading] = useState(false);
   const [connected, setConnected] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
+  const [forgetRepositoryBusy, setForgetRepositoryBusy] = useState<string | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
@@ -335,7 +452,9 @@ export function App() {
     "couch-review:line-wrap",
     false,
   );
-  const [currentHunk, setCurrentHunk] = useState(0);
+  const [hunkNavigation, setHunkNavigation] = useState<HunkNavigation>(
+    navigationBeforeFirstHunk,
+  );
   const [selection, setSelection] = useState<LineSelection | null>(null);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentTrayOpen, setCommentTrayOpen] = useState(false);
@@ -344,6 +463,9 @@ export function App() {
   const [commentBusy, setCommentBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [stageBusy, setStageBusy] = useState(false);
+  const [commitComposerOpen, setCommitComposerOpen] = useState(false);
+  const [commitMessage, setCommitMessage] = useState("");
+  const [commitBusy, setCommitBusy] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchScope, setSearchScope] = useState<SearchScope>("current");
@@ -352,6 +474,8 @@ export function App() {
   const [sourcePreview, setSourcePreview] = useState<SourcePreviewResponse | null>(null);
   const [sourceBusy, setSourceBusy] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [failure, setFailure] = useState<FailureState | null>(null);
+  const [failureDetailsOpen, setFailureDetailsOpen] = useState(false);
   const [copyFallbackText, setCopyFallbackText] = useState("");
   const [pendingCommentJump, setPendingCommentJump] = useState<ReviewComment | null>(null);
   const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
@@ -363,6 +487,13 @@ export function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const toastCounter = useRef(0);
   const currentFileIdRef = useRef<string | null>(null);
+  const repositoryIdRef = useRef<string | null>(null);
+  const operationRevisionRef = useRef("");
+  const repositoryCatalogRef = useRef<RepositoryCatalogEntry[]>([]);
+  const repositoryLoadGenerationRef = useRef(0);
+  const repositoryRequestRef = useRef<AbortController | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const searchRequestRef = useRef<AbortController | null>(null);
   const diffRequestRef = useRef<{ generation: number; controller: AbortController } | null>(
     null,
   );
@@ -400,6 +531,12 @@ export function App() {
   }, [fileQuery, files, reviewFilter, stageFilter]);
 
   const reviewedCount = files.filter((file) => file.reviewed).length;
+  const stagedCount = files.filter((file) => file.staged).length;
+  const hunkCount = diff?.hunks.length ?? 0;
+  const canNavigatePreviousHunk =
+    hunkNavigation.previous !== null && hunkNavigation.previous < hunkCount;
+  const canNavigateNextHunk =
+    hunkNavigation.next !== null && hunkNavigation.next < hunkCount;
   const selectedRows = useMemo(() => {
     if (!selection) return [];
     const low = Math.min(selection.anchorIndex, selection.focusIndex);
@@ -491,19 +628,35 @@ export function App() {
     );
   }, [rows, selection]);
 
-  const showToast = useCallback((message: string, undo?: UndoReview) => {
+  const showToast = useCallback((message: string, undo?: UndoReview, details = false) => {
     toastCounter.current += 1;
-    setToast({ id: toastCounter.current, message, undo });
+    setToast({ id: toastCounter.current, message, undo, details });
   }, []);
+
+  const reportFailure = useCallback(
+    (error: unknown, context: string, toastMessage = true): FailureState => {
+      const next = failureOf(error, context);
+      setFailure(next);
+      setFailureDetailsOpen(false);
+      if (toastMessage) showToast(next.message, undefined, true);
+      return next;
+    },
+    [showToast],
+  );
 
   useEffect(() => {
     if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 5200);
+    const timeout = window.setTimeout(
+      () => setToast(null),
+      toast.details ? 12_000 : 5_200,
+    );
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
   const loadDiff = useCallback(
     async (fileId: string, resetPosition = false) => {
+      const activeRepositoryId = repositoryIdRef.current;
+      if (!activeRepositoryId) return;
       diffRequestRef.current?.controller.abort();
       const generation = (diffRequestRef.current?.generation ?? 0) + 1;
       const controller = new AbortController();
@@ -511,9 +664,10 @@ export function App() {
       setDiffLoading(true);
       setDiffError("");
       try {
-        const response = await api.diff(fileId, controller.signal);
+        const response = await api.diff(activeRepositoryId, fileId, controller.signal);
         if (
           diffRequestRef.current?.generation !== generation ||
+          repositoryIdRef.current !== activeRepositoryId ||
           currentFileIdRef.current !== fileId ||
           response.diff.fileId !== fileId
         ) {
@@ -521,13 +675,13 @@ export function App() {
         }
         if (resetPosition) {
           setSelection(null);
-          setCurrentHunk(0);
+          setHunkNavigation(navigationBeforeFirstHunk());
         }
         setDiff(response.diff);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         if (diffRequestRef.current?.generation === generation) {
-          setDiffError(messageOf(error));
+          setDiffError(reportFailure(error, "Load diff", false).message);
         }
       } finally {
         if (diffRequestRef.current?.generation === generation) {
@@ -535,22 +689,21 @@ export function App() {
         }
       }
     },
-    [],
+    [reportFailure],
   );
 
   const refreshChanges = useCallback(async () => {
-    const response = await api.changes();
+    const activeRepositoryId = repositoryIdRef.current;
+    if (!activeRepositoryId) throw new Error("No repository is selected");
+    const response = await api.changes(
+      activeRepositoryId,
+      repositoryRequestRef.current?.signal,
+    );
+    if (repositoryIdRef.current !== activeRepositoryId) return response;
+    operationRevisionRef.current = response.operationRevision;
     setFiles(response.files);
     setOperationRevision(response.operationRevision);
-    setBootstrap((current) =>
-      current
-        ? {
-            ...current,
-            repository: response.repository,
-            operationRevision: response.operationRevision,
-          }
-        : current,
-    );
+    setRepository(response.repository);
     setCurrentFileId((current) => {
       if (current && response.files.some((file) => file.id === current)) return current;
       return (
@@ -561,7 +714,13 @@ export function App() {
   }, []);
 
   const refreshReviewState = useCallback(async () => {
-    const response = await api.reviews();
+    const activeRepositoryId = repositoryIdRef.current;
+    if (!activeRepositoryId) throw new Error("No repository is selected");
+    const response = await api.reviews(
+      activeRepositoryId,
+      repositoryRequestRef.current?.signal,
+    );
+    if (repositoryIdRef.current !== activeRepositoryId) return response;
     setComments(response.comments);
     const commentCounts = new Map<string, number>();
     for (const comment of response.comments) {
@@ -580,41 +739,216 @@ export function App() {
     return response;
   }, []);
 
+  const refreshRepositories = useCallback(async () => {
+    const response = await api.repositories();
+    repositoryCatalogRef.current = response.repositories;
+    setBootstrap((current) =>
+      current
+        ? {
+            ...current,
+            repositories: response.repositories,
+            catalogRevision: response.catalogRevision,
+          }
+        : current,
+    );
+    return response;
+  }, []);
+
+  const loadRepository = useCallback(
+    async (nextRepositoryId: string, historyMode: "none" | "push" | "replace") => {
+      const generation = repositoryLoadGenerationRef.current + 1;
+      const showLoadingState = repositoryIdRef.current === null;
+      repositoryLoadGenerationRef.current = generation;
+      repositoryRequestRef.current?.abort();
+      eventSourceRef.current?.close();
+      eventSourceRef.current = null;
+      searchRequestRef.current?.abort();
+      const controller = new AbortController();
+      repositoryRequestRef.current = controller;
+      diffRequestRef.current?.controller.abort();
+      sourceRequestRef.current?.controller.abort();
+      repositoryIdRef.current = nextRepositoryId;
+      currentFileIdRef.current = null;
+      setRepositoryId(nextRepositoryId);
+      setRepository(null);
+      setFiles([]);
+      setComments([]);
+      operationRevisionRef.current = "";
+      setOperationRevision("");
+      setCurrentFileId(null);
+      setDiff(null);
+      setDiffError("");
+      setDiffLoading(false);
+      setSelection(null);
+      setHunkNavigation(navigationBeforeFirstHunk());
+      setSearchOpen(false);
+      setSearchResult(null);
+      setSearchQuery("");
+      setSourcePreview(null);
+      setCommentComposerOpen(false);
+      setCommentBody("");
+      setEditingComment(null);
+      setCommentTrayOpen(false);
+      setFocusedCommentId(null);
+      setPendingCommentJump(null);
+      setCopyFallbackText("");
+      setCommitComposerOpen(false);
+      setCommitMessage("");
+      setReviewBusy(false);
+      setStageBusy(false);
+      setCommitBusy(false);
+      setCommentBusy(false);
+      setSearchBusy(false);
+      setSourceBusy(false);
+      setToast(null);
+      setFailure(null);
+      setFailureDetailsOpen(false);
+      setDrawerOpen(false);
+      setRepositoryPickerOpen(false);
+      setLoadError("");
+      setRepositoryLoading(true);
+      setPhase(showLoadingState ? "loading" : "ready");
+      try {
+        const [changes, reviewState] = await Promise.all([
+          api.changes(nextRepositoryId, controller.signal),
+          api.reviews(nextRepositoryId, controller.signal),
+        ]);
+        if (
+          repositoryLoadGenerationRef.current !== generation ||
+          repositoryIdRef.current !== nextRepositoryId
+        ) {
+          return;
+        }
+        setRepository(changes.repository);
+        setFiles(changes.files);
+        operationRevisionRef.current = changes.operationRevision;
+        setOperationRevision(changes.operationRevision);
+        setComments(reviewState.comments);
+        const nextFileId =
+          changes.files.find((file) => !file.reviewed)?.id ??
+          changes.files[0]?.id ??
+          null;
+        currentFileIdRef.current = nextFileId;
+        setCurrentFileId(nextFileId);
+        if (historyMode !== "none") {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get("repo") !== nextRepositoryId) {
+            url.searchParams.set("repo", nextRepositoryId);
+            window.history[historyMode === "push" ? "pushState" : "replaceState"](
+              null,
+              "",
+              url,
+            );
+          }
+        }
+        setConnected(true);
+        setPhase("ready");
+      } catch (error) {
+        if (repositoryLoadGenerationRef.current !== generation) return;
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setLoadError(messageOf(error));
+        setConnected(!(error instanceof ApiError && error.status === 0));
+        setPhase("error");
+      } finally {
+        if (repositoryLoadGenerationRef.current === generation) setRepositoryLoading(false);
+      }
+    },
+    [],
+  );
+
+  const clearRepositorySelection = useCallback(() => {
+    repositoryLoadGenerationRef.current += 1;
+    repositoryRequestRef.current?.abort();
+    repositoryRequestRef.current = null;
+    eventSourceRef.current?.close();
+    eventSourceRef.current = null;
+    searchRequestRef.current?.abort();
+    diffRequestRef.current?.controller.abort();
+    sourceRequestRef.current?.controller.abort();
+    repositoryIdRef.current = null;
+    currentFileIdRef.current = null;
+    setRepositoryId(null);
+    setRepository(null);
+    setRepositoryLoading(false);
+    setFiles([]);
+    setComments([]);
+    operationRevisionRef.current = "";
+    setOperationRevision("");
+    setCurrentFileId(null);
+    setDiff(null);
+    setDiffError("");
+    setDiffLoading(false);
+    setSelection(null);
+    setHunkNavigation(navigationBeforeFirstHunk());
+    setSearchOpen(false);
+    setSearchResult(null);
+    setSearchQuery("");
+    setSourcePreview(null);
+    setCommentComposerOpen(false);
+    setCommentBody("");
+    setEditingComment(null);
+    setCommentTrayOpen(false);
+    setFocusedCommentId(null);
+    setPendingCommentJump(null);
+    setCommitComposerOpen(false);
+    setCommitMessage("");
+    setReviewBusy(false);
+    setStageBusy(false);
+    setCommitBusy(false);
+    setCommentBusy(false);
+    setSearchBusy(false);
+    setSourceBusy(false);
+    setToast(null);
+    setFailure(null);
+    setFailureDetailsOpen(false);
+    setDrawerOpen(false);
+    setCopyFallbackText("");
+    setRepositoryPickerOpen(false);
+    setLoadError("");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("repo");
+    window.history.replaceState(null, "", url);
+    setPhase("ready");
+  }, []);
+
   const loadApp = useCallback(async () => {
     setPhase("loading");
     setLoadError("");
     try {
-      const [nextBootstrap, changes, reviewState] = await Promise.all([
-        api.bootstrap(),
-        api.changes(),
-        api.reviews(),
-      ]);
-      setBootstrap({
-        ...nextBootstrap,
-        repository: changes.repository,
-        operationRevision: changes.operationRevision,
-      });
-      setFiles(changes.files);
-      setOperationRevision(changes.operationRevision);
-      setComments(reviewState.comments);
-      setCurrentFileId((current) =>
-        current && changes.files.some((file) => file.id === current)
-          ? current
-          : (changes.files.find((file) => !file.reviewed)?.id ??
-            changes.files[0]?.id ??
-            null),
-      );
-      setConnected(true);
-      setPhase("ready");
+      const nextBootstrap = await api.bootstrap();
+      repositoryCatalogRef.current = nextBootstrap.repositories;
+      setBootstrap(nextBootstrap);
+      const requestedId = new URL(window.location.href).searchParams.get("repo");
+      const selected =
+        nextBootstrap.repositories.find(
+          (item) => item.id === requestedId && item.available,
+        ) ??
+        nextBootstrap.repositories.find(
+          (item) => item.id === nextBootstrap.defaultRepositoryId && item.available,
+        ) ??
+        nextBootstrap.repositories.find((item) => item.available);
+      if (!selected) {
+        clearRepositorySelection();
+        setConnected(true);
+        return;
+      }
+      await loadRepository(selected.id, "replace");
     } catch (error) {
       setLoadError(messageOf(error));
       setConnected(!(error instanceof ApiError && error.status === 0));
       setPhase("error");
     }
-  }, []);
+  }, [clearRepositorySelection, loadRepository]);
 
   useEffect(() => {
     void loadApp();
+    return () => {
+      repositoryRequestRef.current?.abort();
+      diffRequestRef.current?.controller.abort();
+      sourceRequestRef.current?.controller.abort();
+      eventSourceRef.current?.close();
+      searchRequestRef.current?.abort();
+    };
   }, [loadApp]);
 
   useEffect(() => {
@@ -622,21 +956,49 @@ export function App() {
   }, [currentFileId]);
 
   useEffect(() => {
-    if (phase !== "ready") return;
-    const stream = new EventSource(API_ROUTES.events);
+    repositoryIdRef.current = repositoryId;
+  }, [repositoryId]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const requestedId = new URL(window.location.href).searchParams.get("repo");
+      const selected = repositoryCatalogRef.current.find(
+        (item) => item.id === requestedId && item.available,
+      );
+      if (selected) {
+        if (selected.id !== repositoryIdRef.current) {
+          void loadRepository(selected.id, "none");
+        }
+        return;
+      }
+      const fallback = repositoryCatalogRef.current.find((item) => item.available);
+      if (fallback) void loadRepository(fallback.id, "replace");
+      else clearRepositorySelection();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [clearRepositorySelection, loadRepository]);
+
+  useEffect(() => {
+    if (phase !== "ready" || repositoryLoading || !repositoryId) return;
+    const stream = new EventSource(API_ROUTES.events(repositoryId));
+    eventSourceRef.current = stream;
     stream.onopen = () => setConnected(true);
     stream.onerror = () => setConnected(false);
     stream.onmessage = (message) => {
       setConnected(true);
       try {
         const event = JSON.parse(message.data) as ServerEvent;
+        if (event.repositoryId !== repositoryId) return;
         if (event.type === "changes" || event.type === "ready") {
+          if (event.operationRevision === operationRevisionRef.current) {
+            if (event.type === "ready") {
+              void refreshReviewState().catch(() => setConnected(false));
+            }
+            return;
+          }
           const fileId = currentFileIdRef.current;
-          void (event.type === "ready" ? api.bootstrap() : Promise.resolve(null))
-            .then((nextBootstrap) => {
-              if (nextBootstrap) setBootstrap(nextBootstrap);
-              return refreshChanges();
-            })
+          void refreshChanges()
             .then(async (response) => {
               await refreshReviewState();
               if (!fileId || !response.files.some((file) => file.id === fileId)) return;
@@ -644,19 +1006,45 @@ export function App() {
             })
             .catch(() => setConnected(false));
         }
-        if (event.type === "comments" || event.type === "reviews") {
+        if (event.type === "state") {
           void refreshReviewState().catch(() => setConnected(false));
+        }
+        if (event.type === "repositories") {
+          void refreshRepositories()
+            .then((catalog) => {
+              const current = catalog.repositories.find(
+                (item) => item.id === repositoryIdRef.current,
+              );
+              if (current?.available) return;
+              const next = catalog.repositories.find((item) => item.available);
+              if (next) void loadRepository(next.id, "replace");
+              else clearRepositorySelection();
+            })
+            .catch(() => setConnected(false));
         }
       } catch {
         // Ignore malformed keep-alives while leaving the stream connected.
       }
     };
-    return () => stream.close();
-  }, [loadDiff, phase, refreshChanges, refreshReviewState]);
+    return () => {
+      stream.close();
+      if (eventSourceRef.current === stream) eventSourceRef.current = null;
+    };
+  }, [
+    clearRepositorySelection,
+    loadDiff,
+    loadRepository,
+    phase,
+    refreshChanges,
+    refreshRepositories,
+    refreshReviewState,
+    repositoryId,
+    repositoryLoading,
+  ]);
 
   useEffect(() => {
     setSelection(null);
-    setCurrentHunk(0);
+    setHunkNavigation(navigationBeforeFirstHunk());
     setDiff(null);
     setDiffError("");
     if (!currentFileId) {
@@ -677,7 +1065,7 @@ export function App() {
   }, [fontSize]);
 
   useEffect(() => {
-    if (!searchOpen || searchQuery.trim().length < 1 || !activeFile) {
+    if (!searchOpen || searchQuery.trim().length < 1 || !activeFile || !repositoryId) {
       setSearchResult(null);
       setSearchBusy(false);
       return;
@@ -686,13 +1074,15 @@ export function App() {
     const query = searchQuery.trim();
     const currentPath = activeFile.path;
     const controller = new AbortController();
+    searchRequestRef.current = controller;
     const timeout = window.setTimeout(() => {
       setSearchBusy(true);
       void api
-        .search(query, currentPath, controller.signal)
+        .search(repositoryId, query, currentPath, controller.signal)
         .then((response) => {
           if (
             !controller.signal.aborted &&
+            repositoryIdRef.current === repositoryId &&
             response.query === query &&
             response.currentPath === currentPath
           ) {
@@ -711,8 +1101,9 @@ export function App() {
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
+      if (searchRequestRef.current === controller) searchRequestRef.current = null;
     };
-  }, [activeFile, searchOpen, searchQuery, showToast]);
+  }, [activeFile, repositoryId, searchOpen, searchQuery, showToast]);
 
   const selectFile = useCallback((fileId: string) => {
     setCurrentFileId(fileId);
@@ -720,6 +1111,68 @@ export function App() {
     setCommentTrayOpen(false);
     diffViewerRef.current?.scrollToTop();
   }, []);
+
+  const openRepositoryPicker = useCallback(() => {
+    setRepositoryPickerOpen(true);
+    void refreshRepositories().catch((error) => showToast(messageOf(error)));
+  }, [refreshRepositories, showToast]);
+
+  const selectRepository = useCallback(
+    (entry: RepositoryCatalogEntry) => {
+      if (!entry.available) return;
+      if (entry.id === repositoryIdRef.current) {
+        setRepositoryPickerOpen(false);
+        return;
+      }
+      void loadRepository(entry.id, "push");
+    },
+    [loadRepository],
+  );
+
+  const forgetSavedRepository = useCallback(
+    async (entry: RepositoryCatalogEntry) => {
+      if (
+        !bootstrap ||
+        forgetRepositoryBusy ||
+        !window.confirm(
+          `Forget ${entry.name}? Its saved reviews and comments will be deleted.`,
+        )
+      ) {
+        return;
+      }
+      setForgetRepositoryBusy(entry.id);
+      const signal = repositoryRequestRef.current?.signal;
+      try {
+        await api.forgetRepository(entry.id, bootstrap.csrfToken, signal);
+        if (signal?.aborted) return;
+        const catalog = await refreshRepositories();
+        if (entry.id === repositoryIdRef.current) {
+          const next = catalog.repositories.find((item) => item.available);
+          if (next) {
+            await loadRepository(next.id, "replace");
+          } else {
+            clearRepositorySelection();
+          }
+        }
+        showToast(`Forgot ${entry.name}`);
+      } catch (error) {
+        if (signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+          return;
+        }
+        showToast(messageOf(error));
+      } finally {
+        setForgetRepositoryBusy((current) => (current === entry.id ? null : current));
+      }
+    },
+    [
+      bootstrap,
+      clearRepositorySelection,
+      forgetRepositoryBusy,
+      loadRepository,
+      refreshRepositories,
+      showToast,
+    ],
+  );
 
   const navigateFile = useCallback(
     (direction: -1 | 1) => {
@@ -733,15 +1186,13 @@ export function App() {
   const navigateHunk = useCallback(
     (direction: -1 | 1) => {
       const hunkCount = diff?.hunks.length ?? 0;
-      if (hunkCount === 0) return;
-      const nextHunk = Math.min(
-        hunkCount - 1,
-        Math.max(0, currentHunk + direction),
-      );
-      setCurrentHunk(nextHunk);
-      diffViewerRef.current?.scrollToHunk(nextHunk);
+      const targetHunk =
+        direction === -1 ? hunkNavigation.previous : hunkNavigation.next;
+      if (targetHunk === null || targetHunk < 0 || targetHunk >= hunkCount) return;
+      setHunkNavigation(navigationAtHunk(targetHunk, hunkCount));
+      diffViewerRef.current?.scrollToHunk(targetHunk);
     },
-    [currentHunk, diff],
+    [diff, hunkNavigation],
   );
 
   const openWordSearch = useCallback((word: string) => {
@@ -781,15 +1232,11 @@ export function App() {
 
   const handleVisibleLineChange = useCallback(
     (lineNumber: number, side: SelectableSide) => {
-      const row = rows.find(
-        (candidate): candidate is LineRow =>
-          candidate.type === "line" &&
-          candidate.line.kind !== "metadata" &&
-          sideLine(candidate.line, side) === lineNumber,
+      setHunkNavigation(
+        navigationAtVisibleLine(diff?.hunks ?? [], lineNumber, side),
       );
-      if (row) setCurrentHunk(row.hunkIndex);
     },
-    [rows],
+    [diff],
   );
 
   const handleViewerLineNumberClick = useCallback(
@@ -810,7 +1257,9 @@ export function App() {
 
   const setReviewed = useCallback(
     async (file: ChangeFile, reviewed: boolean, advance: boolean) => {
-      if (!bootstrap || reviewBusy) return;
+      if (!bootstrap || !repositoryId || reviewBusy) return;
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
       setReviewBusy(true);
       const previous = file.reviewed;
       setFiles((current) =>
@@ -818,9 +1267,12 @@ export function App() {
       );
       try {
         await api.setReviewed(
+          activeRepositoryId,
           { fileId: file.id, contentRevision: file.contentRevision, reviewed },
           bootstrap.csrfToken,
+          signal,
         );
+        if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
         if (advance && reviewed) {
           const after = files.slice(activeFileIndex + 1);
           const before = files.slice(0, Math.max(0, activeFileIndex));
@@ -836,6 +1288,13 @@ export function App() {
           reviewed: previous,
         });
       } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
         setFiles((current) =>
           current.map((item) =>
             item.id === file.id ? { ...item, reviewed: previous } : item,
@@ -843,15 +1302,17 @@ export function App() {
         );
         showToast(messageOf(error));
       } finally {
-        setReviewBusy(false);
+        if (repositoryIdRef.current === activeRepositoryId) setReviewBusy(false);
       }
     },
-    [activeFileIndex, bootstrap, files, reviewBusy, selectFile, showToast],
+    [activeFileIndex, bootstrap, files, repositoryId, reviewBusy, selectFile, showToast],
   );
 
   const undoReview = useCallback(
     async (undo: UndoReview) => {
-      if (!bootstrap) return;
+      if (!bootstrap || !repositoryId) return;
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
       const file = files.find((item) => item.id === undo.fileId);
       if (!file) return;
       setToast(null);
@@ -862,27 +1323,39 @@ export function App() {
       );
       try {
         await api.setReviewed(
+          activeRepositoryId,
           {
             fileId: undo.fileId,
             contentRevision: undo.contentRevision,
             reviewed: undo.reviewed,
           },
           bootstrap.csrfToken,
+          signal,
         );
       } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
         void refreshReviewState();
         showToast(messageOf(error));
       }
     },
-    [bootstrap, files, refreshReviewState, showToast],
+    [bootstrap, files, refreshReviewState, repositoryId, showToast],
   );
 
   const toggleStageActiveFile = useCallback(async () => {
-    if (!activeFile || !bootstrap || stageBusy) return;
+    if (!activeFile || !bootstrap || !repositoryId || stageBusy) return;
+    const activeRepositoryId = repositoryId;
+    const signal = repositoryRequestRef.current?.signal;
     const shouldStage = !activeFile.staged || activeFile.unstaged;
     setStageBusy(true);
     try {
       const response = await api.stage(
+        activeRepositoryId,
         {
           fileId: activeFile.id,
           operationRevision,
@@ -890,28 +1363,94 @@ export function App() {
           staged: shouldStage,
         },
         bootstrap.csrfToken,
+        signal,
       );
+      if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+      operationRevisionRef.current = response.operationRevision;
       setOperationRevision(response.operationRevision);
       await refreshChanges();
+      if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
       if (currentFileIdRef.current === activeFile.id) {
         await loadDiff(activeFile.id);
       }
       showToast(shouldStage ? "File staged" : "File unstaged");
     } catch (error) {
-      showToast(messageOf(error));
+      if (
+        signal?.aborted ||
+        repositoryIdRef.current !== activeRepositoryId ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
+      reportFailure(error, shouldStage ? "Stage file" : "Unstage file");
       if (error instanceof ApiError && error.status === 409) void refreshChanges();
     } finally {
-      setStageBusy(false);
+      if (repositoryIdRef.current === activeRepositoryId) setStageBusy(false);
     }
   }, [
     activeFile,
     bootstrap,
     loadDiff,
     operationRevision,
+    reportFailure,
     refreshChanges,
+    repositoryId,
     showToast,
     stageBusy,
   ]);
+
+  const commitStagedChanges = useCallback(
+    async (event?: FormEvent) => {
+      event?.preventDefault();
+      const message = commitMessage.trim();
+      if (!message || !bootstrap || !repositoryId || commitBusy || stagedCount === 0) return;
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
+      setCommitBusy(true);
+      try {
+        const response = await api.commit(
+          activeRepositoryId,
+          { message, operationRevision },
+          bootstrap.csrfToken,
+          signal,
+        );
+        if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+        operationRevisionRef.current = response.operationRevision;
+        setOperationRevision(response.operationRevision);
+        setCommitComposerOpen(false);
+        setCommitMessage("");
+        await Promise.all([refreshChanges(), refreshReviewState()]);
+        if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+        showToast(`Committed ${response.commit.slice(0, 7)}`);
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        reportFailure(error, "Commit staged changes");
+        if (error instanceof ApiError && error.status === 409) {
+          void refreshChanges();
+        }
+      } finally {
+        if (repositoryIdRef.current === activeRepositoryId) setCommitBusy(false);
+      }
+    },
+    [
+      bootstrap,
+      commitBusy,
+      commitMessage,
+      operationRevision,
+      reportFailure,
+      refreshChanges,
+      refreshReviewState,
+      repositoryId,
+      showToast,
+      stagedCount,
+    ],
+  );
 
   const openCommentComposer = useCallback(() => {
     if (!selectedLineRange) return;
@@ -924,14 +1463,19 @@ export function App() {
     async (event?: FormEvent) => {
       event?.preventDefault();
       const body = commentBody.trim();
-      if (!body || !bootstrap || commentBusy) return;
+      if (!body || !bootstrap || !repositoryId || commentBusy) return;
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
       setCommentBusy(true);
       try {
         if (editingComment) {
           const response = await api.updateComment(
+            activeRepositoryId,
             { id: editingComment.id, body },
             bootstrap.csrfToken,
+            signal,
           );
+          if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
           setComments((current) =>
             current.map((comment) =>
               comment.id === response.comment.id ? response.comment : comment,
@@ -940,6 +1484,7 @@ export function App() {
           showToast("Comment updated");
         } else if (activeFile && selectedLineRange?.hunk) {
           const response = await api.createComment(
+            activeRepositoryId,
             {
               fileId: activeFile.id,
               contentRevision: activeFile.contentRevision,
@@ -955,7 +1500,9 @@ export function App() {
               body,
             },
             bootstrap.csrfToken,
+            signal,
           );
+          if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
           setComments((current) =>
             current.some((comment) => comment.id === response.comment.id)
               ? current.map((comment) =>
@@ -971,9 +1518,16 @@ export function App() {
         setCommentBody("");
         setEditingComment(null);
       } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
         showToast(messageOf(error));
       } finally {
-        setCommentBusy(false);
+        if (repositoryIdRef.current === activeRepositoryId) setCommentBusy(false);
       }
     },
     [
@@ -983,6 +1537,7 @@ export function App() {
       commentBusy,
       editingComment,
       refreshReviewState,
+      repositoryId,
       selectedLineRange,
       showToast,
     ],
@@ -999,12 +1554,21 @@ export function App() {
     async (comment: ReviewComment) => {
       if (
         !bootstrap ||
+        !repositoryId ||
         !window.confirm(`Delete comment at ${formatCommentReference(comment)}?`)
       ) {
         return;
       }
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
       try {
-        await api.deleteComment({ id: comment.id }, bootstrap.csrfToken);
+        await api.deleteComment(
+          activeRepositoryId,
+          { id: comment.id },
+          bootstrap.csrfToken,
+          signal,
+        );
+        if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
         setComments((current) => current.filter((item) => item.id !== comment.id));
         setFiles((current) =>
           current.map((file) =>
@@ -1015,18 +1579,34 @@ export function App() {
         );
         showToast("Comment deleted");
       } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
         showToast(messageOf(error));
       }
     },
-    [bootstrap, showToast],
+    [bootstrap, repositoryId, showToast],
   );
 
   const copyComments = useCallback(async () => {
+    const activeRepositoryId = repositoryIdRef.current;
+    if (!activeRepositoryId) return;
     let currentComments: ReviewComment[];
     try {
       const reviewState = await refreshReviewState();
+      if (repositoryIdRef.current !== activeRepositoryId) return;
       currentComments = reviewState.comments.filter((comment) => !comment.stale);
     } catch (error) {
+      if (
+        repositoryIdRef.current !== activeRepositoryId ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
       showToast(`Could not refresh comment anchors: ${messageOf(error)}`);
       return;
     }
@@ -1047,31 +1627,57 @@ export function App() {
     }
   }, [refreshReviewState, showToast]);
 
+  const copyFailureDiagnostics = useCallback(async () => {
+    if (!failure) return;
+    try {
+      await copyToClipboard(formatFailureDiagnostics(failure));
+      showToast("Diagnostics copied");
+    } catch (error) {
+      showToast(messageOf(error));
+    }
+  }, [failure, showToast]);
+
   const showSource = useCallback(
     async (match: SearchMatch) => {
+      if (!repositoryId) return;
+      const activeRepositoryId = repositoryId;
       sourceRequestRef.current?.controller.abort();
       const generation = (sourceRequestRef.current?.generation ?? 0) + 1;
       const controller = new AbortController();
       sourceRequestRef.current = { generation, controller };
       setSourceBusy(true);
       try {
-        const response = await api.source(match.path, match.line, controller.signal);
+        const response = await api.source(
+          activeRepositoryId,
+          match.path,
+          match.line,
+          controller.signal,
+        );
         if (
           sourceRequestRef.current?.generation === generation &&
           !controller.signal.aborted &&
+          repositoryIdRef.current === activeRepositoryId &&
           response.path === match.path
         ) {
           setSourcePreview(response);
         }
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === "AbortError")) {
+        if (
+          repositoryIdRef.current === activeRepositoryId &&
+          !(error instanceof DOMException && error.name === "AbortError")
+        ) {
           showToast(messageOf(error));
         }
       } finally {
-        if (sourceRequestRef.current?.generation === generation) setSourceBusy(false);
+        if (
+          sourceRequestRef.current?.generation === generation &&
+          repositoryIdRef.current === activeRepositoryId
+        ) {
+          setSourceBusy(false);
+        }
       }
     },
-    [showToast],
+    [repositoryId, showToast],
   );
 
   useEffect(() => {
@@ -1156,7 +1762,10 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const overlayOpen =
+        repositoryPickerOpen ||
         searchOpen ||
+        failureDetailsOpen ||
+        commitComposerOpen ||
         commentComposerOpen ||
         commentTrayOpen ||
         Boolean(copyFallbackText) ||
@@ -1164,6 +1773,9 @@ export function App() {
       if (event.key === "Escape" && overlayOpen) {
         event.preventDefault();
         if (copyFallbackText) setCopyFallbackText("");
+        else if (failureDetailsOpen) setFailureDetailsOpen(false);
+        else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
+        else if (commitComposerOpen) setCommitComposerOpen(false);
         else if (commentComposerOpen) setCommentComposerOpen(false);
         else if (commentTrayOpen) setCommentTrayOpen(false);
         else if (searchOpen) setSearchOpen(false);
@@ -1185,19 +1797,25 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeFile,
+    commitComposerOpen,
     commentComposerOpen,
     commentTrayOpen,
     copyFallbackText,
     desktop,
     drawerOpen,
+    failureDetailsOpen,
     navigateFile,
     navigateHunk,
+    repositoryPickerOpen,
     searchOpen,
     setReviewed,
   ]);
 
   const overlayVisible =
+    repositoryPickerOpen ||
     searchOpen ||
+    failureDetailsOpen ||
+    commitComposerOpen ||
     commentComposerOpen ||
     commentTrayOpen ||
     Boolean(copyFallbackText) ||
@@ -1239,12 +1857,15 @@ export function App() {
       if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [
+    commitComposerOpen,
     commentComposerOpen,
     commentTrayOpen,
     copyFallbackText,
     desktop,
     drawerOpen,
+    failureDetailsOpen,
     overlayVisible,
+    repositoryPickerOpen,
     searchOpen,
   ]);
 
@@ -1402,6 +2023,21 @@ export function App() {
               <div className="progress-label">
                 {reviewedCount} of {files.length} reviewed
               </div>
+              <button
+                className="action-button commit-action"
+                disabled={stagedCount === 0 || commitBusy}
+                onClick={() => {
+                  setDrawerOpen(false);
+                  setCommitMessage("");
+                  setCommitComposerOpen(true);
+                }}
+                type="button"
+              >
+                <GitCommitHorizontal size={16} />
+                {stagedCount === 0
+                  ? "No staged changes"
+                  : `Commit ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
+              </button>
             </footer>
           </aside>
         </>
@@ -1423,12 +2059,17 @@ export function App() {
             role="region"
           >
             <span className={`connection-dot ${connected ? "" : "offline"}`} />
-            <span
-              className="compact-repo-name"
-              title={`${bootstrap?.repository.name ?? "Couch Review"} · ${bootstrap?.repository.branch ?? "detached"}`}
+            <button
+              aria-label="Select repository"
+              aria-haspopup="dialog"
+              className="compact-repo-name repository-trigger"
+              onClick={openRepositoryPicker}
+              title={`${repository?.name ?? "Couch Review"} · ${repository?.branch ?? "detached"}`}
+              type="button"
             >
-              {bootstrap?.repository.name ?? "Couch Review"}
-            </span>
+              <span>{repository?.name ?? "Couch Review"}</span>
+              <ChevronDown size={12} />
+            </button>
             <span className="compact-context-divider">/</span>
             <span className="file-path" title={activeFile?.path}>
               {activeFile?.path ?? "No changed file"}
@@ -1449,13 +2090,20 @@ export function App() {
           </div>
         ) : (
           <div className="repo-heading">
-            <div className="repo-name">
+            <button
+              aria-label="Select repository"
+              aria-haspopup="dialog"
+              className="repo-name repository-trigger"
+              onClick={openRepositoryPicker}
+              type="button"
+            >
               <span className={`connection-dot ${connected ? "" : "offline"}`} />
-              <span>{bootstrap?.repository.name ?? "Couch Review"}</span>
-            </div>
+              <span>{repository?.name ?? "Couch Review"}</span>
+              <ChevronDown size={13} />
+            </button>
             <div className="repo-meta">
               <GitBranch size={10} />
-              <span>{bootstrap?.repository.branch ?? "detached"}</span>
+              <span>{repository?.branch ?? "detached"}</span>
               <span>·</span>
               <span>{reviewedCount}/{files.length} reviewed</span>
             </div>
@@ -1467,7 +2115,7 @@ export function App() {
               <button
                 aria-label="Previous hunk"
                 className="icon-button"
-                disabled={currentHunk <= 0}
+                disabled={!canNavigatePreviousHunk}
                 onClick={() => navigateHunk(-1)}
                 title="Previous hunk (K)"
                 type="button"
@@ -1477,7 +2125,7 @@ export function App() {
               <button
                 aria-label="Next hunk"
                 className="icon-button"
-                disabled={currentHunk >= (diff?.hunks.length ?? 0) - 1}
+                disabled={!canNavigateNextHunk}
                 onClick={() => navigateHunk(1)}
                 title="Next hunk (J)"
                 type="button"
@@ -1607,6 +2255,15 @@ export function App() {
             <AlertTriangle className="state-icon" size={28} />
             <h2 className="state-title">Couldn’t load this diff</h2>
             <p className="state-copy">{diffError}</p>
+            {failure && (
+              <button
+                className="action-button secondary"
+                onClick={() => setFailureDetailsOpen(true)}
+                type="button"
+              >
+                Error details
+              </button>
+            )}
             {currentFileId && (
               <button
                 className="action-button secondary"
@@ -1713,7 +2370,7 @@ export function App() {
           <button
             aria-label="Previous hunk"
             className="icon-button"
-            disabled={currentHunk <= 0}
+            disabled={!canNavigatePreviousHunk}
             onClick={() => navigateHunk(-1)}
             title="Previous hunk (K)"
             type="button"
@@ -1723,7 +2380,7 @@ export function App() {
           <button
             aria-label="Next hunk"
             className="icon-button"
-            disabled={currentHunk >= (diff?.hunks.length ?? 0) - 1}
+            disabled={!canNavigateNextHunk}
             onClick={() => navigateHunk(1)}
             title="Next hunk (J)"
             type="button"
@@ -1779,6 +2436,90 @@ export function App() {
           {comments.length > 0 && <span className="badge">{comments.length}</span>}
         </button>
       </nav>
+
+      {repositoryPickerOpen && (
+        <>
+          <button
+            aria-label="Close repository picker"
+            className="sheet-scrim"
+            onClick={() => setRepositoryPickerOpen(false)}
+            type="button"
+          />
+          <section
+            aria-label="Repositories"
+            aria-modal="true"
+            className="bottom-sheet repository-picker"
+            role="dialog"
+          >
+            <span className="sheet-grabber" />
+            <header className="sheet-header">
+              <div>
+                <h2 className="sheet-title">Repositories</h2>
+                <div className="repo-meta">Switch projects without restarting the server</div>
+              </div>
+              <button
+                aria-label="Close repository picker"
+                className="icon-button"
+                onClick={() => setRepositoryPickerOpen(false)}
+                type="button"
+              >
+                <X size={19} />
+              </button>
+            </header>
+            <div className="repository-list">
+              {bootstrap?.repositories.length ? (
+                bootstrap.repositories.map((entry) => (
+                  <div
+                    className={`repository-row ${entry.id === repositoryId ? "current" : ""} ${entry.available ? "" : "unavailable"}`}
+                    key={entry.id}
+                  >
+                    <button
+                      aria-current={entry.id === repositoryId ? "true" : undefined}
+                      className="repository-select"
+                      disabled={!entry.available}
+                      onClick={() => selectRepository(entry)}
+                      type="button"
+                    >
+                      <span className="repository-row-name">
+                        {entry.name}
+                        {entry.id === repositoryId && <Check size={14} />}
+                      </span>
+                      <span className="repository-row-path">{entry.root}</span>
+                      {!entry.available && (
+                        <span className="repository-row-status">Unavailable</span>
+                      )}
+                    </button>
+                    <button
+                      aria-label={`Forget ${entry.name}`}
+                      className="icon-button repository-forget"
+                      disabled={forgetRepositoryBusy !== null}
+                      onClick={() => void forgetSavedRepository(entry)}
+                      title="Forget repository and delete its saved review state"
+                      type="button"
+                    >
+                      {forgetRepositoryBusy === entry.id ? (
+                        <LoaderCircle className="spinner" size={16} />
+                      ) : (
+                        <Trash2 size={16} />
+                      )}
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state" style={{ minHeight: 150 }}>
+                  <FileCode2 className="state-icon" size={26} />
+                  <p className="state-copy">No saved repositories.</p>
+                </div>
+              )}
+            </div>
+            <footer className="sheet-footer">
+              <div className="progress-label">
+                Run <code>couch-review</code> inside another Git project to add it.
+              </div>
+            </footer>
+          </section>
+        </>
+      )}
 
       {searchOpen && (
         <>
@@ -1976,6 +2717,68 @@ export function App() {
         </>
       )}
 
+      {commitComposerOpen && (
+        <>
+          <button
+            aria-label="Close commit editor"
+            className="sheet-scrim"
+            onClick={() => setCommitComposerOpen(false)}
+            type="button"
+          />
+          <form
+            aria-label="Commit staged changes"
+            aria-modal="true"
+            className="bottom-sheet"
+            onSubmit={(event) => void commitStagedChanges(event)}
+            role="dialog"
+          >
+            <span className="sheet-grabber" />
+            <header className="sheet-header">
+              <div>
+                <h2 className="sheet-title">Commit staged changes</h2>
+                <div className="repo-meta">
+                  {stagedCount} staged {stagedCount === 1 ? "file" : "files"} · unstaged edits stay local
+                </div>
+              </div>
+              <button
+                aria-label="Close commit editor"
+                className="icon-button"
+                onClick={() => setCommitComposerOpen(false)}
+                type="button"
+              >
+                <X size={19} />
+              </button>
+            </header>
+            <div style={{ minHeight: 0, overflow: "auto", padding: 9 }}>
+              <textarea
+                autoFocus
+                className="comment-input commit-input"
+                maxLength={20_000}
+                onChange={(event) => setCommitMessage(event.target.value)}
+                placeholder="Commit message…"
+                value={commitMessage}
+              />
+            </div>
+            <div />
+            <footer className="sheet-footer">
+              <button
+                className="action-button"
+                disabled={!commitMessage.trim() || commitBusy}
+                style={{ width: "100%" }}
+                type="submit"
+              >
+                {commitBusy ? (
+                  <LoaderCircle className="spinner" size={16} />
+                ) : (
+                  <GitCommitHorizontal size={16} />
+                )}
+                Commit staged changes
+              </button>
+            </footer>
+          </form>
+        </>
+      )}
+
       {commentTrayOpen && (
         <>
           <button
@@ -2073,6 +2876,98 @@ export function App() {
         </>
       )}
 
+      {failureDetailsOpen && failure && (
+        <>
+          <button
+            aria-label="Close error details"
+            className="modal-scrim"
+            onClick={() => setFailureDetailsOpen(false)}
+            type="button"
+          />
+          <section
+            aria-label="Git error details"
+            aria-modal="true"
+            className="bottom-sheet diagnostic-sheet"
+            role="dialog"
+          >
+            <span className="sheet-grabber" />
+            <header className="sheet-header">
+              <div>
+                <h2 className="sheet-title">Error details</h2>
+                <div className="repo-meta">
+                  {failure.context} · {failure.code}
+                </div>
+              </div>
+              <button
+                aria-label="Close error details"
+                className="icon-button"
+                onClick={() => setFailureDetailsOpen(false)}
+                type="button"
+              >
+                <X size={19} />
+              </button>
+            </header>
+            <div className="diagnostic-content">
+              <p className="diagnostic-message">{failure.message}</p>
+              <dl className="diagnostic-grid">
+                <div>
+                  <dt>HTTP status</dt>
+                  <dd>{failure.status ?? "Not available"}</dd>
+                </div>
+                <div>
+                  <dt>Error code</dt>
+                  <dd>{failure.code}</dd>
+                </div>
+                {failure.diagnostic && (
+                  <>
+                    <div>
+                      <dt>Diagnostic ID</dt>
+                      <dd>{failure.diagnostic.id}</dd>
+                    </div>
+                    <div>
+                      <dt>Git operation</dt>
+                      <dd>{failure.diagnostic.operation}</dd>
+                    </div>
+                    <div>
+                      <dt>Failure kind</dt>
+                      <dd>{failure.diagnostic.kind}</dd>
+                    </div>
+                    <div>
+                      <dt>Exit code</dt>
+                      <dd>{failure.diagnostic.exitCode ?? "Not available"}</dd>
+                    </div>
+                  </>
+                )}
+              </dl>
+              {failure.diagnostic && (
+                <>
+                  <h3 className="diagnostic-subtitle">Git output</h3>
+                  <pre className="diagnostic-output">
+                    {failure.diagnostic.stderr || "Git returned no stderr output."}
+                  </pre>
+                </>
+              )}
+            </div>
+            <footer className="sheet-footer diagnostic-actions">
+              <button
+                className="action-button secondary"
+                onClick={() => setFailureDetailsOpen(false)}
+                type="button"
+              >
+                Close
+              </button>
+              <button
+                className="action-button"
+                onClick={() => void copyFailureDiagnostics()}
+                type="button"
+              >
+                <Copy size={15} /> Copy diagnostics
+              </button>
+            </footer>
+          </section>
+        </>
+      )}
+
       {copyFallbackText && (
         <>
           <button
@@ -2123,6 +3018,18 @@ export function App() {
             {toast.undo && (
               <button className="text-button" onClick={() => void undoReview(toast.undo!)} type="button">
                 Undo
+              </button>
+            )}
+            {toast.details && failure && (
+              <button
+                className="text-button"
+                onClick={() => {
+                  setToast(null);
+                  setFailureDetailsOpen(true);
+                }}
+                type="button"
+              >
+                Details
               </button>
             )}
           </div>

@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
+import { finished } from "node:stream/promises";
+import {
+  GitError,
+  GitPluginError,
+  simpleGit,
+} from "simple-git";
 
 import type {
   ChangeKind,
@@ -21,24 +26,93 @@ export interface GitResult {
 
 export interface RunGitOptions {
   allowExitCodes?: number[];
-  input?: string | Uint8Array;
+  binaryOutput?: boolean;
   maxOutputBytes?: number;
   truncateOutput?: boolean;
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
 }
 
+export type GitFailureKind =
+  | "exit"
+  | "timeout"
+  | "spawn"
+  | "capture"
+  | "output_limit"
+  | "empty_output";
+
+interface ReconciledGitOutput {
+  output: Uint8Array;
+  recovered: boolean;
+  totalBytes: number;
+  truncated: boolean;
+}
+
+/** @internal Exported so the missing-stream regression can be tested directly. */
+export function reconcileGitStdout(
+  capturedOutput: Uint8Array,
+  capturedBytes: number,
+  bufferedOutput: string,
+  maximumBytes: number,
+): ReconciledGitOutput {
+  if (capturedBytes > 0 || bufferedOutput.length === 0) {
+    return {
+      output: capturedOutput,
+      recovered: false,
+      totalBytes: capturedBytes,
+      truncated: capturedBytes > maximumBytes,
+    };
+  }
+
+  const recovered = Buffer.from(bufferedOutput, "utf8");
+  return {
+    output: Uint8Array.from(recovered.subarray(0, maximumBytes)),
+    recovered: true,
+    totalBytes: recovered.byteLength,
+    truncated: recovered.byteLength > maximumBytes,
+  };
+}
+
+function operationFromArgs(args: readonly string[]): string {
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index] ?? "";
+    if (["-c", "-C", "--git-dir", "--work-tree", "--namespace"].includes(argument)) {
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("-")) continue;
+    return argument;
+  }
+  return "command";
+}
+
 export class GitCommandError extends Error {
   readonly args: readonly string[];
   readonly exitCode: number;
+  readonly kind: GitFailureKind;
+  readonly operation: string;
   readonly stderr: string;
+  readonly timeoutMs: number | null;
 
-  constructor(args: readonly string[], exitCode: number, stderr: string) {
-    super(stderr.trim() || `git ${args[0] ?? "command"} exited with ${exitCode}`);
+  constructor(
+    args: readonly string[],
+    exitCode: number,
+    stderr: string,
+    kind: GitFailureKind = "exit",
+    timeoutMs: number | null = null,
+  ) {
+    const operation = operationFromArgs(args);
+    const fallback = kind === "timeout"
+      ? `git ${operation} timed out after ${timeoutMs ?? "the configured timeout"}ms`
+      : `git ${operation} exited with ${exitCode}`;
+    super(stderr.trim() || fallback);
     this.name = "GitCommandError";
     this.args = args;
     this.exitCode = exitCode;
+    this.kind = kind;
+    this.operation = operation;
     this.stderr = stderr;
+    this.timeoutMs = timeoutMs;
   }
 }
 
@@ -47,6 +121,7 @@ function gitEnvironment(
 ): Record<string, string | undefined> {
   const environment: Record<string, string | undefined> = { ...globalThis.process.env };
   for (const variable of [
+    "EDITOR",
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
@@ -59,16 +134,30 @@ function gitEnvironment(
     "GIT_PREFIX",
     "GIT_CONFIG_PARAMETERS",
     "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_EDITOR",
+    "GIT_EXEC_PATH",
+    "GIT_EXTERNAL_DIFF",
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
     "GIT_ICASE_PATHSPECS",
+    "GIT_ASKPASS",
+    "GIT_PAGER",
+    "GIT_PROXY_COMMAND",
+    "GIT_SEQUENCE_EDITOR",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "GIT_TEMPLATE_DIR",
+    "PAGER",
+    "PREFIX",
+    "SSH_ASKPASS",
   ]) {
     delete environment[variable];
   }
   Object.assign(environment, overrides);
   Object.assign(environment, {
     GIT_LITERAL_PATHSPECS: "1",
-    GIT_PAGER: "cat",
     GIT_TERMINAL_PROMPT: "0",
     LC_ALL: "C",
     LANG: "C",
@@ -83,75 +172,152 @@ export async function runGit(
 ): Promise<GitResult> {
   const maximumBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const timeoutMs = options.timeoutMs ?? 15_000;
-  const input = options.input;
-  const subprocessBufferBytes = Math.max(maximumBytes, MAX_STDERR_BYTES) + 1;
+  const allowedExitCodes = options.allowExitCodes ?? [0];
+  const abortController = new AbortController();
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let stdoutTruncated = false;
+  let limitExceeded: "stdout" | "stderr" | null = null;
+  let exitCode = -1;
+  let bufferedStdout = "";
+  let outputSettled: Promise<void> = Promise.resolve();
 
-  // Use Node's buffered child-process path to avoid transient empty reads from
-  // Bun's streaming subprocess capture while preserving byte-for-byte output.
-  return new Promise<GitResult>((resolve, reject) => {
-    const child = execFile(
-      "git",
-      ["--literal-pathspecs", ...args],
-      {
-        cwd: root,
-        env: gitEnvironment(options.env),
-        encoding: "buffer",
-        maxBuffer: subprocessBufferBytes,
-        timeout: timeoutMs,
-        windowsHide: true,
+  const capture = (
+    target: Buffer[],
+    chunk: unknown,
+    maximum: number,
+    stream: "stdout" | "stderr",
+  ) => {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    const currentBytes = stream === "stdout" ? stdoutBytes : stderrBytes;
+    const remaining = Math.max(0, maximum - currentBytes);
+    if (remaining > 0) target.push(buffer.subarray(0, remaining));
+    const nextBytes = currentBytes + buffer.byteLength;
+    if (stream === "stdout") {
+      stdoutBytes = nextBytes;
+      stdoutTruncated ||= nextBytes > maximum;
+    } else {
+      stderrBytes = nextBytes;
+    }
+    if (nextBytes > maximum && !limitExceeded) {
+      limitExceeded = stream;
+      abortController.abort();
+    }
+  };
+
+  try {
+    const git = simpleGit({
+      baseDir: root,
+      binary: "git",
+      maxConcurrentProcesses: 1,
+      trimmed: false,
+      abort: abortController.signal,
+      timeout: { block: timeoutMs },
+      unsafe: {
+        // Couch Review hard-codes `core.fsmonitor=false` for deterministic status
+        // snapshots; no user-controlled executable is accepted here.
+        allowUnsafeFsMonitor: true,
       },
-      (error, rawStdout, rawStderr) => {
-        const stdout = Buffer.from(rawStdout);
-        const rawErrorCode = error?.code;
-        const bufferExceeded = rawErrorCode === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-        const stdoutBufferExceeded =
-          bufferExceeded && /stdout/i.test(error?.message ?? "");
-        const stderrBufferExceeded =
-          bufferExceeded && /stderr/i.test(error?.message ?? "");
-        const stdoutTruncated = stdout.byteLength > maximumBytes || stdoutBufferExceeded;
-        const stderrTruncated =
-          rawStderr.byteLength > MAX_STDERR_BYTES || stderrBufferExceeded;
-        const stderr = `${decoder.decode(rawStderr.subarray(0, MAX_STDERR_BYTES))}${
-          stderrTruncated ? "\n[stderr truncated]" : ""
-        }`;
-
-        if (error?.killed && !bufferExceeded) {
-          reject(new Error(`git command timed out after ${timeoutMs}ms`));
-          return;
+      errors(error, result) {
+        exitCode = result.exitCode;
+        if (allowedExitCodes.includes(result.exitCode) && !(error instanceof GitPluginError)) {
+          return undefined;
         }
-        if (stderrBufferExceeded) {
-          reject(new Error("git command stderr exceeded the safety limit"));
-          return;
-        }
-        if (stdoutTruncated && !options.truncateOutput) {
-          reject(new Error("git command output exceeded the safety limit"));
-          return;
-        }
-        if (error && typeof rawErrorCode !== "number" && !stdoutBufferExceeded) {
-          reject(error);
-          return;
-        }
-
-        const exitCode = typeof rawErrorCode === "number" ? rawErrorCode : 0;
-        if (!(options.allowExitCodes ?? [0]).includes(exitCode)) {
-          reject(new GitCommandError(args, exitCode, stderr));
-          return;
-        }
-        resolve({
-          stdout: Uint8Array.from(stdout.subarray(0, maximumBytes)),
-          stdoutTruncated,
-          stderr,
-          exitCode,
-        });
+        if (error instanceof GitPluginError) return error;
+        const stderr = decoder.decode(
+          Buffer.concat(result.stdErr).subarray(0, MAX_STDERR_BYTES),
+        );
+        return new GitCommandError(
+          args,
+          result.exitCode,
+          stderr || (error instanceof Error ? error.message : ""),
+          result.exitCode < 0 ? "spawn" : "exit",
+        );
       },
+    });
+    git.env(gitEnvironment(options.env));
+    git.outputHandler((_command, stdout, stderr) => {
+      stdout.on("data", (chunk) => {
+        capture(stdoutChunks, chunk, maximumBytes, "stdout");
+      });
+      stderr.on("data", (chunk) => {
+        capture(stderrChunks, chunk, MAX_STDERR_BYTES, "stderr");
+      });
+      // Bun can report the child process as closed before its compatibility
+      // streams have delivered every data event. Wait for the streams as well
+      // as simple-git's task promise before finalizing the captured output.
+      outputSettled = Promise.all([
+        finished(stdout, { cleanup: true }),
+        finished(stderr, { cleanup: true }),
+      ]).then(() => undefined, () => undefined);
+    });
+    bufferedStdout = await git.raw([...args]);
+    await outputSettled;
+    if (exitCode < 0) exitCode = 0;
+  } catch (error) {
+    const stderr = `${decoder.decode(Buffer.concat(stderrChunks))}${
+      stderrBytes > MAX_STDERR_BYTES ? "\n[stderr truncated]" : ""
+    }`;
+    if (limitExceeded === "stdout" && options.truncateOutput) {
+      return {
+        stdout: Uint8Array.from(Buffer.concat(stdoutChunks)),
+        stdoutTruncated: true,
+        stderr,
+        exitCode: 0,
+      };
+    }
+    if (limitExceeded) {
+      const description = limitExceeded === "stderr"
+        ? "Git stderr exceeded the 1 MiB safety limit."
+        : `Git stdout exceeded the ${maximumBytes}-byte safety limit.`;
+      throw new GitCommandError(args, -1, description, "output_limit");
+    }
+    if (error instanceof GitCommandError) throw error;
+    if (error instanceof GitPluginError && error.plugin === "timeout") {
+      throw new GitCommandError(args, -1, stderr, "timeout", timeoutMs);
+    }
+    const message = stderr.trim() || (error instanceof Error ? error.message : String(error));
+    throw new GitCommandError(
+      args,
+      exitCode,
+      message,
+      error instanceof GitError && exitCode >= 0 ? "exit" : "spawn",
     );
+  }
 
-    // Git can close stdin before Node finishes writing when a command fails.
-    // Its exit code and stderr carry the useful error in that case.
-    child.stdin?.on("error", () => undefined);
-    if (input === undefined) child.stdin?.end();
-    else child.stdin?.end(typeof input === "string" ? input : Buffer.from(input));
-  });
+  const reconciled = reconcileGitStdout(
+    Uint8Array.from(Buffer.concat(stdoutChunks)),
+    stdoutBytes,
+    bufferedStdout,
+    maximumBytes,
+  );
+  if (reconciled.recovered && options.binaryOutput) {
+    throw new GitCommandError(
+      args,
+      exitCode,
+      "Git returned binary data, but Couch Review could not capture its raw byte stream.",
+      "capture",
+    );
+  }
+  if (reconciled.recovered && reconciled.truncated && !options.truncateOutput) {
+    throw new GitCommandError(
+      args,
+      -1,
+      `Git stdout exceeded the ${maximumBytes}-byte safety limit.`,
+      "output_limit",
+    );
+  }
+
+  return {
+    stdout: reconciled.output,
+    stdoutTruncated: stdoutTruncated || reconciled.truncated,
+    stderr: `${decoder.decode(Buffer.concat(stderrChunks))}${
+      stderrBytes > MAX_STDERR_BYTES ? "\n[stderr truncated]" : ""
+    }`,
+    exitCode,
+  };
 }
 
 export function decodeGitOutput(output: Uint8Array): string {

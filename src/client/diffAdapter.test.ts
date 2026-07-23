@@ -105,6 +105,62 @@ describe("Pierre diff adapter", () => {
     expect(adapted.additionLines[0]).toBe("const value = newValue;\n");
   });
 
+  test("renders a full-context patch without replacing compact navigation hunks", () => {
+    const secondHunk = {
+      id: "hunk-2",
+      header: "@@ -8 +8 @@",
+      oldStart: 8,
+      oldLines: 1,
+      newStart: 8,
+      newLines: 1,
+      lines: [
+        {
+          id: "old-8",
+          kind: "deletion" as const,
+          text: "const last = false;",
+          oldLine: 8,
+          newLine: null,
+          noNewline: false,
+        },
+        {
+          id: "new-8",
+          kind: "addition" as const,
+          text: "const last = true;",
+          oldLine: null,
+          newLine: 8,
+          noNewline: false,
+        },
+      ],
+    };
+    const fullFilePatch = [
+      "diff --git a/src/example.ts b/src/example.ts",
+      "--- a/src/example.ts",
+      "+++ b/src/example.ts",
+      "@@ -1,8 +1,8 @@",
+      "-const value = oldValue;",
+      "+const value = newValue;",
+      " return value;",
+      " const middle3 = true;",
+      " const middle4 = true;",
+      " const middle5 = true;",
+      " const middle6 = true;",
+      " const middle7 = true;",
+      "-const last = false;",
+      "+const last = true;",
+      "",
+    ].join("\n");
+    const diff = fixtureDiff({
+      fullFilePatch,
+      hunks: [...fixtureDiff().hunks, secondHunk],
+    });
+
+    const adapted = adaptFileDiff(diff);
+    expect(adapted.patch).toBe(fullFilePatch);
+    expect(adapted.fileDiff.hunks).toHaveLength(1);
+    expect(adapted.fileDiff.additionLines).toContain("const middle5 = true;\n");
+    expect(diff.hunks).toHaveLength(2);
+  });
+
   test("keeps no-newline metadata exactly once", () => {
     const diff = fixtureDiff({
       hunks: [

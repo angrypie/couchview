@@ -1,15 +1,35 @@
+const repositoryApiPath = (repositoryId: string) =>
+  `/api/repositories/${encodeURIComponent(repositoryId)}`;
+const repositoryFilesApiPath = (repositoryId: string) =>
+  `${repositoryApiPath(repositoryId)}/files`;
+
 export const API_ROUTES = {
   bootstrap: "/api/bootstrap",
-  files: "/api/files",
-  fileDiff: (fileId: string) => `/api/files/${encodeURIComponent(fileId)}/diff`,
-  fileStage: (fileId: string) => `/api/files/${encodeURIComponent(fileId)}/stage`,
-  fileReview: (fileId: string) => `/api/files/${encodeURIComponent(fileId)}/review`,
-  fileComments: (fileId: string) => `/api/files/${encodeURIComponent(fileId)}/comments`,
-  search: "/api/search",
-  source: "/api/source",
-  comments: "/api/comments",
-  comment: (commentId: string) => `/api/comments/${encodeURIComponent(commentId)}`,
-  events: "/api/events",
+  instance: "/api/instance",
+  repositories: "/api/repositories",
+  controlRepositories: "/api/control/repositories",
+  repository: repositoryApiPath,
+  files: repositoryFilesApiPath,
+  fileDiff: (repositoryId: string, fileId: string) =>
+    `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/diff`,
+  fileStage: (repositoryId: string, fileId: string) =>
+    `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/stage`,
+  fileReview: (repositoryId: string, fileId: string) =>
+    `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/review`,
+  fileComments: (repositoryId: string, fileId: string) =>
+    `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/comments`,
+  search: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/search`,
+  source: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/source`,
+  commit: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/commit`,
+  comments: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/comments`,
+  comment: (repositoryId: string, commentId: string) =>
+    `${repositoryApiPath(repositoryId)}/comments/${encodeURIComponent(commentId)}`,
+  events: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/events`,
 } as const;
 
 export const CSRF_HEADER = "x-couch-review-csrf";
@@ -37,6 +57,14 @@ export interface RepositorySummary {
   unborn: boolean;
 }
 
+export interface RepositoryCatalogEntry {
+  id: string;
+  name: string;
+  root: string;
+  available: boolean;
+  addedAt: string;
+}
+
 export interface ChangeFile {
   id: string;
   path: string;
@@ -60,9 +88,38 @@ export interface ChangeFile {
 export type FileChange = ChangeFile;
 
 export interface BootstrapResponse {
-  repository: RepositorySummary;
   csrfToken: string;
-  operationRevision: string;
+  repositories: RepositoryCatalogEntry[];
+  defaultRepositoryId: string | null;
+  catalogRevision: number;
+}
+
+export interface InstanceResponse {
+  service: "couch-review";
+  protocolVersion: number;
+  version: string;
+  instanceId: string;
+  bindHost: string;
+  port: number;
+  accessOrigins: string[];
+}
+
+export interface RegisterRepositoryRequest {
+  root: string;
+}
+
+export interface RegisterRepositoryResponse {
+  repository: RepositoryCatalogEntry;
+  added: boolean;
+}
+
+export interface RepositoryCatalogResponse {
+  repositories: RepositoryCatalogEntry[];
+  catalogRevision: number;
+}
+
+export interface ForgetRepositoryResponse {
+  deletedId: string;
 }
 
 export interface ChangesResponse {
@@ -100,6 +157,12 @@ export interface FileDiff {
   binary: boolean;
   tooLarge: boolean;
   header: string[];
+  /**
+   * A full-context patch used only for rendering complete modified files.
+   * The compact hunks remain the source of truth for navigation and comments.
+   * Null means the complete file exceeded the diff response limits.
+   */
+  fullFilePatch?: string | null;
   hunks: DiffHunk[];
   additions: number;
   deletions: number;
@@ -222,17 +285,42 @@ export interface StageFileResponse {
   operationRevision: string;
 }
 
-export type ServerEventType = "changes" | "comments" | "reviews" | "ready";
+export interface CommitRequest {
+  message: string;
+  operationRevision: string;
+}
+
+export interface CommitResponse {
+  commit: string;
+  operationRevision: string;
+}
+
+export type ServerEventType = "changes" | "state" | "repositories" | "ready";
 
 export interface ServerEvent {
   type: ServerEventType;
+  repositoryId: string;
   operationRevision: string;
+  stateRevision: number;
+  catalogRevision: number;
   at: string;
+}
+
+export interface ApiErrorDiagnostic {
+  id: string;
+  source: "git";
+  operation: string;
+  kind: "exit" | "timeout" | "spawn" | "capture" | "output_limit" | "empty_output";
+  exitCode: number | null;
+  stderr: string;
+  retryable: boolean;
+  timeoutMs: number | null;
 }
 
 export interface ApiErrorBody {
   error: {
     code: string;
     message: string;
+    diagnostic?: ApiErrorDiagnostic;
   };
 }

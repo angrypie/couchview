@@ -40,6 +40,7 @@ async function fixture() {
     host: "127.0.0.1",
     port: 3001,
     staticDirectory: staticRoot,
+    stateDatabasePath: path.join(directory, "state", "state.sqlite"),
   });
   applications.push(app);
   return app;

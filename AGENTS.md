@@ -29,4 +29,4 @@ History currently contains only `init`, so no commit convention is established. 
 
 ## Security & Configuration
 
-Keep loopback binding as the default. Use `--host 0.0.0.0` only on trusted networks because the server exposes repository contents and staging controls. Never commit review state, credentials, `dist/`, or Playwright reports.
+Keep `0.0.0.0` as the application and development default so phone access works without flags. Warn users to run only on trusted networks or choose `--host 127.0.0.1`, because the server exposes repository contents and staging controls. Review state belongs in the XDG data database, never in repository files. Do not commit credentials, `dist/`, or Playwright reports.

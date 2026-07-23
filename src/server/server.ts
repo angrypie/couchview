@@ -1,26 +1,39 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 
+import packageJson from "../../package.json" with { type: "json" };
 import {
   API_ROUTES,
   CSRF_HEADER,
   type ApiErrorBody,
+  type ApiErrorDiagnostic,
+  type BootstrapResponse,
+  type CommitRequest,
   type CreateCommentRequest,
   type DeleteCommentRequest,
+  type ForgetRepositoryResponse,
+  type InstanceResponse,
+  type RegisterRepositoryRequest,
+  type RegisterRepositoryResponse,
   type ServerEvent,
+  type ServerEventType,
   type SetReviewRequest,
   type StageFileRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
+import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git.ts";
+import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
 
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
+export const INSTANCE_PROTOCOL_VERSION = 1;
+export const APP_VERSION = packageJson.version;
 
 export interface CouchReviewAppOptions {
   root: string;
@@ -28,14 +41,37 @@ export interface CouchReviewAppOptions {
   port?: number;
   staticDirectory?: string;
   allowedOrigins?: string[];
+  stateDatabasePath?: string;
+  instanceId?: string;
+  controlToken?: string;
+  version?: string;
+  revisionPollIntervalMs?: number;
 }
 
 export interface CouchReviewApp {
   repository: GitRepository;
+  repositories: RepositoryManager;
+  database: StateDatabase;
   csrfToken: string;
+  controlToken: string;
+  instanceId: string;
+  version: string;
+  protocolVersion: number;
+  bindHost: string;
+  port: number;
   accessOrigins: readonly string[];
+  registerServerInstance(): void;
   fetch(request: Request): Promise<Response>;
   close(): void;
+}
+
+interface StreamState {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  repositoryId: string;
+  operationRevision: string;
+  stateRevision: number;
+  catalogRevision: number;
+  ready: boolean;
 }
 
 function json(value: unknown, init: ResponseInit = {}): Response {
@@ -56,14 +92,23 @@ function tokenMatches(actual: string | null, expected: string): boolean {
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
+function bearerToken(request: Request): string | null {
+  const authorization = request.headers.get("authorization");
+  return authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+}
+
 async function readJsonObject<T extends object>(request: Request): Promise<T> {
   const type = request.headers.get("content-type")?.toLowerCase() ?? "";
   if (type.split(";", 1)[0]?.trim() !== "application/json") {
     throw new HttpError(415, "json_required", "Request body must be JSON");
   }
   const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "Request body is too large");
-  if (!request.body) throw new HttpError(400, "invalid_json", "Request body is not valid JSON");
+  if (declared > MAX_BODY_BYTES) {
+    throw new HttpError(413, "body_too_large", "Request body is too large");
+  }
+  if (!request.body) {
+    throw new HttpError(400, "invalid_json", "Request body is not valid JSON");
+  }
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -105,20 +150,90 @@ function errorResponse(error: unknown): Response {
     return json(body, { status: error.status });
   }
   if (error instanceof GitCommandError) {
-    const locked = /index\.lock|another git process/i.test(error.stderr);
+    const diagnosticId = randomUUID().slice(0, 8);
+    const detail = cleanDiagnosticText(error.stderr || error.message);
+    const firstLine = detail.split("\n").find(Boolean)?.slice(0, 240) ?? "No details returned";
+    const locked = /index\.lock|another git process/i.test(detail);
+    let status = 500;
+    let code = "git_failed";
+    let message = `Git ${error.operation} failed`;
+    let retryable = false;
+
+    if (locked) {
+      status = 423;
+      code = "git_index_locked";
+      message = "The Git index is busy; try again shortly";
+      retryable = true;
+    } else if (error.kind === "timeout") {
+      status = 504;
+      code = "git_timeout";
+      message = `Git ${error.operation} stopped responding after ${Math.ceil(
+        (error.timeoutMs ?? 0) / 1_000,
+      )} seconds`;
+      retryable = true;
+    } else if (error.kind === "spawn") {
+      status = 503;
+      code = "git_unavailable";
+      message = `Git ${error.operation} could not start: ${firstLine}`;
+      retryable = true;
+    } else if (error.kind === "capture") {
+      status = 502;
+      code = "git_output_capture";
+      message = `Git ${error.operation} returned data that Couch Review could not capture safely`;
+      retryable = true;
+    } else if (error.kind === "output_limit") {
+      status = 502;
+      code = "git_output_limit";
+      message = `Git ${error.operation} returned more data than Couch Review can safely process`;
+    } else if (error.kind === "empty_output") {
+      status = 503;
+      code = "git_empty_output";
+      message = "Git diff returned no data for a changed file after two attempts";
+      retryable = true;
+    } else {
+      const exit = error.exitCode >= 0 ? ` (exit ${error.exitCode})` : "";
+      message = `Git ${error.operation} failed${exit}: ${firstLine}`;
+    }
+
+    const diagnostic: ApiErrorDiagnostic = {
+      id: diagnosticId,
+      source: "git",
+      operation: error.operation,
+      kind: error.kind,
+      exitCode: error.exitCode >= 0 ? error.exitCode : null,
+      stderr: detail,
+      retryable,
+      timeoutMs: error.timeoutMs,
+    };
+    console.error(
+      `[git:${diagnosticId}] operation=${error.operation} kind=${error.kind} ` +
+        `exit=${error.exitCode} ${detail || "No stderr returned"}`,
+    );
     const body: ApiErrorBody = {
       error: {
-        code: locked ? "git_index_locked" : "git_failed",
-        message: locked ? "The Git index is busy; try again shortly" : "Git could not complete the operation",
+        code,
+        message,
+        diagnostic,
       },
     };
-    return json(body, { status: locked ? 423 : 500 });
+    return json(body, {
+      status,
+      headers: { "X-Couch-Review-Diagnostic": diagnosticId },
+    });
   }
   console.error(error);
   const body: ApiErrorBody = {
     error: { code: "internal_error", message: "The local review server encountered an error" },
   };
   return json(body, { status: 500 });
+}
+
+function cleanDiagnosticText(value: string): string {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replaceAll("\0", "�")
+    .trim()
+    .slice(0, 4_000);
 }
 
 function addSecurityHeaders(response: Response): Response {
@@ -133,7 +248,11 @@ function addSecurityHeaders(response: Response): Response {
     "Content-Security-Policy",
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",
   );
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 export function normalizeBindHost(value: string): string {
@@ -155,7 +274,7 @@ export function normalizeBindHost(value: string): string {
   return hostname.toLowerCase();
 }
 
-function hostForUrl(host: string): string {
+export function hostForUrl(host: string): string {
   return isIP(host) === 6 ? `[${host}]` : host;
 }
 
@@ -215,81 +334,192 @@ function normalizeRequestHost(value: string): string {
   return url.host;
 }
 
-export async function createCouchReviewApp(options: CouchReviewAppOptions): Promise<CouchReviewApp> {
-  const host = normalizeBindHost(options.host ?? "127.0.0.1");
+function decodeSegment(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, "invalid_path", "API path is invalid");
+  }
+}
+
+export async function createCouchReviewApp(
+  options: CouchReviewAppOptions,
+): Promise<CouchReviewApp> {
+  const host = normalizeBindHost(options.host ?? "0.0.0.0");
   const port = options.port ?? 4173;
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
   }
-  const repository = await GitRepository.open(options.root);
+
+  const database = await StateDatabase.open(options.stateDatabasePath);
+  const repositories = new RepositoryManager(database);
+  let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
+  let initialBackend: GitRepository;
+  try {
+    initial = await repositories.register(options.root);
+    initialBackend = await repositories.get(initial.repository.id);
+  } catch (error) {
+    repositories.close();
+    database.close();
+    throw error;
+  }
+
   const csrfToken = randomBytes(32).toString("base64url");
+  const controlToken = options.controlToken ?? randomBytes(32).toString("base64url");
+  const instanceId = options.instanceId ?? randomUUID();
+  const version = options.version ?? APP_VERSION;
   const accessOrigins = accessOriginsForHost(host, port);
   const allowedOrigins = new Set(
     [...accessOrigins, ...(options.allowedOrigins ?? [])].map(normalizeOrigin),
   );
   const allowedHosts = new Set([...allowedOrigins].map((origin) => new URL(origin).host));
-  const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
-  let lastChangeRevision = "";
+  const streams = new Set<StreamState>();
+  const subscriptions = new Map<string, () => void>();
+  let defaultRepositoryId: string | null = initial.repository.id;
   let pollInFlight = false;
+  let closed = false;
 
-  const emit = (event: ServerEvent): void => {
-    if (event.type === "changes" || event.type === "ready") {
-      lastChangeRevision = event.operationRevision;
-    }
-    const data = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
-    for (const stream of streams) {
-      try {
-        stream.enqueue(data);
-      } catch {
-        streams.delete(stream);
+  const sendEvent = (
+    stream: StreamState,
+    type: ServerEventType,
+    values: Partial<Pick<ServerEvent, "operationRevision" | "stateRevision" | "catalogRevision">> = {},
+  ): void => {
+    const event: ServerEvent = {
+      type,
+      repositoryId: stream.repositoryId,
+      operationRevision: values.operationRevision ?? stream.operationRevision,
+      stateRevision: values.stateRevision ?? stream.stateRevision,
+      catalogRevision: values.catalogRevision ?? stream.catalogRevision,
+      at: new Date().toISOString(),
+    };
+    stream.operationRevision = event.operationRevision;
+    stream.stateRevision = event.stateRevision;
+    stream.catalogRevision = event.catalogRevision;
+    try {
+      stream.controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    } catch {
+      streams.delete(stream);
+      if (![...streams].some((candidate) => candidate.repositoryId === stream.repositoryId)) {
+        subscriptions.get(stream.repositoryId)?.();
+        subscriptions.delete(stream.repositoryId);
       }
     }
   };
 
-  const emitCurrent = async (type: ServerEvent["type"]): Promise<void> => {
-    const state = await repository.changes();
-    emit({ type, operationRevision: state.operationRevision, at: new Date().toISOString() });
+  const emitRepository = async (
+    repositoryId: string,
+    type: ServerEventType,
+    operationRevision?: string,
+  ): Promise<void> => {
+    const matching = [...streams].filter((stream) => stream.repositoryId === repositoryId);
+    if (matching.length === 0) return;
+    const resolvedOperation = operationRevision ??
+      (await (await repositories.get(repositoryId)).changes()).operationRevision;
+    const stateRevision = database.stateRevision(repositoryId) ?? 0;
+    const catalogRevision = database.catalogRevision();
+    for (const stream of matching) {
+      if (
+        (type === "changes" && stream.operationRevision === resolvedOperation) ||
+        (type === "state" && stream.stateRevision === stateRevision)
+      ) {
+        continue;
+      }
+      sendEvent(stream, type, {
+        operationRevision: resolvedOperation,
+        stateRevision,
+        catalogRevision,
+      });
+    }
   };
 
-  repository.startWatching((operationRevision) => {
-    if (operationRevision !== lastChangeRevision) {
-      emit({ type: "changes", operationRevision, at: new Date().toISOString() });
-    }
-  });
+  const emitCatalog = (): void => {
+    const catalogRevision = database.catalogRevision();
+    for (const stream of streams) sendEvent(stream, "repositories", { catalogRevision });
+  };
+
+  const ensureSubscription = (repositoryId: string): void => {
+    if (subscriptions.has(repositoryId)) return;
+    subscriptions.set(
+      repositoryId,
+      repositories.subscribe(repositoryId, (operationRevision) => {
+        void emitRepository(repositoryId, "changes", operationRevision).catch(() => undefined);
+      }),
+    );
+  };
+
+  const releaseSubscription = (repositoryId: string): void => {
+    if ([...streams].some((stream) => stream.repositoryId === repositoryId)) return;
+    subscriptions.get(repositoryId)?.();
+    subscriptions.delete(repositoryId);
+  };
+
+  const removeStream = (stream: StreamState): void => {
+    streams.delete(stream);
+    releaseSubscription(stream.repositoryId);
+  };
 
   const poller = setInterval(() => {
     if (streams.size === 0 || pollInFlight) return;
     pollInFlight = true;
-    void repository
-      .changes()
-      .then((state) => {
-        if (state.operationRevision !== lastChangeRevision) {
-          emit({
-            type: "changes",
-            operationRevision: state.operationRevision,
-            at: new Date().toISOString(),
-          });
+    const catalogRevision = database.catalogRevision();
+    for (const stream of streams) {
+      if (stream.ready && catalogRevision !== stream.catalogRevision) {
+        sendEvent(stream, "repositories", { catalogRevision });
+      }
+    }
+    const repositoryIds = [...new Set([...streams].filter((stream) => stream.ready).map(
+      (stream) => stream.repositoryId,
+    ))];
+    void Promise.all(repositoryIds.map(async (repositoryId) => {
+      const repository = await repositories.get(repositoryId);
+      const changes = await repository.changes();
+      const stateRevision = database.stateRevision(repositoryId) ?? 0;
+      for (const stream of streams) {
+        if (!stream.ready || stream.repositoryId !== repositoryId) continue;
+        if (changes.operationRevision !== stream.operationRevision) {
+          sendEvent(stream, "changes", { operationRevision: changes.operationRevision });
         }
-      })
+        if (stateRevision !== stream.stateRevision) {
+          sendEvent(stream, "state", { stateRevision });
+        }
+      }
+    }))
       .catch(() => undefined)
       .finally(() => {
         pollInFlight = false;
       });
-  }, 1_500);
+  }, options.revisionPollIntervalMs ?? 1_500);
 
   const keepAlive = setInterval(() => {
     const bytes = encoder.encode(": keep-alive\n\n");
     for (const stream of streams) {
       try {
-        stream.enqueue(bytes);
+        stream.controller.enqueue(bytes);
       } catch {
-        streams.delete(stream);
+        removeStream(stream);
       }
     }
   }, 5_000);
 
+  const registerRepository = async (
+    root: string,
+  ): Promise<RegisterRepositoryResponse> => {
+    if (typeof root !== "string" || !root.trim() || root.length > 32_768) {
+      throw new HttpError(400, "invalid_repository", "Repository path is invalid");
+    }
+    const registered = await repositories.register(root);
+    if (registered.added) emitCatalog();
+    return { repository: registered.repository, added: registered.added };
+  };
+
   const handleApi = async (request: Request, url: URL): Promise<Response> => {
-    if (isMutation(request.method)) {
+    const controlRegistration =
+      url.pathname === API_ROUTES.controlRepositories && request.method === "POST";
+    if (controlRegistration) {
+      if (!tokenMatches(bearerToken(request), controlToken)) {
+        throw new HttpError(403, "control_token_failed", "CLI registration is not authorized");
+      }
+    } else if (isMutation(request.method)) {
       if (!request.headers.get("origin")) {
         throw new HttpError(403, "origin_required", "A same-origin browser request is required");
       }
@@ -298,28 +528,67 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
       }
     }
 
-    const fileRoute = /^\/api\/files\/([^/]+)\/(diff|stage|review|comments)$/.exec(
-      url.pathname,
-    );
-    const commentRoute = /^\/api\/comments\/([^/]+)$/.exec(url.pathname);
-    const decodeSegment = (value: string): string => {
-      try {
-        return decodeURIComponent(value);
-      } catch {
-        throw new HttpError(400, "invalid_path", "API path is invalid");
-      }
-    };
-
-    if (url.pathname === API_ROUTES.bootstrap && request.method === "GET") {
-      return json(await repository.bootstrap(csrfToken));
+    if (url.pathname === API_ROUTES.instance && request.method === "GET") {
+      const response: InstanceResponse = {
+        service: "couch-review",
+        protocolVersion: INSTANCE_PROTOCOL_VERSION,
+        version,
+        instanceId,
+        bindHost: host,
+        port,
+        accessOrigins: [...accessOrigins],
+      };
+      return json(response);
     }
-    if (url.pathname === API_ROUTES.files && request.method === "GET") {
+    if (url.pathname === API_ROUTES.bootstrap && request.method === "GET") {
+      const response: BootstrapResponse = {
+        csrfToken,
+        repositories: await repositories.list(),
+        defaultRepositoryId,
+        catalogRevision: database.catalogRevision(),
+      };
+      return json(response);
+    }
+    if (url.pathname === API_ROUTES.repositories && request.method === "GET") {
+      return json({
+        repositories: await repositories.list(),
+        catalogRevision: database.catalogRevision(),
+      });
+    }
+    if (controlRegistration) {
+      const input = await readJsonObject<RegisterRepositoryRequest>(request);
+      const result = await registerRepository(input.root);
+      return json(result, { status: result.added ? 201 : 200 });
+    }
+
+    const repositoryRoute = /^\/api\/repositories\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
+    if (!repositoryRoute) {
+      throw new HttpError(404, "route_not_found", "API route not found");
+    }
+    const repositoryId = decodeSegment(repositoryRoute[1] ?? "");
+    const nestedPath = repositoryRoute[2] ?? "";
+
+    if (!nestedPath && request.method === "DELETE") {
+      repositories.forget(repositoryId);
+      if (defaultRepositoryId === repositoryId) {
+        defaultRepositoryId = (await repositories.list()).find((item) => item.available)?.id ?? null;
+      }
+      emitCatalog();
+      const response: ForgetRepositoryResponse = { deletedId: repositoryId };
+      return json(response);
+    }
+
+    const repository = await repositories.get(repositoryId);
+    const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath);
+    const commentRoute = /^comments\/([^/]+)$/.exec(nestedPath);
+
+    if (nestedPath === "files" && request.method === "GET") {
       return json(await repository.changes());
     }
     if (fileRoute?.[2] === "diff" && request.method === "GET") {
       return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));
     }
-    if (url.pathname === API_ROUTES.search && request.method === "GET") {
+    if (nestedPath === "search" && request.method === "GET") {
       return json(
         await repository.search(
           url.searchParams.get("q") ?? "",
@@ -327,7 +596,7 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         ),
       );
     }
-    if (url.pathname === API_ROUTES.source && request.method === "GET") {
+    if (nestedPath === "source" && request.method === "GET") {
       return json(
         await repository.source(
           url.searchParams.get("path") ?? "",
@@ -343,10 +612,16 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         throw new HttpError(400, "file_mismatch", "Request file does not match the API path");
       }
       const result = await repository.stage(input);
-      emit({ type: "changes", operationRevision: result.operationRevision, at: new Date().toISOString() });
+      await emitRepository(repositoryId, "changes", result.operationRevision);
       return json(result);
     }
-    if (url.pathname === API_ROUTES.comments && request.method === "GET") {
+    if (nestedPath === "commit" && request.method === "POST") {
+      const input = await readJsonObject<CommitRequest>(request);
+      const result = await repository.commit(input);
+      await emitRepository(repositoryId, "changes", result.operationRevision);
+      return json(result, { status: 201 });
+    }
+    if (nestedPath === "comments" && request.method === "GET") {
       return json(await repository.reviewState());
     }
     if (fileRoute?.[2] === "review" && request.method === "PUT") {
@@ -356,7 +631,7 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         throw new HttpError(400, "file_mismatch", "Request file does not match the API path");
       }
       const result = await repository.setReview(input);
-      await emitCurrent("reviews");
+      await emitRepository(repositoryId, "state");
       return json(result);
     }
     if (fileRoute?.[2] === "comments" && request.method === "POST") {
@@ -366,7 +641,7 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         throw new HttpError(400, "file_mismatch", "Request file does not match the API path");
       }
       const result = await repository.createComment(input);
-      await emitCurrent("comments");
+      await emitRepository(repositoryId, "state");
       return json(result, { status: 201 });
     }
     if (commentRoute && request.method === "PUT") {
@@ -376,7 +651,7 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         throw new HttpError(400, "comment_mismatch", "Request comment does not match the API path");
       }
       const result = await repository.updateComment(input.id, input.body);
-      await emitCurrent("comments");
+      await emitRepository(repositoryId, "state");
       return json(result);
     }
     if (commentRoute && request.method === "DELETE") {
@@ -386,33 +661,37 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
         throw new HttpError(400, "comment_mismatch", "Request comment does not match the API path");
       }
       const result = await repository.deleteComment(input.id);
-      await emitCurrent("comments");
+      await emitRepository(repositoryId, "state");
       return json(result);
     }
-    if (url.pathname === API_ROUTES.events && request.method === "GET") {
-      let ownController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    if (nestedPath === "events" && request.method === "GET") {
+      let streamState: StreamState | null = null;
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-          const initializesRevision = streams.size === 0;
-          ownController = controller;
-          streams.add(controller);
+          streamState = {
+            controller,
+            repositoryId,
+            operationRevision: "",
+            stateRevision: database.stateRevision(repositoryId) ?? 0,
+            catalogRevision: database.catalogRevision(),
+            ready: false,
+          };
+          streams.add(streamState);
+          ensureSubscription(repositoryId);
           void repository
             .changes()
             .then((state) => {
-              if (!streams.has(controller)) return;
-              // Only the first connected client can initialize the shared
-              // poll baseline. A later client's ready snapshot must not hide
-              // a repository change from clients that were already present.
-              if (initializesRevision) lastChangeRevision = state.operationRevision;
-              const event: ServerEvent = {
-                type: "ready",
+              if (!streamState || !streams.has(streamState)) return;
+              streamState.ready = true;
+              sendEvent(streamState, "ready", {
                 operationRevision: state.operationRevision,
-                at: new Date().toISOString(),
-              };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+                stateRevision: database.stateRevision(repositoryId) ?? 0,
+                catalogRevision: database.catalogRevision(),
+              });
             })
             .catch((error) => {
-              streams.delete(controller);
+              if (!streamState) return;
+              removeStream(streamState);
               try {
                 controller.error(error);
               } catch {
@@ -421,18 +700,18 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
             });
         },
         cancel() {
-          if (ownController) streams.delete(ownController);
+          if (streamState) removeStream(streamState);
         },
       });
       request.signal.addEventListener(
         "abort",
         () => {
-          if (!ownController) return;
-          streams.delete(ownController);
+          if (!streamState) return;
+          removeStream(streamState);
           try {
-            ownController.close();
+            streamState.controller.close();
           } catch {
-            // The stream may already have been cancelled by the browser.
+            // The stream may already have been cancelled.
           }
         },
         { once: true },
@@ -450,7 +729,9 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
   };
 
   const serveStatic = async (url: URL): Promise<Response> => {
-    if (!options.staticDirectory) throw new HttpError(404, "not_found", "Frontend build not found");
+    if (!options.staticDirectory) {
+      throw new HttpError(404, "not_found", "Frontend build not found");
+    }
     const staticRoot = path.resolve(options.staticDirectory);
     const canonicalStaticRoot = await realpath(staticRoot).catch(() => null);
     if (!canonicalStaticRoot) {
@@ -481,9 +762,7 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
     };
 
     let target = await resolveStaticFile(relative);
-    if (!target && !path.extname(relative)) {
-      target = await resolveStaticFile("index.html");
-    }
+    if (!target && !path.extname(relative)) target = await resolveStaticFile("index.html");
     if (!target) throw new HttpError(404, "not_found", "Asset not found");
     const file = Bun.file(target);
     const immutable = relative.startsWith("assets/") && /-[A-Za-z0-9_-]{8,}\./.test(relative);
@@ -494,10 +773,31 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
     });
   };
 
-  return {
-    repository,
+  const app: CouchReviewApp = {
+    repository: initialBackend,
+    repositories,
+    database,
     csrfToken,
+    controlToken,
+    instanceId,
+    version,
+    protocolVersion: INSTANCE_PROTOCOL_VERSION,
+    bindHost: host,
+    port,
     accessOrigins,
+    registerServerInstance(): void {
+      database.registerServerInstance({
+        instanceId,
+        bindHost: host,
+        port,
+        pid: process.pid,
+        version,
+        protocolVersion: INSTANCE_PROTOCOL_VERSION,
+        controlToken,
+        accessOrigins: [...accessOrigins],
+        startedAt: new Date().toISOString(),
+      });
+    },
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       const hostHeader = request.headers.get("host") ?? url.host;
@@ -533,17 +833,24 @@ export async function createCouchReviewApp(options: CouchReviewAppOptions): Prom
       return addSecurityHeaders(response);
     },
     close(): void {
+      if (closed) return;
+      closed = true;
       clearInterval(keepAlive);
       clearInterval(poller);
+      for (const unsubscribe of subscriptions.values()) unsubscribe();
+      subscriptions.clear();
       for (const stream of streams) {
         try {
-          stream.close();
+          stream.controller.close();
         } catch {
           // Ignore already-closed streams during shutdown.
         }
       }
       streams.clear();
-      repository.close();
+      database.removeServerInstance(instanceId);
+      repositories.close();
+      database.close();
     },
   };
+  return app;
 }

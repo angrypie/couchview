@@ -15,6 +15,9 @@ GlobalRegistrator.register();
 const React = await import("react");
 const viewerCommentJumps: string[] = [];
 const viewerHunkJumps: number[] = [];
+let viewerVisibleLineChange:
+  | ((lineNumber: number, side: "old" | "new") => void)
+  | null = null;
 interface MockDiffViewerProps {
   comments: readonly ReviewComment[];
   diff: FileDiff;
@@ -23,6 +26,7 @@ interface MockDiffViewerProps {
   onCommentClick(comment: ReviewComment): void;
   onIdentifierClick(identifier: string): void;
   onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
+  onVisibleLineChange(lineNumber: number, side: "old" | "new"): void;
 }
 mock.module("./DiffViewer.tsx", () => ({
   DiffViewer: React.forwardRef(function MockDiffViewer(
@@ -34,9 +38,11 @@ mock.module("./DiffViewer.tsx", () => ({
       onCommentClick,
       onIdentifierClick,
       onLineNumberClick,
+      onVisibleLineChange,
     }: MockDiffViewerProps,
     ref: React.ForwardedRef<unknown>,
   ) {
+    viewerVisibleLineChange = onVisibleLineChange;
     React.useImperativeHandle(ref, () => ({
       scrollToLine() {},
       scrollToHunk(hunkIndex: number) {
@@ -165,7 +171,7 @@ Object.defineProperty(window, "ResizeObserver", {
   configurable: true,
   value: ResizeObserverStub,
 });
-const { cleanup, fireEvent, render, screen, waitFor, within } = await import(
+const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import(
   "@testing-library/react"
 );
 const { App } = await import("./App.tsx");
@@ -179,6 +185,22 @@ const repository = {
   head: "abc",
   unborn: false,
 };
+
+const alternateRepository = {
+  ...repository,
+  id: "repo-two",
+  name: "second-fixture",
+  root: "/second-fixture",
+  branch: "feature/other-project",
+};
+
+const repositoryCatalog = [repository, alternateRepository].map((item) => ({
+  id: item.id,
+  name: item.name,
+  root: item.root,
+  available: true,
+  addedAt: "2026-07-20T10:00:00.000Z",
+}));
 
 const initialFiles = [
   {
@@ -298,9 +320,13 @@ const secondDiff = {
 };
 
 class EventSourceStub {
+  static instances: EventSourceStub[] = [];
   onopen: ((event: Event) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
+  constructor() {
+    EventSourceStub.instances.push(this);
+  }
   close() {}
 }
 
@@ -335,17 +361,28 @@ describe("Couch Review app", () => {
   let comments: Array<Record<string, unknown>> = [];
   let reviews: Array<Record<string, unknown>> = [];
   let requests: Array<{ path: string; method: string; body: unknown }> = [];
+  let catalog = structuredClone(repositoryCatalog);
   let servedFirstDiff: FileDiff = structuredClone(firstDiff);
+  let currentOperationRevision = "operation-1";
+  let diffFailure = false;
+  let stageFailure = false;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
     comments = [];
     reviews = [];
     requests = [];
+    catalog = structuredClone(repositoryCatalog);
     servedFirstDiff = structuredClone(firstDiff);
+    currentOperationRevision = "operation-1";
+    diffFailure = false;
+    stageFailure = false;
+    EventSourceStub.instances.length = 0;
     viewerCommentJumps.length = 0;
     viewerHunkJumps.length = 0;
+    viewerVisibleLineChange = null;
     localStorage.clear();
+    window.history.replaceState(null, "", "/");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
@@ -383,18 +420,66 @@ describe("Couch Review app", () => {
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       requests.push({ path: url.pathname, method, body });
 
+      const repositoryRoute = /^\/api\/repositories\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
+      const requestedRepositoryId = repositoryRoute?.[1]
+        ? decodeURIComponent(repositoryRoute[1])
+        : null;
+      const nestedPath = repositoryRoute?.[2] ?? "";
+      const requestedRepository = requestedRepositoryId === alternateRepository.id
+        ? alternateRepository
+        : repository;
+
       if (url.pathname === "/api/bootstrap") {
-        return Response.json({ repository, csrfToken: "csrf", operationRevision: "operation-1" });
+        return Response.json({
+          csrfToken: "csrf",
+          repositories: catalog,
+          defaultRepositoryId: repository.id,
+          catalogRevision: 1,
+        });
       }
-      if (url.pathname === "/api/files") {
-        return Response.json({ repository, files, operationRevision: "operation-1" });
+      if (url.pathname === "/api/repositories") {
+        return Response.json({ repositories: catalog, catalogRevision: 1 });
       }
-      if (url.pathname === "/api/comments" && method === "GET") {
+      if (repositoryRoute && !nestedPath && method === "DELETE") {
+        catalog = catalog.filter((entry) => entry.id !== requestedRepositoryId);
+        return Response.json({ deletedId: requestedRepositoryId });
+      }
+      if (nestedPath === "files") {
+        return Response.json({
+          repository: requestedRepository,
+          files,
+          operationRevision: currentOperationRevision,
+        });
+      }
+      if (nestedPath === "comments" && method === "GET") {
         return Response.json({ reviews, comments });
       }
-      if (url.pathname === "/api/files/first/diff") return Response.json({ diff: servedFirstDiff });
-      if (url.pathname === "/api/files/second/diff") return Response.json({ diff: secondDiff });
-      if (url.pathname === "/api/search") {
+      if (nestedPath === "files/first/diff") {
+        if (diffFailure) {
+          return Response.json(
+            {
+              error: {
+                code: "git_empty_output",
+                message: "Git diff returned no data for a changed file after two attempts",
+                diagnostic: {
+                  id: "diff1234",
+                  source: "git",
+                  operation: "diff",
+                  kind: "empty_output",
+                  exitCode: 0,
+                  stderr: "Git reported this path as changed but returned no diff output.",
+                  retryable: true,
+                  timeoutMs: null,
+                },
+              },
+            },
+            { status: 503 },
+          );
+        }
+        return Response.json({ diff: servedFirstDiff });
+      }
+      if (nestedPath === "files/second/diff") return Response.json({ diff: secondDiff });
+      if (nestedPath === "search") {
         const query = url.searchParams.get("q") ?? "";
         return Response.json({
           query,
@@ -408,7 +493,7 @@ describe("Couch Review app", () => {
           truncated: false,
         });
       }
-      if (url.pathname === "/api/source") {
+      if (nestedPath === "source") {
         return Response.json({
           path: url.searchParams.get("path"),
           focusLine: 1,
@@ -421,7 +506,7 @@ describe("Couch Review app", () => {
           truncated: false,
         });
       }
-      if (url.pathname === "/api/files/first/review" && method === "PUT") {
+      if (nestedPath === "files/first/review" && method === "PUT") {
         files[0]!.reviewed = Boolean((body as { reviewed: boolean }).reviewed);
         const review = {
           fileId: "first",
@@ -433,15 +518,53 @@ describe("Couch Review app", () => {
         reviews = [review];
         return Response.json({ review });
       }
-      if (url.pathname === "/api/files/first/stage" && method === "POST") {
+      if (nestedPath === "files/first/stage" && method === "POST") {
+        if (stageFailure) {
+          return Response.json(
+            {
+              error: {
+                code: "git_timeout",
+                message: "Git update-index stopped responding after 15 seconds",
+                diagnostic: {
+                  id: "stage123",
+                  source: "git",
+                  operation: "update-index",
+                  kind: "timeout",
+                  exitCode: null,
+                  stderr: "No output was received before the timeout.",
+                  retryable: true,
+                  timeoutMs: 15_000,
+                },
+              },
+            },
+            { status: 504 },
+          );
+        }
         const staged = (body as { staged?: boolean }).staged ?? true;
         files[0]!.staged = staged;
         files[0]!.unstaged = !staged;
         files[0]!.indexStatus = staged ? "M" : ".";
         files[0]!.worktreeStatus = staged ? "." : "M";
-        return Response.json({ file: files[0], operationRevision: `operation-${staged ? 2 : 3}` });
+        currentOperationRevision = `operation-${staged ? 2 : 3}`;
+        return Response.json({ file: files[0], operationRevision: currentOperationRevision });
       }
-      if (url.pathname === "/api/files/first/comments" && method === "POST") {
+      if (nestedPath === "commit" && method === "POST") {
+        files = files.filter((file) => !file.staged || file.unstaged);
+        for (const file of files) {
+          if (!file.staged) continue;
+          file.staged = false;
+          file.indexStatus = ".";
+        }
+        currentOperationRevision = "operation-after-commit";
+        return Response.json(
+          {
+            commit: "abc1234abc1234abc1234abc1234abc1234abc12",
+            operationRevision: currentOperationRevision,
+          },
+          { status: 201 },
+        );
+      }
+      if (nestedPath === "files/first/comments" && method === "POST") {
         const now = new Date().toISOString();
         const comment = {
           ...(body as Record<string, unknown>),
@@ -455,11 +578,11 @@ describe("Couch Review app", () => {
         comments = [comment];
         return Response.json({ comment }, { status: 201 });
       }
-      if (url.pathname === "/api/comments/comment-1" && method === "PUT") {
+      if (nestedPath === "comments/comment-1" && method === "PUT") {
         comments[0] = { ...comments[0], body: (body as { body: string }).body };
         return Response.json({ comment: comments[0] });
       }
-      if (url.pathname === "/api/comments/comment-1" && method === "DELETE") {
+      if (nestedPath === "comments/comment-1" && method === "DELETE") {
         comments = [];
         return Response.json({ deletedId: "comment-1" });
       }
@@ -483,9 +606,161 @@ describe("Couch Review app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Review \+ next/ }));
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
-    expect(requests.some((request) => request.path === "/api/files/first/review")).toBe(true);
+    expect(
+      requests.some((request) => request.path === "/api/repositories/repo/files/first/review"),
+    ).toBe(true);
     fireEvent.click(screen.getAllByRole("button", { name: "Previous file" })[0]!);
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
+  });
+
+  test("does not reload the diff for duplicate SSE operation revisions", async () => {
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+    const stream = EventSourceStub.instances[0];
+    if (!stream?.onmessage) throw new Error("event stream was not connected");
+    const diffRequestCount = () =>
+      requests.filter(
+        (request) => request.path === "/api/repositories/repo/files/first/diff",
+      ).length;
+    const reviewRequestCount = () =>
+      requests.filter(
+        (request) =>
+          request.path === "/api/repositories/repo/comments" &&
+          request.method === "GET",
+      ).length;
+    const initialDiffRequests = diffRequestCount();
+    const initialReviewRequests = reviewRequestCount();
+    const event = {
+      repositoryId: "repo",
+      operationRevision: "operation-1",
+      stateRevision: 0,
+      catalogRevision: 1,
+      at: "2026-07-22T10:00:00.000Z",
+    };
+
+    await act(async () => {
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ ...event, type: "ready" }),
+        }),
+      );
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(reviewRequestCount()).toBe(initialReviewRequests + 1));
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+
+    await act(async () => {
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({ ...event, type: "changes" }),
+        }),
+      );
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+  });
+
+  test("switches repositories through the picker and follows URL history", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    expect(within(picker).getByText("/second-fixture")).toBeTruthy();
+    fireEvent.click(
+      within(picker).getByRole("button", {
+        name: /second-fixture \/second-fixture/,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
+        "second-fixture",
+      );
+    });
+    expect(new URL(window.location.href).searchParams.get("repo")).toBe("repo-two");
+    expect(requests.some((request) => request.path === "/api/repositories/repo-two/files")).toBe(
+      true,
+    );
+
+    window.history.replaceState(null, "", "/?repo=repo");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.popState(window);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
+        "fixture",
+      );
+    });
+  });
+
+  test("shows unavailable repositories and confirms Forget", async () => {
+    catalog[1] = { ...catalog[1]!, available: false };
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    expect(within(picker).getByText("Unavailable")).toBeTruthy();
+    const unavailableProject = within(picker).getByRole("button", {
+      name: /second-fixture \/second-fixture Unavailable/,
+    }) as HTMLButtonElement;
+    expect(unavailableProject.disabled).toBe(true);
+
+    fireEvent.click(within(picker).getByRole("button", { name: "Forget second-fixture" }));
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (request) =>
+            request.path === "/api/repositories/repo-two" && request.method === "DELETE",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  test("aborts an in-flight repository load when another project is selected", async () => {
+    render(<App />);
+    await screen.findByText("src/first.ts");
+
+    const normalFetch = globalThis.fetch;
+    let secondLoadAborted = false;
+    globalThis.fetch = ((input, init) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(raw, "http://localhost");
+      if (url.pathname !== "/api/repositories/repo-two/files") {
+        return normalFetch(input, init);
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            secondLoadAborted = true;
+            reject(new TypeError("aborted"));
+          },
+          { once: true },
+        );
+      });
+    }) as typeof fetch;
+
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    fireEvent.click(
+      within(picker).getByRole("button", { name: /second-fixture \/second-fixture/ }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.some((request) => request.path === "/api/repositories/repo-two/comments"),
+      ).toBe(true),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const returnPicker = await screen.findByRole("dialog", { name: "Repositories" });
+    fireEvent.click(
+      within(returnPicker).getByRole("button", { name: /fixture \/fixture/ }),
+    );
+    await waitFor(() => expect(secondLoadAborted).toBe(true));
+    await screen.findByText("src/first.ts");
   });
 
   test("uses compact landscape actions without advancing and toggles staging", async () => {
@@ -513,7 +788,9 @@ describe("Couch Review app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Review current file" }));
     await waitFor(() =>
       expect(
-        requests.find((request) => request.path === "/api/files/first/review")?.body,
+        requests.find(
+          (request) => request.path === "/api/repositories/repo/files/first/review",
+        )?.body,
       ).toMatchObject({ reviewed: true }),
     );
     expect(screen.getByText("src/first.ts")).toBeTruthy();
@@ -521,14 +798,85 @@ describe("Couch Review app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
     await screen.findByRole("button", { name: "Unstage current file" });
     expect(
-      requests.find((request) => request.path === "/api/files/first/stage")?.body,
+      requests.find(
+        (request) => request.path === "/api/repositories/repo/files/first/stage",
+      )?.body,
     ).toMatchObject({ staged: true });
 
     fireEvent.click(screen.getByRole("button", { name: "Unstage current file" }));
     await screen.findByRole("button", { name: "Stage current file" });
     expect(
-      requests.filter((request) => request.path === "/api/files/first/stage").at(-1)?.body,
+      requests
+        .filter((request) => request.path === "/api/repositories/repo/files/first/stage")
+        .at(-1)?.body,
     ).toMatchObject({ staged: false });
+  });
+
+  test("shows structured diagnostics when a diff unexpectedly returns no output", async () => {
+    diffFailure = true;
+    render(<App />);
+
+    await screen.findByText("Couldn’t load this diff");
+    expect(
+      screen.getByText("Git diff returned no data for a changed file after two attempts"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Error details" }));
+    const details = await screen.findByRole("dialog", { name: "Git error details" });
+    expect(within(details).getByText("diff1234")).toBeTruthy();
+    expect(within(details).getByText("empty_output")).toBeTruthy();
+    expect(
+      within(details).getByText(
+        "Git reported this path as changed but returned no diff output.",
+      ),
+    ).toBeTruthy();
+  });
+
+  test("opens Git timeout diagnostics from a failed staging toast", async () => {
+    stageFailure = true;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByText("Git update-index stopped responding after 15 seconds");
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    const details = await screen.findByRole("dialog", { name: "Git error details" });
+    expect(within(details).getByText("stage123")).toBeTruthy();
+    expect(within(details).getByText("update-index")).toBeTruthy();
+    expect(within(details).getByText("timeout")).toBeTruthy();
+  });
+
+  test("commits staged files from the changed-files drawer", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await screen.findByRole("button", { name: "Unstage current file" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Commit 1 staged file" }),
+    );
+    const composer = await screen.findByRole("dialog", {
+      name: "Commit staged changes",
+    });
+    fireEvent.change(within(composer).getByPlaceholderText("Commit message…"), {
+      target: { value: "Commit from the phone" },
+    });
+    fireEvent.click(
+      within(composer).getByRole("button", { name: "Commit staged changes" }),
+    );
+
+    await screen.findByText("Committed abc1234");
+    expect(
+      requests.find((request) => request.path === "/api/repositories/repo/commit"),
+    ).toMatchObject({
+      method: "POST",
+      body: {
+        message: "Commit from the phone",
+        operationRevision: "operation-2",
+      },
+    });
+    await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
   });
 
   test("hides line numbers by default and remembers the 123 toggle", async () => {
@@ -564,7 +912,35 @@ describe("Couch Review app", () => {
     expect((await screen.findByTestId("pierre-code-view")).dataset.lineWrap).toBe("true");
   });
 
-  test("routes hunk navigation through the viewer handle", async () => {
+  test("jumps to the only hunk from above or below it", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    const previousHunk = screen.getByRole("button", {
+      name: "Previous hunk",
+    }) as HTMLButtonElement;
+    const nextHunk = screen.getByRole("button", {
+      name: "Next hunk",
+    }) as HTMLButtonElement;
+    await waitFor(() => expect(nextHunk.disabled).toBe(false));
+    expect(previousHunk.disabled).toBe(true);
+
+    fireEvent.click(nextHunk);
+
+    expect(viewerHunkJumps).toEqual([0]);
+    expect(nextHunk.disabled).toBe(true);
+    expect(previousHunk.disabled).toBe(true);
+
+    act(() => viewerVisibleLineChange?.(100, "new"));
+    expect(previousHunk.disabled).toBe(false);
+    expect(nextHunk.disabled).toBe(true);
+
+    fireEvent.click(previousHunk);
+    expect(viewerHunkJumps).toEqual([0, 0]);
+    expect(previousHunk.disabled).toBe(true);
+  });
+
+  test("routes hunk navigation without skipping the first hunk", async () => {
     const secondHunk = structuredClone(servedFirstDiff.hunks[0]!);
     secondHunk.id = "hunk-2";
     secondHunk.header = "@@ -11,2 +11,2 @@";
@@ -582,7 +958,11 @@ describe("Couch Review app", () => {
     const nextHunk = screen.getByRole("button", { name: "Next hunk" }) as HTMLButtonElement;
     await waitFor(() => expect(nextHunk.disabled).toBe(false));
     fireEvent.click(nextHunk);
-    expect(viewerHunkJumps).toEqual([1]);
+    expect(viewerHunkJumps).toEqual([0]);
+    expect(nextHunk.disabled).toBe(false);
+
+    fireEvent.click(nextHunk);
+    expect(viewerHunkJumps).toEqual([0, 1]);
     expect(nextHunk.disabled).toBe(true);
   });
 

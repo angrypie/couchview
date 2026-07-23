@@ -1,11 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseCli } from "./cli.ts";
+import { parseCli, startServer } from "./cli.ts";
+import { createCouchReviewApp, type CouchReviewApp } from "./server.ts";
 
 const initialRoot = Bun.env.COUCH_REVIEW_ROOT;
 const initialHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
+const initialDataHome = Bun.env.XDG_DATA_HOME;
+const initialDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 
 function restoreEnvironment() {
   if (initialRoot === undefined) delete Bun.env.COUCH_REVIEW_ROOT;
@@ -16,6 +21,12 @@ function restoreEnvironment() {
 
   if (initialPort === undefined) delete Bun.env.PORT;
   else Bun.env.PORT = initialPort;
+
+  if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
+  else Bun.env.XDG_DATA_HOME = initialDataHome;
+
+  if (initialDisableReuse === undefined) delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
+  else Bun.env.COUCH_REVIEW_DISABLE_REUSE = initialDisableReuse;
 }
 
 describe("parseCli", () => {
@@ -27,10 +38,10 @@ describe("parseCli", () => {
 
   afterEach(restoreEnvironment);
 
-  test("defaults to the launch directory and production port", () => {
+  test("defaults to the launch directory, all interfaces, and production port", () => {
     expect(parseCli([])).toEqual({
       root: path.resolve(process.cwd()),
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 4173,
     });
   });
@@ -38,7 +49,7 @@ describe("parseCli", () => {
   test("accepts a positional repository path", () => {
     expect(parseCli(["fixtures/example"])).toEqual({
       root: path.resolve("fixtures/example"),
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 4173,
     });
   });
@@ -46,12 +57,12 @@ describe("parseCli", () => {
   test("accepts --repo and --port in either order", () => {
     expect(parseCli(["--repo", "../project", "--port", "5199"])).toEqual({
       root: path.resolve("../project"),
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 5199,
     });
     expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
       root: path.resolve("/tmp/project"),
-      host: "127.0.0.1",
+      host: "0.0.0.0",
       port: 6001,
     });
   });
@@ -127,5 +138,235 @@ describe("parseCli", () => {
 
   test.each(["1", "65535"])("accepts boundary port %s", (port) => {
     expect(parseCli(["--port", port]).port).toBe(Number(port));
+  });
+});
+
+const temporaryDirectories: string[] = [];
+const applications: CouchReviewApp[] = [];
+const endpoints = new Map<number, (request: Request) => Response | Promise<Response>>();
+let nextPort = 43_100;
+
+async function repositoryFixture(name: string): Promise<string> {
+  const directory = await mkdtemp(path.join(tmpdir(), `couch-review-cli-${name}-`));
+  temporaryDirectories.push(directory);
+  expect(Bun.spawnSync(["git", "init", "-q", directory]).exitCode).toBe(0);
+  await writeFile(path.join(directory, `${name}.ts`), `export const ${name} = true;\n`);
+  return directory;
+}
+
+function freePort(): number {
+  nextPort += 1;
+  return nextPort;
+}
+
+async function runningApp(root: string, port: number, stateDatabasePath?: string) {
+  const app = await createCouchReviewApp({
+    root,
+    host: "127.0.0.1",
+    port,
+    stateDatabasePath,
+  });
+  app.registerServerInstance();
+  applications.push(app);
+  endpoints.set(port, app.fetch);
+  return app;
+}
+
+const runtimeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const request = new Request(input, init);
+  const port = Number(new URL(request.url).port);
+  const endpoint = endpoints.get(port);
+  if (!endpoint) throw new TypeError("Endpoint is not listening");
+  return endpoint(request);
+}) as typeof globalThis.fetch;
+
+const runtimeServe = ((options: {
+  hostname?: string;
+  port?: number;
+  fetch(request: Request): Response | Promise<Response>;
+}) => {
+  const port = options.port ?? 0;
+  if (endpoints.has(port)) {
+    const error = new Error(`Failed to listen: address already in use (${port})`);
+    Object.assign(error, { code: "EADDRINUSE" });
+    throw error;
+  }
+  endpoints.set(port, options.fetch);
+  return {
+    port,
+    stop() {
+      endpoints.delete(port);
+    },
+  } as ReturnType<typeof Bun.serve>;
+}) as unknown as typeof Bun.serve;
+
+const runtime = { fetch: runtimeFetch, serve: runtimeServe };
+
+describe("multi-project CLI startup", () => {
+  beforeEach(async () => {
+    delete Bun.env.COUCH_REVIEW_ROOT;
+    delete Bun.env.COUCH_REVIEW_HOST;
+    delete Bun.env.PORT;
+    delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
+    const dataHome = await mkdtemp(path.join(tmpdir(), "couch-review-cli-data-"));
+    temporaryDirectories.push(dataHome);
+    Bun.env.XDG_DATA_HOME = dataHome;
+  });
+
+  afterEach(async () => {
+    endpoints.clear();
+    for (const application of applications.splice(0)) application.close();
+    await Promise.all(
+      temporaryDirectories.splice(0).map((directory) =>
+        rm(directory, { recursive: true, force: true }),
+      ),
+    );
+    restoreEnvironment();
+  });
+
+  test("starts the first endpoint with a project-specific URL and global state", async () => {
+    const root = await repositoryFixture("first");
+    const port = freePort();
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => messages.push(values.join(" "));
+    try {
+      const result = await startServer(["--repo", root, "--port", String(port)], runtime);
+      if (!result.app || !result.server || !result.stop) {
+        throw new Error("CLI unexpectedly attached to another server");
+      }
+      expect(result.app.database.repositories()).toHaveLength(1);
+      expect(messages.join("\n")).toContain(`/?repo=${result.app.repository.id}`);
+      expect(messages.join("\n")).toContain(`Repository: ${result.app.repository.root}`);
+      expect(
+        await Bun.file(path.join(root, ".git", "couch-review", "state.json")).exists(),
+      ).toBe(false);
+      result.stop();
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("adds a second project to a compatible server, then reports duplicates", async () => {
+    const firstRoot = await repositoryFixture("first");
+    const secondRoot = await repositoryFixture("second");
+    const port = freePort();
+    const app = await runningApp(firstRoot, port);
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (...values: unknown[]) => messages.push(values.join(" "));
+    try {
+      const added = await startServer(
+        ["--repo", secondRoot, "--port", String(port)],
+        runtime,
+      );
+      if (!added.registered) throw new Error("CLI unexpectedly started another server");
+      expect(added.registered.registration.added).toBe(true);
+      expect(app.database.repositories()).toHaveLength(2);
+      expect(messages.join("\n")).toContain("Repository added to the running Couch Review server.");
+      expect(messages.join("\n")).toContain(
+        `/?repo=${added.registered.registration.repository.id}`,
+      );
+
+      messages.length = 0;
+      const duplicate = await startServer(
+        ["--repo", secondRoot, "--port", String(port)],
+        runtime,
+      );
+      if (!duplicate.registered) throw new Error("CLI unexpectedly started another server");
+      expect(duplicate.registered.registration.added).toBe(false);
+      expect(messages.join("\n")).toContain(
+        "Repository is already available in the running Couch Review server.",
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("rejects unrelated services, data-directory mismatches, and incompatible binds", async () => {
+    const root = await repositoryFixture("first");
+    const otherRoot = await repositoryFixture("second");
+
+    const unrelatedPort = freePort();
+    endpoints.set(unrelatedPort, () => Response.json({ service: "something-else" }));
+    await expect(
+      startServer(["--repo", root, "--port", String(unrelatedPort)], runtime),
+    ).rejects.toThrow("not a compatible Couch Review server");
+
+    const incompatiblePort = freePort();
+    await runningApp(root, incompatiblePort);
+    await expect(
+      startServer([
+        "--repo",
+        otherRoot,
+        "--host",
+        "0.0.0.0",
+        "--port",
+        String(incompatiblePort),
+      ], runtime),
+    ).rejects.toThrow("does not satisfy --host 0.0.0.0");
+
+    const dataMismatchPort = freePort();
+    const otherDataHome = await mkdtemp(path.join(tmpdir(), "couch-review-cli-other-data-"));
+    temporaryDirectories.push(otherDataHome);
+    await runningApp(
+      root,
+      dataMismatchPort,
+      path.join(otherDataHome, "couch-review", "state.sqlite"),
+    );
+    await expect(
+      startServer(["--repo", otherRoot, "--port", String(dataMismatchPort)], runtime),
+    ).rejects.toThrow("different XDG data directory");
+  });
+
+  test("development ownership mode refuses to attach to an occupied endpoint", async () => {
+    const firstRoot = await repositoryFixture("first");
+    const secondRoot = await repositoryFixture("second");
+    const port = freePort();
+    await runningApp(firstRoot, port);
+    Bun.env.COUCH_REVIEW_DISABLE_REUSE = "1";
+    await expect(
+      startServer(["--repo", secondRoot, "--port", String(port)], runtime),
+    ).rejects.toThrow(/EADDRINUSE|address already in use/i);
+  });
+
+  test("retries discovery when another process wins the startup bind race", async () => {
+    const firstRoot = await repositoryFixture("first");
+    const secondRoot = await repositoryFixture("second");
+    const port = freePort();
+    const incumbent = await createCouchReviewApp({
+      root: firstRoot,
+      host: "127.0.0.1",
+      port,
+    });
+    incumbent.registerServerInstance();
+    applications.push(incumbent);
+
+    let raced = false;
+    const raceServe = ((options: Parameters<typeof runtimeServe>[0]) => {
+      if (!raced) {
+        raced = true;
+        endpoints.set(port, incumbent.fetch);
+        const error = new Error("Failed to listen: address already in use");
+        Object.assign(error, { code: "EADDRINUSE" });
+        throw error;
+      }
+      return runtimeServe(options as never);
+    }) as typeof Bun.serve;
+
+    const originalLog = console.log;
+    console.log = () => undefined;
+    try {
+      const result = await startServer(
+        ["--repo", secondRoot, "--port", String(port)],
+        { fetch: runtimeFetch, serve: raceServe },
+      );
+      expect(result.registered?.registration.repository.root).toContain(
+        secondRoot.split("/").at(-1)!,
+      );
+      expect(incumbent.database.repositories()).toHaveLength(2);
+    } finally {
+      console.log = originalLog;
+    }
   });
 });

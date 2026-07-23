@@ -2,14 +2,19 @@ import {
   API_ROUTES,
   CSRF_HEADER,
   type ApiErrorBody,
+  type ApiErrorDiagnostic,
   type BootstrapResponse,
   type ChangesResponse,
+  type CommitRequest,
+  type CommitResponse,
   type CommentResponse,
   type CreateCommentRequest,
   type DeleteCommentRequest,
   type DeleteCommentResponse,
   type DiffResponse,
   type ReviewStateResponse,
+  type RepositoryCatalogResponse,
+  type ForgetRepositoryResponse,
   type SearchResponse,
   type SetReviewRequest,
   type SetReviewResponse,
@@ -22,12 +27,19 @@ import {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly diagnostic?: ApiErrorDiagnostic;
 
-  constructor(message: string, status: number, code = "request_failed") {
+  constructor(
+    message: string,
+    status: number,
+    code = "request_failed",
+    diagnostic?: ApiErrorDiagnostic,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.diagnostic = diagnostic;
   }
 }
 
@@ -58,14 +70,16 @@ async function request<T>(
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     let code = "request_failed";
+    let diagnostic: ApiErrorDiagnostic | undefined;
     try {
       const body = (await response.json()) as ApiErrorBody;
       message = body.error.message;
       code = body.error.code;
+      diagnostic = body.error.diagnostic;
     } catch {
       // Keep the useful HTTP fallback when the response is not JSON.
     }
-    throw new ApiError(message, response.status, code);
+    throw new ApiError(message, response.status, code, diagnostic);
   }
 
   if (response.status === 204) return undefined as T;
@@ -89,71 +103,121 @@ export const api = {
     return request<BootstrapResponse>(API_ROUTES.bootstrap, { signal });
   },
 
-  changes(signal?: AbortSignal) {
-    return request<ChangesResponse>(API_ROUTES.files, { signal });
+  repositories(signal?: AbortSignal) {
+    return request<RepositoryCatalogResponse>(API_ROUTES.repositories, { signal });
   },
 
-  diff(fileId: string, signal?: AbortSignal) {
+  changes(repositoryId: string, signal?: AbortSignal) {
+    return request<ChangesResponse>(API_ROUTES.files(repositoryId), { signal });
+  },
+
+  diff(repositoryId: string, fileId: string, signal?: AbortSignal) {
     return request<DiffResponse>(
-      API_ROUTES.fileDiff(fileId),
+      API_ROUTES.fileDiff(repositoryId, fileId),
       { signal },
     );
   },
 
-  reviews(signal?: AbortSignal) {
-    return request<ReviewStateResponse>(API_ROUTES.comments, { signal });
+  reviews(repositoryId: string, signal?: AbortSignal) {
+    return request<ReviewStateResponse>(API_ROUTES.comments(repositoryId), { signal });
   },
 
-  search(query: string, currentPath: string, signal?: AbortSignal) {
+  search(repositoryId: string, query: string, currentPath: string, signal?: AbortSignal) {
     return request<SearchResponse>(
-      withQuery(API_ROUTES.search, { q: query, currentPath }),
+      withQuery(API_ROUTES.search(repositoryId), { q: query, currentPath }),
       { signal },
     );
   },
 
-  source(path: string, line: number, signal?: AbortSignal) {
+  source(repositoryId: string, path: string, line: number, signal?: AbortSignal) {
     return request<SourcePreviewResponse>(
-      withQuery(API_ROUTES.source, { path, line, context: 20 }),
+      withQuery(API_ROUTES.source(repositoryId), { path, line, context: 20 }),
       { signal },
     );
   },
 
-  setReviewed(body: SetReviewRequest, csrfToken: string) {
+  setReviewed(
+    repositoryId: string,
+    body: SetReviewRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
     return request<SetReviewResponse>(
-      API_ROUTES.fileReview(body.fileId),
-      { method: "PUT", body: JSON.stringify(body) },
+      API_ROUTES.fileReview(repositoryId, body.fileId),
+      { method: "PUT", body: JSON.stringify(body), signal },
       csrfToken,
     );
   },
 
-  stage(body: StageFileRequest, csrfToken: string) {
+  stage(
+    repositoryId: string,
+    body: StageFileRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
     return request<StageFileResponse>(
-      API_ROUTES.fileStage(body.fileId),
-      { method: "POST", body: JSON.stringify(body) },
+      API_ROUTES.fileStage(repositoryId, body.fileId),
+      { method: "POST", body: JSON.stringify(body), signal },
       csrfToken,
     );
   },
 
-  createComment(body: CreateCommentRequest, csrfToken: string) {
+  commit(
+    repositoryId: string,
+    body: CommitRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<CommitResponse>(
+      API_ROUTES.commit(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  createComment(
+    repositoryId: string,
+    body: CreateCommentRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
     return request<CommentResponse>(
-      API_ROUTES.fileComments(body.fileId),
-      { method: "POST", body: JSON.stringify(body) },
+      API_ROUTES.fileComments(repositoryId, body.fileId),
+      { method: "POST", body: JSON.stringify(body), signal },
       csrfToken,
     );
   },
 
-  updateComment(body: UpdateCommentRequest, csrfToken: string) {
+  updateComment(
+    repositoryId: string,
+    body: UpdateCommentRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
     return request<CommentResponse>(
-      API_ROUTES.comment(body.id),
-      { method: "PUT", body: JSON.stringify(body) },
+      API_ROUTES.comment(repositoryId, body.id),
+      { method: "PUT", body: JSON.stringify(body), signal },
       csrfToken,
     );
   },
 
-  deleteComment(body: DeleteCommentRequest, csrfToken: string) {
+  deleteComment(
+    repositoryId: string,
+    body: DeleteCommentRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
     return request<DeleteCommentResponse>(
-      API_ROUTES.comment(body.id),
-      { method: "DELETE", body: JSON.stringify(body) },
+      API_ROUTES.comment(repositoryId, body.id),
+      { method: "DELETE", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  forgetRepository(repositoryId: string, csrfToken: string, signal?: AbortSignal) {
+    return request<ForgetRepositoryResponse>(
+      API_ROUTES.repository(repositoryId),
+      { method: "DELETE", body: JSON.stringify({ repositoryId }), signal },
       csrfToken,
     );
   },

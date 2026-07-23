@@ -45,6 +45,11 @@ test.describe("mobile fixture review", () => {
   }, testInfo) => {
     const currentFile = await openFixture(page);
     await dismissPwaNotices(page);
+    await expect(
+      page.locator("diffs-container [data-line]").filter({
+        hasText: "visible between hunks",
+      }),
+    ).toBeVisible();
 
     await expect
       .poll(() =>
@@ -177,6 +182,9 @@ test.describe("mobile fixture review", () => {
     const previousHunk = hunkActions.getByRole("button", { name: "Previous hunk" });
     await expect(previousHunk).toBeDisabled();
     await nextHunk.click();
+    await expect(nextHunk).toBeEnabled();
+    await expect(previousHunk).toBeDisabled();
+    await nextHunk.click();
     await expect(nextHunk).toBeDisabled();
     await expect(previousHunk).toBeEnabled();
     await previousHunk.click();
@@ -278,6 +286,57 @@ test.describe("mobile fixture review", () => {
     await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
   });
 
+  test("commits staged changes from the phone drawer", async ({ page }) => {
+    const currentFile = await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    await actions.getByRole("button", { name: "Stage current file" }).click();
+    await expect(page.getByText("File staged", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    const drawer = page.getByRole("complementary", { name: "Changed files" });
+    await drawer.getByRole("button", { name: "Commit 1 staged file" }).click();
+
+    const composer = page.getByRole("dialog", { name: "Commit staged changes" });
+    await expect(composer).toContainText("unstaged edits stay local");
+    await composer.getByPlaceholder("Commit message…").fill("Review changes on phone");
+    await composer.getByRole("button", { name: "Commit staged changes" }).click();
+
+    await expect(page.getByText("Committed abc1234", { exact: true })).toBeVisible();
+    await expect(currentFile).toContainText("src/format.ts");
+  });
+
+  test("switches projects through URL history while tabs remain independent", async ({
+    context,
+    page,
+  }) => {
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const repositoryButton = page.getByRole("button", { name: "Select repository" });
+    await expect(repositoryButton).toContainText("sample-project");
+    await repositoryButton.click();
+    const picker = page.getByRole("dialog", { name: "Repositories" });
+    await expect(picker).toContainText("/fixtures/sample-project");
+    await expect(picker).toContainText("/fixtures/design-system");
+    await picker.getByRole("button", { name: /design-system \/fixtures\/design-system/ }).click();
+    await expect(repositoryButton).toContainText("design-system");
+    await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+
+    await page.goBack();
+    await expect(repositoryButton).toContainText("sample-project");
+    await expect(page).toHaveURL(/\?repo=fixture-repository$/);
+
+    const secondTab = await context.newPage();
+    await secondTab.goto("/?repo=fixture-repository-two");
+    await expect(secondTab.getByRole("button", { name: "Select repository" })).toContainText(
+      "design-system",
+    );
+    await expect(repositoryButton).toContainText("sample-project");
+    await secondTab.close();
+  });
+
   test("landscape phones keep the viewer full width while the drawer overlays it", async ({
     page,
   }, testInfo) => {
@@ -372,7 +431,12 @@ test.describe("production PWA", () => {
     }
 
     const apiResponse = await page.evaluate(async () => {
-      const response = await fetch("/api/files", { cache: "no-store" });
+      const repositoryId = new URL(location.href).searchParams.get("repo");
+      if (!repositoryId) throw new Error("No repository selected");
+      const response = await fetch(
+        `/api/repositories/${encodeURIComponent(repositoryId)}/files`,
+        { cache: "no-store" },
+      );
       return { ok: response.ok, cacheControl: response.headers.get("cache-control") };
     });
     expect(apiResponse.ok).toBe(true);
@@ -429,7 +493,11 @@ test.describe("production PWA", () => {
     try {
       const apiOffline = await page.evaluate(async () => {
         try {
-          await fetch("/api/files", { cache: "no-store" });
+          const repositoryId = new URL(location.href).searchParams.get("repo");
+          await fetch(
+            `/api/repositories/${encodeURIComponent(repositoryId ?? "missing")}/files`,
+            { cache: "no-store" },
+          );
           return false;
         } catch {
           return true;

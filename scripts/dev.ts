@@ -10,7 +10,7 @@ const rawArgs = Bun.argv.slice(2).filter((arg) => arg !== "--");
 
 function readArguments(args: string[]): { root: string; host: string } {
   let root = process.env.COUCH_REVIEW_ROOT || process.cwd();
-  let host = process.env.COUCH_REVIEW_HOST || "127.0.0.1";
+  let host = process.env.COUCH_REVIEW_HOST || "0.0.0.0";
   let explicitRoot = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -92,6 +92,7 @@ const sharedEnv = {
   COUCH_REVIEW_API_ORIGIN: apiOrigin,
   COUCH_REVIEW_WEB_HOST: webHost,
   COUCH_REVIEW_WEB_PORT: String(webPort),
+  COUCH_REVIEW_DISABLE_REUSE: "1",
 };
 
 console.log(`Reviewing ${reviewRoot}`);

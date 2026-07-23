@@ -4,12 +4,15 @@ import {
 	type BootstrapResponse,
 	type ChangeFile,
 	type ChangesResponse,
+	type CommitRequest,
+	type CommitResponse,
 	type CreateCommentRequest,
 	CSRF_HEADER,
 	type DiffResponse,
 	type ReviewComment,
 	type ReviewRecord,
 	type ReviewStateResponse,
+	type RepositoryCatalogEntry,
 	type SetReviewRequest,
 	type StageFileRequest,
 } from "../src/shared/contracts.ts";
@@ -28,6 +31,25 @@ const repository = {
 	head: "0123456789abcdef0123456789abcdef01234567",
 	unborn: false,
 };
+
+const alternateRepository = {
+	id: "fixture-repository-two",
+	name: "design-system",
+	root: "/fixtures/design-system",
+	branch: "main",
+	head: "fedcba9876543210fedcba9876543210fedcba98",
+	unborn: false,
+};
+
+const repositoryCatalog: RepositoryCatalogEntry[] = [repository, alternateRepository].map(
+	(item) => ({
+		id: item.id,
+		name: item.name,
+		root: item.root,
+		available: true,
+		addedAt: "2026-01-01T00:00:00.000Z",
+	}),
+);
 
 const initialFiles: ChangeFile[] = [
 	{
@@ -67,6 +89,32 @@ const initialFiles: ChangeFile[] = [
 ];
 const files: ChangeFile[] = structuredClone(initialFiles);
 
+const reviewFullFilePatch = [
+	"diff --git a/src/review.ts b/src/review.ts",
+	"--- a/src/review.ts",
+	"+++ b/src/review.ts",
+	"@@ -1,14 +1,16 @@",
+	" export function review(path: string, options: ReviewOptionsWithAnIntentionallyLongName, repository: RepositorySnapshotWithMetadata) {",
+	"-  return load(path);",
+	"+  const result = load(path);",
+	"+  return result.files;",
+	" }",
+	" ",
+	' export const completeFileContext = "visible between hunks";',
+	" ",
+	" export interface ReviewOptions {",
+	"   enabled: boolean;",
+	" }",
+	" ",
+	" // This unchanged block remains visible in the complete file view.",
+	" export const status = {",
+	"-  ready: false,",
+	"+  ready: true,",
+	"+  reviewed: false,",
+	" };",
+	"",
+].join("\n");
+
 const diffs: Record<string, DiffResponse> = {
 	"fixture-review-ts": {
 		diff: {
@@ -79,6 +127,7 @@ const diffs: Record<string, DiffResponse> = {
 			binary: false,
 			tooLarge: false,
 			header: ["diff --git a/src/review.ts b/src/review.ts"],
+			fullFilePatch: reviewFullFilePatch,
 			additions: 4,
 			deletions: 2,
 			hunks: [
@@ -332,23 +381,46 @@ const server = Bun.serve({
 	idleTimeout: 255,
 	async fetch(request) {
 		const url = new URL(request.url);
-		const fileRoute =
-			/^\/api\/files\/([^/]+)\/(diff|stage|review|comments)$/.exec(
-				url.pathname,
-			);
-		const commentRoute = /^\/api\/comments\/([^/]+)$/.exec(url.pathname);
+		const repositoryRoute =
+			/^\/api\/repositories\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
+		const repositoryId = repositoryRoute?.[1]
+			? decodeURIComponent(repositoryRoute[1])
+			: null;
+		const selectedRepository =
+			repositoryId === repository.id
+				? repository
+				: repositoryId === alternateRepository.id
+					? alternateRepository
+					: null;
+		const nestedPath = repositoryRoute?.[2] || "";
+		const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(
+			nestedPath,
+		);
+		const commentRoute = /^comments\/([^/]+)$/.exec(nestedPath);
 
 		if (url.pathname === "/api/bootstrap" && request.method === "GET") {
 			return json({
-				repository,
 				csrfToken,
-				operationRevision,
+				repositories: repositoryCatalog,
+				defaultRepositoryId: repository.id,
+				catalogRevision: 1,
 			} satisfies BootstrapResponse);
 		}
 
-		if (url.pathname === "/api/files" && request.method === "GET") {
+		if (url.pathname === "/api/repositories" && request.method === "GET") {
+			return json({ repositories: repositoryCatalog, catalogRevision: 1 });
+		}
+
+		if (repositoryRoute && !selectedRepository) {
+			return json(
+				{ error: { code: "repository_not_found", message: "Fixture repository not found" } },
+				404,
+			);
+		}
+
+		if (nestedPath === "files" && request.method === "GET") {
 			return json({
-				repository,
+				repository: selectedRepository!,
 				files,
 				operationRevision,
 			} satisfies ChangesResponse);
@@ -364,11 +436,11 @@ const server = Bun.serve({
 					);
 		}
 
-		if (url.pathname === "/api/comments" && request.method === "GET") {
+		if (nestedPath === "comments" && request.method === "GET") {
 			return json({ reviews, comments } satisfies ReviewStateResponse);
 		}
 
-		if (url.pathname === "/api/search" && request.method === "GET") {
+		if (nestedPath === "search" && request.method === "GET") {
 			const query = url.searchParams.get("q") || "";
 			const currentPath = url.searchParams.get("currentPath") || files[0]!.path;
 			return json({
@@ -394,7 +466,7 @@ const server = Bun.serve({
 			});
 		}
 
-		if (url.pathname === "/api/source" && request.method === "GET") {
+		if (nestedPath === "source" && request.method === "GET") {
 			const path = url.searchParams.get("path") || files[0]!.path;
 			const focusLine = Number(url.searchParams.get("line") || 2);
 			return json({
@@ -412,12 +484,12 @@ const server = Bun.serve({
 			});
 		}
 
-		if (url.pathname === "/api/events" && request.method === "GET") {
+		if (nestedPath === "events" && request.method === "GET") {
 			const body = new ReadableStream({
 				start(controller) {
 					controller.enqueue(
 						new TextEncoder().encode(
-							`data: ${JSON.stringify({ type: "ready", operationRevision, at: new Date().toISOString() })}\n\n`,
+							`data: ${JSON.stringify({ type: "ready", repositoryId, operationRevision, stateRevision: reviews.length + comments.length, catalogRevision: 1, at: new Date().toISOString() })}\n\n`,
 						),
 					);
 				},
@@ -484,6 +556,50 @@ const server = Bun.serve({
 			file.worktreeStatus = staged ? "." : file.kind === "added" ? "?" : "M";
 			operationRevision = `fixture-operation-${Date.now()}`;
 			return json({ file, operationRevision });
+		}
+
+		if (nestedPath === "commit" && request.method === "POST") {
+			const body = (await request.json()) as CommitRequest;
+			if (body.operationRevision !== operationRevision) {
+				return json(
+					{
+						error: {
+							code: "operation_changed",
+							message: "Project changes changed; refresh before committing",
+						},
+					},
+					409,
+				);
+			}
+			if (!body.message?.trim() || !files.some((file) => file.staged)) {
+				return json(
+					{
+						error: {
+							code: "nothing_staged",
+							message: "Nothing is staged to commit",
+						},
+					},
+					409,
+				);
+			}
+			for (let index = files.length - 1; index >= 0; index -= 1) {
+				const file = files[index];
+				if (!file?.staged) continue;
+				if (!file.unstaged) {
+					files.splice(index, 1);
+					continue;
+				}
+				file.staged = false;
+				file.indexStatus = ".";
+			}
+			operationRevision = `fixture-operation-${Date.now()}`;
+			return json(
+				{
+					commit: "abc1234abc1234abc1234abc1234abc1234abc12",
+					operationRevision,
+				} satisfies CommitResponse,
+				201,
+			);
 		}
 
 		if (fileRoute?.[2] === "comments" && request.method === "POST") {

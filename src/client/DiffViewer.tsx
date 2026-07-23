@@ -351,6 +351,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
         diffStyle: "unified",
         diffIndicators: "bars",
         hunkSeparators: "metadata",
+        expandUnchanged: true,
         lineDiffType: "word-alt",
         overflow: lineWrapEnabled ? "wrap" : "scroll",
         disableFileHeader: true,
@@ -443,6 +444,11 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
         {diff.tooLarge && (
           <div className="truncated-banner" role="status">
             Showing the first 2 MiB or 20,000 rows.
+          </div>
+        )}
+        {diff.fullFilePatch === null && !diff.tooLarge && (
+          <div className="truncated-banner" role="status">
+            Complete file exceeds 2 MiB or 20,000 rows. Showing diff hunks instead.
           </div>
         )}
         <CodeView<CommentAnnotationMetadata>

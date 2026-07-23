@@ -85,7 +85,7 @@ export function reconstructUnifiedPatch(diff: FileDiff): string {
 }
 
 export function adaptFileDiff(diff: FileDiff): AdaptedFileDiff {
-  const patch = reconstructUnifiedPatch(diff);
+  const patch = diff.fullFilePatch || reconstructUnifiedPatch(diff);
   const parsedPatches = parsePatchFiles(
     patch,
     diff.contentRevision,
