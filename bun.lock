@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "couch-review",
+      "name": "couchview",
       "dependencies": {
         "@pierre/diffs": "1.2.12",
         "lucide-react": "^1.25.0",

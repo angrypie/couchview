@@ -23,11 +23,17 @@ export interface AdaptedFileDiff {
   patch: string;
 }
 
+interface DiffHighlightCache {
+  primeDiffHighlightCache(diff: FileDiffMetadata): void;
+}
+
 export interface SelectionEndpoint {
   lineNumber: number;
   rowIndex: number;
   side: "old" | "new";
 }
+
+const adaptedFileDiffCache = new WeakMap<FileDiff, AdaptedFileDiff>();
 
 function quotePatchPath(path: string): string {
   const prefixed = path;
@@ -50,7 +56,7 @@ function syntheticHeader(diff: FileDiff): string[] {
 }
 
 /**
- * Rebuild the single-file unified patch that Pierre expects from Couch Review's
+ * Rebuild the single-file unified patch that Pierre expects from Couchview's
  * structured API response. The structured rows remain the source of truth for
  * comments and side conversion; this patch is only a rendering adapter.
  */
@@ -85,6 +91,9 @@ export function reconstructUnifiedPatch(diff: FileDiff): string {
 }
 
 export function adaptFileDiff(diff: FileDiff): AdaptedFileDiff {
+  const cached = adaptedFileDiffCache.get(diff);
+  if (cached) return cached;
+
   const patch = diff.fullFilePatch || reconstructUnifiedPatch(diff);
   const parsedPatches = parsePatchFiles(
     patch,
@@ -105,7 +114,7 @@ export function adaptFileDiff(diff: FileDiff): AdaptedFileDiff {
           : "rename-pure"
         : parsed.type;
 
-  return {
+  const adapted = {
     patch,
     fileDiff: {
       ...parsed,
@@ -115,6 +124,21 @@ export function adaptFileDiff(diff: FileDiff): AdaptedFileDiff {
       type,
     },
   };
+  adaptedFileDiffCache.set(diff, adapted);
+  return adapted;
+}
+
+export function preloadFileDiffRendering(
+  diff: FileDiff,
+  highlightCache?: DiffHighlightCache,
+): boolean {
+  const hasText = diff.hunks.some((hunk) =>
+    hunk.lines.some((line) => line.kind !== "metadata"),
+  );
+  if (diff.binary || diff.tooLarge || !hasText) return false;
+  const adapted = adaptFileDiff(diff);
+  highlightCache?.primeDiffHighlightCache(adapted.fileDiff);
+  return true;
 }
 
 export function toPierreSide(side: Exclude<DiffSide, "mixed">) {

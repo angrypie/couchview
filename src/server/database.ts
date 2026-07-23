@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -103,7 +104,11 @@ export function resolveStateDatabasePath(
   const dataHome = configured && path.isAbsolute(configured)
     ? configured
     : path.join(homeDirectory, ".local", "share");
-  return path.join(dataHome, "couch-review", "state.sqlite");
+  const currentPath = path.join(dataHome, "couchview", "state.sqlite");
+  const legacyPath = path.join(dataHome, "couch-review", "state.sqlite");
+  return !existsSync(currentPath) && existsSync(legacyPath)
+    ? legacyPath
+    : currentPath;
 }
 
 function repositoryFromRow(row: RepositoryRow): StoredRepository {
@@ -172,7 +177,7 @@ export class StateDatabase {
       if (result?.journal_mode.toLocaleLowerCase() !== "wal") {
         this.database.close();
         throw new Error(
-          "Couch Review requires SQLite WAL support; place XDG_DATA_HOME on a local filesystem",
+          "Couchview requires SQLite WAL support; place XDG_DATA_HOME on a local filesystem",
         );
       }
     }
@@ -182,7 +187,7 @@ export class StateDatabase {
   static async open(filePath = resolveStateDatabasePath()): Promise<StateDatabase> {
     if (filePath === ":memory:") return StateDatabase.memory();
     if (!path.isAbsolute(filePath)) {
-      throw new Error("Couch Review state database path must be absolute");
+      throw new Error("Couchview state database path must be absolute");
     }
     const directory = path.dirname(filePath);
     await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -212,7 +217,7 @@ export class StateDatabase {
       .get()?.user_version ?? 0;
     if (version > SCHEMA_VERSION) {
       throw new Error(
-        `Couch Review data uses schema ${version}, but this version supports ${SCHEMA_VERSION}`,
+        `Couchview data uses schema ${version}, but this version supports ${SCHEMA_VERSION}`,
       );
     }
     if (version === SCHEMA_VERSION) {

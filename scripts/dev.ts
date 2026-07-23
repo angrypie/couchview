@@ -9,8 +9,14 @@ const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rawArgs = Bun.argv.slice(2).filter((arg) => arg !== "--");
 
 function readArguments(args: string[]): { root: string; host: string } {
-  let root = process.env.COUCH_REVIEW_ROOT || process.cwd();
-  let host = process.env.COUCH_REVIEW_HOST || "0.0.0.0";
+  let root =
+    process.env.COUCHVIEW_ROOT ||
+    process.env.COUCH_REVIEW_ROOT ||
+    process.cwd();
+  let host =
+    process.env.COUCHVIEW_HOST ||
+    process.env.COUCH_REVIEW_HOST ||
+    "0.0.0.0";
   let explicitRoot = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -54,12 +60,20 @@ if (!rootStats?.isDirectory()) {
 const reviewRoot = await realpath(requestedRoot);
 const apiHost = devOptions.host;
 const apiPort = Number(process.env.PORT || 3001);
-const webHost = normalizeBindHost(process.env.COUCH_REVIEW_WEB_HOST || apiHost);
-const webPort = Number(process.env.COUCH_REVIEW_WEB_PORT || 5173);
+const webHost = normalizeBindHost(
+  process.env.COUCHVIEW_WEB_HOST ||
+  process.env.COUCH_REVIEW_WEB_HOST ||
+  apiHost,
+);
+const webPort = Number(
+  process.env.COUCHVIEW_WEB_PORT ||
+  process.env.COUCH_REVIEW_WEB_PORT ||
+  5173,
+);
 
 for (const [name, port] of [
   ["PORT", apiPort],
-  ["COUCH_REVIEW_WEB_PORT", webPort],
+  ["COUCHVIEW_WEB_PORT", webPort],
 ] as const) {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     console.error(`${name} must be an integer from 1 to 65535.`);
@@ -85,14 +99,14 @@ const allowedOrigins = frontendOrigins
 const sharedEnv = {
   ...process.env,
   NODE_ENV: "development",
-  COUCH_REVIEW_ROOT: reviewRoot,
-  COUCH_REVIEW_HOST: apiHost,
+  COUCHVIEW_ROOT: reviewRoot,
+  COUCHVIEW_HOST: apiHost,
   PORT: String(apiPort),
   ALLOWED_ORIGINS: allowedOrigins,
-  COUCH_REVIEW_API_ORIGIN: apiOrigin,
-  COUCH_REVIEW_WEB_HOST: webHost,
-  COUCH_REVIEW_WEB_PORT: String(webPort),
-  COUCH_REVIEW_DISABLE_REUSE: "1",
+  COUCHVIEW_API_ORIGIN: apiOrigin,
+  COUCHVIEW_WEB_HOST: webHost,
+  COUCHVIEW_WEB_PORT: String(webPort),
+  COUCHVIEW_DISABLE_REUSE: "1",
 };
 
 console.log(`Reviewing ${reviewRoot}`);

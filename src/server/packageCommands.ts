@@ -292,7 +292,7 @@ export class PackageCommandService {
       this.appendOutput(
         run,
         "stderr",
-        `Could not find ${selectedPackage.runner} on the Couch Review server PATH.\n`,
+        `Could not find ${selectedPackage.runner} on the Couchview server PATH.\n`,
       );
       this.finishRun(run, "failed", null);
       return structuredClone(run.summary);

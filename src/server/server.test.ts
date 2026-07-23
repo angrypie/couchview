@@ -23,13 +23,13 @@ import {
 } from "../shared/contracts.ts";
 import {
   accessOriginsForHost,
-  createCouchReviewApp,
-  type CouchReviewApp,
+  createCouchviewApp,
+  type CouchviewApp,
 } from "./server.ts";
 import { GitCommandError } from "./git.ts";
 
 const temporaryDirectories: string[] = [];
-const applications: CouchReviewApp[] = [];
+const applications: CouchviewApp[] = [];
 
 afterEach(async () => {
   for (const application of applications.splice(0)) application.close();
@@ -39,15 +39,15 @@ afterEach(async () => {
 });
 
 async function fixture(revisionPollIntervalMs?: number) {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-server-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-"));
   temporaryDirectories.push(directory);
   expect(Bun.spawnSync(["git", "init", "-q", directory]).exitCode).toBe(0);
-  expect(Bun.spawnSync(["git", "-C", directory, "config", "user.name", "Couch Review Tests"]).exitCode).toBe(0);
-  expect(Bun.spawnSync(["git", "-C", directory, "config", "user.email", "couch-review@example.invalid"]).exitCode).toBe(0);
+  expect(Bun.spawnSync(["git", "-C", directory, "config", "user.name", "Couchview Tests"]).exitCode).toBe(0);
+  expect(Bun.spawnSync(["git", "-C", directory, "config", "user.email", "couchview@example.invalid"]).exitCode).toBe(0);
   await writeFile(path.join(directory, "sample.ts"), "const sample = true;\n", "utf8");
-  const stateDirectory = await mkdtemp(path.join(tmpdir(), "couch-review-server-state-"));
+  const stateDirectory = await mkdtemp(path.join(tmpdir(), "couchview-server-state-"));
   temporaryDirectories.push(stateDirectory);
-  const app = await createCouchReviewApp({
+  const app = await createCouchviewApp({
     root: directory,
     host: "127.0.0.1",
     port: 3001,
@@ -65,7 +65,7 @@ function request(pathname: string, init: RequestInit = {}): Request {
 }
 
 async function repositoryFixture(fileName: string): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-server-repository-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-repository-"));
   temporaryDirectories.push(directory);
   expect(Bun.spawnSync(["git", "init", "-q", directory]).exitCode).toBe(0);
   await writeFile(path.join(directory, fileName), `export const ${fileName.replace(/\W/g, "_")} = true;\n`);
@@ -116,7 +116,7 @@ async function nextPackageRunEvent(
   throw new Error("Timed out waiting for package-run SSE event");
 }
 
-describe("Couch Review HTTP security and routes", () => {
+describe("Couchview HTTP security and routes", () => {
   test("discovers and runs package scripts through protected repository routes", async () => {
     const app = await fixture();
     await writeFile(
@@ -303,7 +303,7 @@ describe("Couch Review HTTP security and routes", () => {
           origin: "http://127.0.0.1:3001",
         },
         body: JSON.stringify({
-          message: "Commit from Couch Review",
+          message: "Commit from Couchview",
           operationRevision: stagedState.operationRevision,
         }),
       }),
@@ -496,7 +496,7 @@ describe("Couch Review HTTP security and routes", () => {
         stderr: "fatal: bad object HEAD",
         retryable: false,
       });
-      expect(failed.headers.get("x-couch-review-diagnostic")).toBe(
+      expect(failed.headers.get("x-couchview-diagnostic")).toBe(
         failedBody.error.diagnostic?.id ?? null,
       );
 
@@ -608,12 +608,12 @@ describe("Couch Review HTTP security and routes", () => {
       error: { code: "route_not_found", message: "API route not found" },
     });
 
-    const lanApp = await createCouchReviewApp({
+    const lanApp = await createCouchviewApp({
       root: app.repository.root,
       host: "192.0.2.25",
       port: 3001,
       stateDatabasePath: await (async () => {
-        const directory = await mkdtemp(path.join(tmpdir(), "couch-review-server-state-"));
+        const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-state-"));
         temporaryDirectories.push(directory);
         return path.join(directory, "state.sqlite");
       })(),
@@ -640,7 +640,7 @@ describe("Couch Review HTTP security and routes", () => {
     const instance = await app.fetch(request(API_ROUTES.instance));
     expect(instance.status).toBe(200);
     expect(await instance.json()).toMatchObject({
-      service: "couch-review",
+      service: "couchview",
       protocolVersion: 1,
       instanceId: app.instanceId,
       bindHost: "127.0.0.1",
@@ -775,7 +775,7 @@ describe("Couch Review HTTP security and routes", () => {
   test("polls shared SQLite revisions into repository-aware SSE events", async () => {
     const first = await fixture(25);
     const secondRoot = await repositoryFixture("second.ts");
-    const second = await createCouchReviewApp({
+    const second = await createCouchviewApp({
       root: secondRoot,
       host: "127.0.0.1",
       port: 3001,
@@ -834,7 +834,7 @@ describe("Couch Review HTTP security and routes", () => {
   test("allows independent versions on production and development endpoints to share state", async () => {
     const development = await fixture();
     const productionRoot = await repositoryFixture("production.ts");
-    const production = await createCouchReviewApp({
+    const production = await createCouchviewApp({
       root: productionRoot,
       host: "127.0.0.1",
       port: 4173,

@@ -5,3 +5,16 @@ test-results/
 coverage/
 .DS_Store
 *.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+.netrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.mobileprovision

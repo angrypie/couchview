@@ -4,20 +4,29 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { parseCli, startServer } from "./cli.ts";
-import { createCouchReviewApp, type CouchReviewApp } from "./server.ts";
+import { createCouchviewApp, type CouchviewApp } from "./server.ts";
 
-const initialRoot = Bun.env.COUCH_REVIEW_ROOT;
-const initialHost = Bun.env.COUCH_REVIEW_HOST;
+const initialRoot = Bun.env.COUCHVIEW_ROOT;
+const initialHost = Bun.env.COUCHVIEW_HOST;
+const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
+const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
-const initialDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
+const initialDisableReuse = Bun.env.COUCHVIEW_DISABLE_REUSE;
+const initialLegacyDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 
 function restoreEnvironment() {
-  if (initialRoot === undefined) delete Bun.env.COUCH_REVIEW_ROOT;
-  else Bun.env.COUCH_REVIEW_ROOT = initialRoot;
+  if (initialRoot === undefined) delete Bun.env.COUCHVIEW_ROOT;
+  else Bun.env.COUCHVIEW_ROOT = initialRoot;
 
-  if (initialHost === undefined) delete Bun.env.COUCH_REVIEW_HOST;
-  else Bun.env.COUCH_REVIEW_HOST = initialHost;
+  if (initialHost === undefined) delete Bun.env.COUCHVIEW_HOST;
+  else Bun.env.COUCHVIEW_HOST = initialHost;
+
+  if (initialLegacyRoot === undefined) delete Bun.env.COUCH_REVIEW_ROOT;
+  else Bun.env.COUCH_REVIEW_ROOT = initialLegacyRoot;
+
+  if (initialLegacyHost === undefined) delete Bun.env.COUCH_REVIEW_HOST;
+  else Bun.env.COUCH_REVIEW_HOST = initialLegacyHost;
 
   if (initialPort === undefined) delete Bun.env.PORT;
   else Bun.env.PORT = initialPort;
@@ -25,12 +34,20 @@ function restoreEnvironment() {
   if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
   else Bun.env.XDG_DATA_HOME = initialDataHome;
 
-  if (initialDisableReuse === undefined) delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
-  else Bun.env.COUCH_REVIEW_DISABLE_REUSE = initialDisableReuse;
+  if (initialDisableReuse === undefined) delete Bun.env.COUCHVIEW_DISABLE_REUSE;
+  else Bun.env.COUCHVIEW_DISABLE_REUSE = initialDisableReuse;
+
+  if (initialLegacyDisableReuse === undefined) {
+    delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
+  } else {
+    Bun.env.COUCH_REVIEW_DISABLE_REUSE = initialLegacyDisableReuse;
+  }
 }
 
 describe("parseCli", () => {
   beforeEach(() => {
+    delete Bun.env.COUCHVIEW_ROOT;
+    delete Bun.env.COUCHVIEW_HOST;
     delete Bun.env.COUCH_REVIEW_ROOT;
     delete Bun.env.COUCH_REVIEW_HOST;
     delete Bun.env.PORT;
@@ -68,8 +85,8 @@ describe("parseCli", () => {
   });
 
   test("uses environment defaults while command-line flags take precedence", () => {
-    Bun.env.COUCH_REVIEW_ROOT = "environment-project";
-    Bun.env.COUCH_REVIEW_HOST = "192.168.1.25";
+    Bun.env.COUCHVIEW_ROOT = "environment-project";
+    Bun.env.COUCHVIEW_HOST = "192.168.1.25";
     Bun.env.PORT = "4888";
 
     expect(parseCli([])).toEqual({
@@ -81,6 +98,17 @@ describe("parseCli", () => {
       root: path.resolve("flag-project"),
       host: "0.0.0.0",
       port: 4999,
+    });
+  });
+
+  test("accepts pre-rename environment defaults when new names are absent", () => {
+    Bun.env.COUCH_REVIEW_ROOT = "legacy-environment-project";
+    Bun.env.COUCH_REVIEW_HOST = "127.0.0.1";
+
+    expect(parseCli([])).toEqual({
+      root: path.resolve("legacy-environment-project"),
+      host: "127.0.0.1",
+      port: 4173,
     });
   });
 
@@ -142,12 +170,12 @@ describe("parseCli", () => {
 });
 
 const temporaryDirectories: string[] = [];
-const applications: CouchReviewApp[] = [];
+const applications: CouchviewApp[] = [];
 const endpoints = new Map<number, (request: Request) => Response | Promise<Response>>();
 let nextPort = 43_100;
 
 async function repositoryFixture(name: string): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), `couch-review-cli-${name}-`));
+  const directory = await mkdtemp(path.join(tmpdir(), `couchview-cli-${name}-`));
   temporaryDirectories.push(directory);
   expect(Bun.spawnSync(["git", "init", "-q", directory]).exitCode).toBe(0);
   await writeFile(path.join(directory, `${name}.ts`), `export const ${name} = true;\n`);
@@ -160,7 +188,7 @@ function freePort(): number {
 }
 
 async function runningApp(root: string, port: number, stateDatabasePath?: string) {
-  const app = await createCouchReviewApp({
+  const app = await createCouchviewApp({
     root,
     host: "127.0.0.1",
     port,
@@ -204,11 +232,12 @@ const runtime = { fetch: runtimeFetch, serve: runtimeServe };
 
 describe("multi-project CLI startup", () => {
   beforeEach(async () => {
-    delete Bun.env.COUCH_REVIEW_ROOT;
-    delete Bun.env.COUCH_REVIEW_HOST;
+    delete Bun.env.COUCHVIEW_ROOT;
+    delete Bun.env.COUCHVIEW_HOST;
     delete Bun.env.PORT;
+    delete Bun.env.COUCHVIEW_DISABLE_REUSE;
     delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
-    const dataHome = await mkdtemp(path.join(tmpdir(), "couch-review-cli-data-"));
+    const dataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-data-"));
     temporaryDirectories.push(dataHome);
     Bun.env.XDG_DATA_HOME = dataHome;
   });
@@ -239,7 +268,7 @@ describe("multi-project CLI startup", () => {
       expect(messages.join("\n")).toContain(`/?repo=${result.app.repository.id}`);
       expect(messages.join("\n")).toContain(`Repository: ${result.app.repository.root}`);
       expect(
-        await Bun.file(path.join(root, ".git", "couch-review", "state.json")).exists(),
+        await Bun.file(path.join(root, ".git", "couchview", "state.json")).exists(),
       ).toBe(false);
       result.stop();
     } finally {
@@ -263,7 +292,7 @@ describe("multi-project CLI startup", () => {
       if (!added.registered) throw new Error("CLI unexpectedly started another server");
       expect(added.registered.registration.added).toBe(true);
       expect(app.database.repositories()).toHaveLength(2);
-      expect(messages.join("\n")).toContain("Repository added to the running Couch Review server.");
+      expect(messages.join("\n")).toContain("Repository added to the running Couchview server.");
       expect(messages.join("\n")).toContain(
         `/?repo=${added.registered.registration.repository.id}`,
       );
@@ -276,7 +305,7 @@ describe("multi-project CLI startup", () => {
       if (!duplicate.registered) throw new Error("CLI unexpectedly started another server");
       expect(duplicate.registered.registration.added).toBe(false);
       expect(messages.join("\n")).toContain(
-        "Repository is already available in the running Couch Review server.",
+        "Repository is already available in the running Couchview server.",
       );
     } finally {
       console.log = originalLog;
@@ -291,7 +320,7 @@ describe("multi-project CLI startup", () => {
     endpoints.set(unrelatedPort, () => Response.json({ service: "something-else" }));
     await expect(
       startServer(["--repo", root, "--port", String(unrelatedPort)], runtime),
-    ).rejects.toThrow("not a compatible Couch Review server");
+    ).rejects.toThrow("not a compatible Couchview server");
 
     const incompatiblePort = freePort();
     await runningApp(root, incompatiblePort);
@@ -307,12 +336,12 @@ describe("multi-project CLI startup", () => {
     ).rejects.toThrow("does not satisfy --host 0.0.0.0");
 
     const dataMismatchPort = freePort();
-    const otherDataHome = await mkdtemp(path.join(tmpdir(), "couch-review-cli-other-data-"));
+    const otherDataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-other-data-"));
     temporaryDirectories.push(otherDataHome);
     await runningApp(
       root,
       dataMismatchPort,
-      path.join(otherDataHome, "couch-review", "state.sqlite"),
+      path.join(otherDataHome, "couchview", "state.sqlite"),
     );
     await expect(
       startServer(["--repo", otherRoot, "--port", String(dataMismatchPort)], runtime),
@@ -324,7 +353,7 @@ describe("multi-project CLI startup", () => {
     const secondRoot = await repositoryFixture("second");
     const port = freePort();
     await runningApp(firstRoot, port);
-    Bun.env.COUCH_REVIEW_DISABLE_REUSE = "1";
+    Bun.env.COUCHVIEW_DISABLE_REUSE = "1";
     await expect(
       startServer(["--repo", secondRoot, "--port", String(port)], runtime),
     ).rejects.toThrow(/EADDRINUSE|address already in use/i);
@@ -334,7 +363,7 @@ describe("multi-project CLI startup", () => {
     const firstRoot = await repositoryFixture("first");
     const secondRoot = await repositoryFixture("second");
     const port = freePort();
-    const incumbent = await createCouchReviewApp({
+    const incumbent = await createCouchviewApp({
       root: firstRoot,
       host: "127.0.0.1",
       port,

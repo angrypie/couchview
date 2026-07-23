@@ -67,7 +67,7 @@ async function request<T>(
       throw new DOMException("The request was aborted.", "AbortError");
     }
     throw new ApiError(
-      "Could not reach the local Couch Review server.",
+      "Could not reach the local Couchview server.",
       0,
       "disconnected",
     );

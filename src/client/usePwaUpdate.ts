@@ -8,13 +8,19 @@ interface InstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-const INSTALL_DISMISSED_KEY = "couch-review:install-hint-dismissed";
+const INSTALL_DISMISSED_KEY = "couchview:install-hint-dismissed";
+const LEGACY_INSTALL_DISMISSED_KEY = "couch-review:install-hint-dismissed";
 
 export function usePwaUpdate() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(() => {
     try {
-      return localStorage.getItem(INSTALL_DISMISSED_KEY) === "1";
+      const current = localStorage.getItem(INSTALL_DISMISSED_KEY);
+      const stored = current ?? localStorage.getItem(LEGACY_INSTALL_DISMISSED_KEY);
+      if (current === null && stored !== null) {
+        localStorage.setItem(INSTALL_DISMISSED_KEY, stored);
+      }
+      return stored === "1";
     } catch {
       return false;
     }

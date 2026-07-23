@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function databasePath(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-sqlite-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-sqlite-"));
   temporaryDirectories.push(directory);
   return path.join(directory, "data", "state.sqlite");
 }
@@ -59,13 +59,28 @@ describe("global SQLite state", () => {
   test("uses only absolute XDG data homes and otherwise follows the XDG fallback", () => {
     expect(
       resolveStateDatabasePath({ XDG_DATA_HOME: "/var/lib/example" }, "/home/reviewer"),
-    ).toBe("/var/lib/example/couch-review/state.sqlite");
+    ).toBe("/var/lib/example/couchview/state.sqlite");
     expect(
       resolveStateDatabasePath({ XDG_DATA_HOME: "relative/data" }, "/home/reviewer"),
-    ).toBe("/home/reviewer/.local/share/couch-review/state.sqlite");
+    ).toBe("/home/reviewer/.local/share/couchview/state.sqlite");
     expect(resolveStateDatabasePath({}, "/home/reviewer")).toBe(
-      "/home/reviewer/.local/share/couch-review/state.sqlite",
+      "/home/reviewer/.local/share/couchview/state.sqlite",
     );
+  });
+
+  test("continues using an existing pre-rename database", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "couchview-path-"));
+    temporaryDirectories.push(directory);
+    const legacyPath = path.join(directory, "couch-review", "state.sqlite");
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    await writeFile(legacyPath, "");
+
+    expect(resolveStateDatabasePath({ XDG_DATA_HOME: directory })).toBe(legacyPath);
+
+    const currentPath = path.join(directory, "couchview", "state.sqlite");
+    await mkdir(path.dirname(currentPath), { recursive: true });
+    await writeFile(currentPath, "");
+    expect(resolveStateDatabasePath({ XDG_DATA_HOME: directory })).toBe(currentPath);
   });
 
   test("rejects an explicitly relative database location", async () => {

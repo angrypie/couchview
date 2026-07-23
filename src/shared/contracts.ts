@@ -44,7 +44,7 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/events`,
 } as const;
 
-export const CSRF_HEADER = "x-couch-review-csrf";
+export const CSRF_HEADER = "x-couchview-csrf";
 
 export type ChangeKind =
   | "added"
@@ -107,7 +107,7 @@ export interface BootstrapResponse {
 }
 
 export interface InstanceResponse {
-  service: "couch-review";
+  service: "couchview";
   protocolVersion: number;
   version: string;
   instanceId: string;

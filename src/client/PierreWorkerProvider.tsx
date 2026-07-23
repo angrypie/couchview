@@ -17,6 +17,7 @@ export function PierreWorkerProvider({ children }: { children: ReactNode }) {
   const poolOptions = useMemo<WorkerPoolOptions>(
     () => ({
       poolSize: 2,
+      totalASTLRUCacheSize: 16,
       workerFactory: () => new Worker(PierreWorkerUrl, { type: "module" }),
     }),
     [],

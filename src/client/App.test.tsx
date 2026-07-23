@@ -385,7 +385,7 @@ function fixtureComment(
   };
 }
 
-describe("Couch Review app", () => {
+describe("Couchview app", () => {
   let files = structuredClone(initialFiles);
   let comments: Array<Record<string, unknown>> = [];
   let reviews: Array<Record<string, unknown>> = [];
@@ -748,7 +748,7 @@ describe("Couch Review app", () => {
     expect(screen.getByText("11px")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
     expect(screen.getByText("12px")).toBeTruthy();
-    expect(localStorage.getItem("couch-review:font-size")).toBe("12");
+    expect(localStorage.getItem("couchview:font-size")).toBe("12");
 
     fireEvent.click(screen.getByRole("button", { name: /Review \+ next/ }));
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
@@ -757,6 +757,52 @@ describe("Couch Review app", () => {
     ).toBe(true);
     fireEvent.click(screen.getAllByRole("button", { name: "Previous file" })[0]!);
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
+  });
+
+  test("migrates pre-rename display preferences", async () => {
+    localStorage.setItem("couch-review:font-size", "13");
+    localStorage.setItem("couch-review:line-numbers", "true");
+    localStorage.setItem("couch-review:line-wrap", "true");
+
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    expect(screen.getByText("13px")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide line numbers" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
+    expect(localStorage.getItem("couchview:font-size")).toBe("13");
+    expect(localStorage.getItem("couchview:line-numbers")).toBe("true");
+    expect(localStorage.getItem("couchview:line-wrap")).toBe("true");
+  });
+
+  test("preloads adjacent diffs and reuses them for instant back-and-forth navigation", async () => {
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    const diffRequestCount = (fileId: string) =>
+      requests.filter(
+        (request) =>
+          request.path === `/api/repositories/repo/files/${fileId}/diff`,
+      ).length;
+    await waitFor(() => expect(diffRequestCount("second")).toBe(1));
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Next file" })[0]!,
+    );
+    expect(screen.queryByText("Loading diff…")).toBeNull();
+    expect(screen.getByTestId("pierre-code-view").textContent).toContain(
+      "export const second = true;",
+    );
+    expect(diffRequestCount("second")).toBe(1);
+
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Previous file" })[0]!,
+    );
+    expect(screen.queryByText("Loading diff…")).toBeNull();
+    expect(screen.getByTestId("pierre-code-view").textContent).toContain(
+      "const value = load(newPath);",
+    );
+    expect(diffRequestCount("first")).toBe(1);
   });
 
   test("does not reload the diff for duplicate SSE operation revisions", async () => {
@@ -1367,7 +1413,7 @@ describe("Couch Review app", () => {
     expect(screen.queryByRole("button", { name: "Select old line 1" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
     expect(await screen.findByRole("button", { name: "Select old line 1" })).toBeTruthy();
-    expect(localStorage.getItem("couch-review:line-numbers")).toBe("true");
+    expect(localStorage.getItem("couchview:line-numbers")).toBe("true");
 
     cleanup();
     render(<App />);
@@ -1384,7 +1430,7 @@ describe("Couch Review app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Wrap long lines" }));
     expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
     expect(screen.getByTestId("pierre-code-view").dataset.lineWrap).toBe("true");
-    expect(localStorage.getItem("couch-review:line-wrap")).toBe("true");
+    expect(localStorage.getItem("couchview:line-wrap")).toBe("true");
 
     cleanup();
     render(<App />);

@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 async function repositoryFixture(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "couch-review-packages-"));
+  const root = await mkdtemp(path.join(tmpdir(), "couchview-packages-"));
   fixtures.push(root);
   expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
   return root;

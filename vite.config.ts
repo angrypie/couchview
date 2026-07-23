@@ -7,13 +7,23 @@ const apiPath = /^\/api(?:\/|$)/;
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiOrigin =
+    process.env.COUCHVIEW_API_ORIGIN ||
+    env.COUCHVIEW_API_ORIGIN ||
     process.env.COUCH_REVIEW_API_ORIGIN ||
     env.COUCH_REVIEW_API_ORIGIN ||
     "http://127.0.0.1:3001";
   const webHost =
-    process.env.COUCH_REVIEW_WEB_HOST || env.COUCH_REVIEW_WEB_HOST || "127.0.0.1";
+    process.env.COUCHVIEW_WEB_HOST ||
+    env.COUCHVIEW_WEB_HOST ||
+    process.env.COUCH_REVIEW_WEB_HOST ||
+    env.COUCH_REVIEW_WEB_HOST ||
+    "127.0.0.1";
   const webPort = Number(
-    process.env.COUCH_REVIEW_WEB_PORT || env.COUCH_REVIEW_WEB_PORT || 5173,
+    process.env.COUCHVIEW_WEB_PORT ||
+    env.COUCHVIEW_WEB_PORT ||
+    process.env.COUCH_REVIEW_WEB_PORT ||
+    env.COUCH_REVIEW_WEB_PORT ||
+    5173,
   );
 
   return {
@@ -28,8 +38,8 @@ export default defineConfig(({ mode }) => {
         includeManifestIcons: false,
         manifest: {
           id: "/",
-          name: "Couch Review",
-          short_name: "Couch Review",
+          name: "Couchview",
+          short_name: "Couchview",
           description: "Review, comment on, and stage local Git changes from any screen.",
           start_url: "/",
           scope: "/",

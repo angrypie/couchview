@@ -7,6 +7,7 @@ import {
   commentAnnotation,
   commentAnnotationsVersion,
   fromPierreSide,
+  preloadFileDiffRendering,
   reconstructUnifiedPatch,
   selectedRangeFromEndpoints,
   toPierreSide,
@@ -103,6 +104,21 @@ describe("Pierre diff adapter", () => {
     expect(adapted.hunks).toHaveLength(1);
     expect(adapted.deletionLines[0]).toBe("const value = oldValue;\n");
     expect(adapted.additionLines[0]).toBe("const value = newValue;\n");
+  });
+
+  test("reuses parsed diffs and primes Pierre highlighting by content revision", () => {
+    const diff = fixtureDiff();
+    const primed: FileDiffMetadata[] = [];
+
+    expect(
+      preloadFileDiffRendering(diff, {
+        primeDiffHighlightCache(fileDiff) {
+          primed.push(fileDiff);
+        },
+      }),
+    ).toBe(true);
+    expect(primed[0]?.cacheKey).toBe(diff.contentRevision);
+    expect(adaptFileDiff(diff)).toBe(adaptFileDiff(diff));
   });
 
   test("renders a full-context patch without replacing compact navigation hunks", () => {

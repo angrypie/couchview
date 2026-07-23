@@ -58,6 +58,13 @@ input,
 textarea,
 select {
   font: inherit;
+  touch-action: manipulation;
+}
+
+input,
+textarea,
+select {
+  font-size: 16px;
 }
 
 button {
@@ -608,7 +615,7 @@ textarea:focus-visible,
   padding: 10px;
   color: var(--text);
   background: #0e1319;
-  font: 400 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 16px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .copy-sheet {
@@ -692,7 +699,6 @@ textarea:focus-visible,
 .search-input {
   height: 42px;
   padding: 0 10px;
-  font-size: 12px;
 }
 
 .chips {
@@ -1377,7 +1383,6 @@ textarea:focus-visible,
   min-height: 112px;
   padding: 10px;
   resize: vertical;
-  font-size: 13px;
   line-height: 1.45;
 }
 

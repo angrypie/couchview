@@ -19,6 +19,10 @@ Use Bun 1.3 or newer. Before submitting, run type checking, unit tests, and a pr
 
 Write strict TypeScript and React function components. Follow existing style: two-space indentation, double quotes, semicolons, and trailing commas in multiline constructs. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `commentExport.ts`. Keep client/server boundaries explicit through shared contracts. No formatter or linter is configured; preserve nearby formatting.
 
+## User Experience & Performance
+
+Prefer snappy, continuity-preserving interactions, especially during file navigation and repository mutations. Keep useful content mounted while background work completes instead of flashing empty or loading states for short operations. When correctness permits, prefetch likely next and previous states and reuse fetched, parsed, or rendered results through bounded caches. Cache keys must include the repository or resource identity and an authoritative content revision, stale entries must be ignored automatically, and cache limits must protect mobile memory. Use optimistic UI updates when they can be reconciled safely with an authoritative server response. Add regression coverage for visible loading flashes, redundant requests, stale-cache behavior, and back-and-forth navigation.
+
 ## Testing Guidelines
 
 Use Bun's `describe`, `test`, and `expect`; component tests use Happy DOM and Testing Library. Name tests after observable behavior and keep fixtures deterministic. Playwright specs should prefer roles or stable semantic locators. There is no numeric coverage threshold, but bug fixes need regression tests and new branches should exercise success and failure paths.

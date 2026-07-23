@@ -870,7 +870,7 @@ const server = Bun.serve({
 	},
 });
 
-console.log(`Couch Review e2e fixture listening at ${server.url}`);
+console.log(`Couchview e2e fixture listening at ${server.url}`);
 
 function stop() {
 	void server.stop(true);

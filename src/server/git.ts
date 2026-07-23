@@ -216,7 +216,7 @@ export async function runGit(
       abort: abortController.signal,
       timeout: { block: timeoutMs },
       unsafe: {
-        // Couch Review hard-codes `core.fsmonitor=false` for deterministic status
+        // Couchview hard-codes `core.fsmonitor=false` for deterministic status
         // snapshots; no user-controlled executable is accepted here.
         allowUnsafeFsMonitor: true,
       },
@@ -297,7 +297,7 @@ export async function runGit(
     throw new GitCommandError(
       args,
       exitCode,
-      "Git returned binary data, but Couch Review could not capture its raw byte stream.",
+      "Git returned binary data, but Couchview could not capture its raw byte stream.",
       "capture",
     );
   }

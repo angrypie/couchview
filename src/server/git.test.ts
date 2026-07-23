@@ -44,11 +44,11 @@ function git(directory: string, args: string[]): string {
 }
 
 async function committedRepository(files: Record<string, string | Uint8Array>): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-backend-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-backend-"));
   temporaryDirectories.push(directory);
   git(directory, ["init", "-q"]);
-  git(directory, ["config", "user.name", "Couch Review Tests"]);
-  git(directory, ["config", "user.email", "couch-review@example.invalid"]);
+  git(directory, ["config", "user.name", "Couchview Tests"]);
+  git(directory, ["config", "user.email", "couchview@example.invalid"]);
   for (const [relativePath, contents] of Object.entries(files)) {
     const absolutePath = path.join(directory, relativePath);
     await mkdir(path.dirname(absolutePath), { recursive: true });
@@ -203,7 +203,7 @@ describe("parseGrepOutput", () => {
 
 describe("GitRepository", () => {
   test("reviews, searches, previews, and stages an untracked file on an unborn branch", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-backend-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "couchview-backend-"));
     temporaryDirectories.push(directory);
     const initialized = Bun.spawnSync(["git", "init", "-q", directory]);
     expect(initialized.exitCode).toBe(0);
@@ -216,7 +216,7 @@ describe("GitRepository", () => {
         withFileTypes: true,
       })).filter((entry) => entry.isDirectory() && /^[0-9a-f]{2}$/.test(entry.name));
       expect(looseObjectDirectories).toHaveLength(0);
-      expect(await Bun.file(path.join(directory, ".git", "couch-review", "state.json")).exists()).toBe(
+      expect(await Bun.file(path.join(directory, ".git", "couchview", "state.json")).exists()).toBe(
         false,
       );
       const before = await repository.changes();
@@ -1025,8 +1025,8 @@ describe("GitRepository", () => {
   });
 
   test("reloads state under an interprocess-style lock without losing updates", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-state-"));
-    const stateDirectory = await mkdtemp(path.join(tmpdir(), "couch-review-database-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "couchview-state-"));
+    const stateDirectory = await mkdtemp(path.join(tmpdir(), "couchview-database-"));
     temporaryDirectories.push(directory);
     temporaryDirectories.push(stateDirectory);
     git(directory, ["init", "-q"]);
@@ -1060,7 +1060,7 @@ describe("GitRepository", () => {
       const stored = database.reviewState(first.id);
       expect(stored.reviews).toHaveLength(1);
       expect(stored.comments).toHaveLength(1);
-      expect(await Bun.file(path.join(directory, ".git", "couch-review", "state.json")).exists()).toBe(
+      expect(await Bun.file(path.join(directory, ".git", "couchview", "state.json")).exists()).toBe(
         false,
       );
     } finally {
@@ -1393,7 +1393,7 @@ describe("GitRepository", () => {
   });
 
   test("coalesces overlapping unborn-repository snapshots without publishing a false clean state", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "couch-review-concurrent-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "couchview-concurrent-"));
     temporaryDirectories.push(directory);
     git(directory, ["init", "-q"]);
     git(directory, ["symbolic-ref", "HEAD", "refs/heads/main"]);

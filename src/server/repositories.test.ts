@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-catalog-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-catalog-"));
   temporaryDirectories.push(directory);
   const root = path.join(directory, "project");
   const nested = path.join(root, "packages", "app");
@@ -46,7 +46,7 @@ describe("RepositoryManager", () => {
       expect(fromSubdirectory.repository.id).toBe(direct.repository.id);
       expect(fromSymlink.repository.id).toBe(direct.repository.id);
       expect(await manager.list()).toHaveLength(1);
-      expect(await Bun.file(path.join(root, ".git", "couch-review", "state.json")).exists()).toBe(
+      expect(await Bun.file(path.join(root, ".git", "couchview", "state.json")).exists()).toBe(
         false,
       );
     } finally {

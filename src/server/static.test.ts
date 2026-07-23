@@ -3,10 +3,10 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createCouchReviewApp, type CouchReviewApp } from "./server.ts";
+import { createCouchviewApp, type CouchviewApp } from "./server.ts";
 
 const temporaryDirectories: string[] = [];
-const applications: CouchReviewApp[] = [];
+const applications: CouchviewApp[] = [];
 
 afterEach(async () => {
   for (const application of applications.splice(0)) application.close();
@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const directory = await mkdtemp(path.join(tmpdir(), "couch-review-static-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "couchview-static-"));
   temporaryDirectories.push(directory);
   const repositoryRoot = path.join(directory, "repository");
   const staticRoot = path.join(directory, "dist");
@@ -27,7 +27,7 @@ async function fixture() {
   expect(Bun.spawnSync(["git", "init", "-q", repositoryRoot]).exitCode).toBe(0);
   await writeFile(
     path.join(staticRoot, "index.html"),
-    "<!doctype html><title>Couch Review</title><main>Disconnected shell</main>",
+    "<!doctype html><title>Couchview</title><main>Disconnected shell</main>",
     "utf8",
   );
   await writeFile(path.join(staticRoot, "assets", "app-12345678.js"), "export {};\n", "utf8");
@@ -35,7 +35,7 @@ async function fixture() {
   await writeFile(secret, "do not serve me\n", "utf8");
   await symlink(secret, path.join(staticRoot, "leak.js"));
 
-  const app = await createCouchReviewApp({
+  const app = await createCouchviewApp({
     root: repositoryRoot,
     host: "127.0.0.1",
     port: 3001,

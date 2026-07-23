@@ -5,7 +5,7 @@ const fixtureCsrf = "e2e-csrf-token";
 
 async function openFixture(page: Page) {
   await page.goto("/");
-  await expect(page).toHaveTitle("Couch Review");
+  await expect(page).toHaveTitle("Couchview");
   const currentFile = page.getByRole("region", { name: "Current file" });
   await expect(currentFile).toContainText("src/review.ts");
   await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
@@ -32,12 +32,49 @@ test.describe("mobile fixture review", () => {
 
   test.beforeEach(async ({ page, request }) => {
     await page.addInitScript(() => {
-      localStorage.setItem("couch-review:install-hint-dismissed", "1");
+      localStorage.setItem("couchview:install-hint-dismissed", "1");
     });
     const response = await request.post("/api/e2e/reset", {
-      headers: { "x-couch-review-csrf": fixtureCsrf },
+      headers: { "x-couchview-csrf": fixtureCsrf },
     });
     expect(response.ok()).toBe(true);
+  });
+
+  test("keeps focused form controls from triggering mobile page zoom", async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    const filter = page.getByRole("searchbox", { name: "Filter changed files" });
+    await expect(filter).toHaveCSS("font-size", "16px");
+    await expect(filter).toHaveCSS("touch-action", "manipulation");
+    await filter.focus();
+    await expect
+      .poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1))
+      .toBe(1);
+    await page
+      .getByRole("complementary", { name: "Changed files" })
+      .getByRole("button", { name: "Close changed files" })
+      .click();
+
+    await page.getByRole("button", { name: "Show line numbers" }).click();
+    await page.getByRole("button", { name: "Select old line 2" }).click();
+    await page.getByRole("button", { name: "Select new line 2" }).click();
+    const selection = page.getByRole("status").filter({
+      hasText: "Old lines 2 / new lines 2",
+    });
+    await selection.getByRole("button", { name: "Comment" }).click();
+
+    const comment = page.getByPlaceholder(
+      "Describe the issue and the expected correction…",
+    );
+    await expect(comment).toHaveCSS("font-size", "16px");
+    await expect(comment).toHaveCSS("touch-action", "manipulation");
+    await expect
+      .poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1))
+      .toBe(1);
   });
 
   test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
@@ -165,7 +202,7 @@ test.describe("mobile fixture review", () => {
       .poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
       .toBeLessThanOrEqual(1);
     expect(
-      await page.evaluate(() => localStorage.getItem("couch-review:line-wrap")),
+      await page.evaluate(() => localStorage.getItem("couchview:line-wrap")),
     ).toBe("true");
     await expect(page.getByRole("button", { name: "Find “load” in project" }).first()).toBeVisible();
     expect(
@@ -197,6 +234,68 @@ test.describe("mobile fixture review", () => {
       : currentFile.getByRole("button", { name: "Previous file" });
     await previousFile.click();
     await expect(currentFile).toContainText("src/review.ts");
+  });
+
+  test("preloads adjacent diffs for flash-free back-and-forth navigation", async ({
+    page,
+  }, testInfo) => {
+    const diffRequests: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/files/") && request.url().endsWith("/diff")) {
+        diffRequests.push(request.url());
+      }
+    });
+    const prefetched = page.waitForResponse((response) =>
+      response.url().endsWith("/files/fixture-format-ts/diff"),
+    );
+    const currentFile = await openFixture(page);
+    await prefetched;
+    await page.evaluate(() => {
+      const state = window as typeof window & {
+        __loadingDiffObserved?: boolean;
+        __loadingDiffObserver?: MutationObserver;
+      };
+      state.__loadingDiffObserved = false;
+      state.__loadingDiffObserver = new MutationObserver(() => {
+        if (document.body.textContent?.includes("Loading diff…")) {
+          state.__loadingDiffObserved = true;
+        }
+      });
+      state.__loadingDiffObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    });
+
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    await actions.getByRole("button", { name: "Next file" }).click();
+    await expect(currentFile).toContainText("src/format.ts");
+    await expect(page.getByText("Loading diff…")).toHaveCount(0);
+    const previousFile = testInfo.project.name.includes("landscape")
+      ? actions.getByRole("button", { name: "Previous file" })
+      : currentFile.getByRole("button", { name: "Previous file" });
+    await previousFile.click();
+    await expect(currentFile).toContainText("src/review.ts");
+
+    const loadingObserved = await page.evaluate(() => {
+      const state = window as typeof window & {
+        __loadingDiffObserved?: boolean;
+        __loadingDiffObserver?: MutationObserver;
+      };
+      state.__loadingDiffObserver?.disconnect();
+      return state.__loadingDiffObserved;
+    });
+    expect(loadingObserved).toBe(false);
+    expect(
+      diffRequests.filter((url) =>
+        url.endsWith("/files/fixture-review-ts/diff"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      diffRequests.filter((url) =>
+        url.endsWith("/files/fixture-format-ts/diff"),
+      ),
+    ).toHaveLength(1);
   });
 
   test("searches, comments on a replacement, stages, and reviews with one-tap advance", async ({
@@ -472,7 +571,7 @@ test.describe("production PWA", () => {
     page,
   }) => {
     await page.goto("/");
-    await expect(page).toHaveTitle("Couch Review");
+    await expect(page).toHaveTitle("Couchview");
 
     const manifest = await page.evaluate(async () => {
       const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
@@ -541,7 +640,7 @@ test.describe("production PWA", () => {
       });
       window.dispatchEvent(event);
     });
-    await expect(page.getByText("Install Couch Review for full-screen access.")).toBeVisible();
+    await expect(page.getByText("Install Couchview for full-screen access.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
 
     await page.evaluate(async () => {
@@ -589,8 +688,8 @@ test.describe("production PWA", () => {
         await expect(page.getByRole("region", { name: "Current file" })).toBeVisible();
       } else {
         await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page).toHaveTitle("Couch Review");
-        await expect(page.getByRole("heading", { name: "Couldn’t open Couch Review" })).toBeVisible();
+        await expect(page).toHaveTitle("Couchview");
+        await expect(page.getByRole("heading", { name: "Couldn’t open Couchview" })).toBeVisible();
       }
     } finally {
       await context.setOffline(false);

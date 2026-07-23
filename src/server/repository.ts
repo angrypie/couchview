@@ -271,7 +271,7 @@ export class GitRepository {
 				? rawIndexPath
 				: path.resolve(root, rawIndexPath);
 			const emptyTreeDirectory = await mkdtemp(
-				path.join(tmpdir(), "couch-review-empty-tree-"),
+				path.join(tmpdir(), "couchview-empty-tree-"),
 			);
 			let emptyTreeResult;
 			try {
@@ -731,7 +731,7 @@ export class GitRepository {
 			const lockPath = `${this.indexPath}.lock`;
 			const temporaryIndex = path.join(
 				path.dirname(this.indexPath),
-				`.${path.basename(this.indexPath)}.couch-review.${process.pid}.${randomUUID()}.tmp`,
+				`.${path.basename(this.indexPath)}.couchview.${process.pid}.${randomUUID()}.tmp`,
 			);
 			let lockHandle: Awaited<ReturnType<typeof open>> | undefined;
 			let ownsLock = false;
@@ -1281,6 +1281,8 @@ export class GitRepository {
 				(_event, filename) => {
 					const name = filename?.toString() ?? "";
 					if (
+						name.startsWith(`.git${path.sep}couchview`) ||
+						name.startsWith(".git/couchview") ||
 						name.startsWith(`.git${path.sep}couch-review`) ||
 						name.startsWith(".git/couch-review")
 					)
@@ -1693,7 +1695,7 @@ export class GitRepository {
 		if (metadata.isSymbolicLink()) {
 			mode = "120000";
 			const temporaryDirectory = await mkdtemp(
-				path.join(tmpdir(), "couch-review-symlink-"),
+				path.join(tmpdir(), "couchview-symlink-"),
 			);
 			try {
 				const temporaryFile = path.join(temporaryDirectory, "target");
@@ -1980,7 +1982,7 @@ export class GitRepository {
 			base.stdout.byteLength > MAX_DIFF_BYTES ||
 			working.bytes.byteLength > MAX_DIFF_BYTES;
 		const temporaryDirectory = await mkdtemp(
-			path.join(tmpdir(), "couch-review-diff-"),
+			path.join(tmpdir(), "couchview-diff-"),
 		);
 		const oldPath = path.join(temporaryDirectory, "old");
 		const newPath = path.join(temporaryDirectory, "new");

@@ -3,11 +3,13 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import type { SelectedLineRange } from "@pierre/diffs";
+import { useWorkerPool } from "@pierre/diffs/react";
 import {
   AlertTriangle,
   Check,
@@ -74,7 +76,10 @@ import {
   DiffViewer,
   type DiffViewerHandle,
 } from "./DiffViewer.tsx";
-import { selectedRangeFromEndpoints } from "./diffAdapter.ts";
+import {
+  preloadFileDiffRendering,
+  selectedRangeFromEndpoints,
+} from "./diffAdapter.ts";
 
 type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
@@ -149,6 +154,44 @@ const emptyPackageScripts: PackageScriptsResponse = {
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 16;
 const DEFAULT_FONT_SIZE = 11;
+const DIFF_CACHE_LIMIT = 8;
+
+function diffCacheKey(
+  repositoryId: string,
+  fileId: string,
+  contentRevision: string,
+): string {
+  return `${repositoryId}\0${fileId}\0${contentRevision}`;
+}
+
+function readCachedDiff(
+  cache: Map<string, FileDiff>,
+  repositoryId: string,
+  file: ChangeFile,
+): FileDiff | null {
+  const key = diffCacheKey(repositoryId, file.id, file.contentRevision);
+  const cached = cache.get(key) ?? null;
+  if (cached) {
+    cache.delete(key);
+    cache.set(key, cached);
+  }
+  return cached;
+}
+
+function rememberDiff(
+  cache: Map<string, FileDiff>,
+  repositoryId: string,
+  diff: FileDiff,
+): void {
+  const key = diffCacheKey(repositoryId, diff.fileId, diff.contentRevision);
+  cache.delete(key);
+  cache.set(key, diff);
+  while (cache.size > DIFF_CACHE_LIMIT) {
+    const oldest = cache.keys().next();
+    if (oldest.done) break;
+    cache.delete(oldest.value);
+  }
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong.";
@@ -211,10 +254,16 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-function useStoredNumber(key: string, fallback: number): [number, (value: number) => void] {
+function useStoredNumber(
+  key: string,
+  fallback: number,
+  legacyKey?: string,
+): [number, (value: number) => void] {
   const [value, setValue] = useState(() => {
     try {
-      const stored = localStorage.getItem(key);
+      const current = localStorage.getItem(key);
+      const stored = current ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
+      if (current === null && stored !== null) localStorage.setItem(key, stored);
       const parsed = stored ? Number(stored) : Number.NaN;
       return Number.isFinite(parsed)
         ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parsed))
@@ -242,10 +291,13 @@ function useStoredNumber(key: string, fallback: number): [number, (value: number
 function useStoredBoolean(
   key: string,
   fallback: boolean,
+  legacyKey?: string,
 ): [boolean, (value: boolean) => void] {
   const [value, setValue] = useState(() => {
     try {
-      const stored = localStorage.getItem(key);
+      const current = localStorage.getItem(key);
+      const stored = current ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
+      if (current === null && stored !== null) localStorage.setItem(key, stored);
       return stored === null ? fallback : stored === "true";
     } catch {
       return fallback;
@@ -500,6 +552,7 @@ function highlightMatch(text: string, query: string): ReactNode {
 }
 
 export function App() {
+  const workerPool = useWorkerPool();
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
   const [repositoryId, setRepositoryId] = useState<string | null>(null);
@@ -522,16 +575,19 @@ export function App() {
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
   const [fontSize, setFontSize] = useStoredNumber(
-    "couch-review:font-size",
+    "couchview:font-size",
     DEFAULT_FONT_SIZE,
+    "couch-review:font-size",
   );
   const [lineNumbersVisible, setLineNumbersVisible] = useStoredBoolean(
-    "couch-review:line-numbers",
+    "couchview:line-numbers",
     false,
+    "couch-review:line-numbers",
   );
   const [lineWrapEnabled, setLineWrapEnabled] = useStoredBoolean(
-    "couch-review:line-wrap",
+    "couchview:line-wrap",
     false,
+    "couch-review:line-wrap",
   );
   const [hunkNavigation, setHunkNavigation] = useState<HunkNavigation>(
     navigationBeforeFirstHunk,
@@ -588,7 +644,10 @@ export function App() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const packageRunEventSourceRef = useRef<EventSource | null>(null);
   const packageOutputRef = useRef<HTMLPreElement>(null);
+  const filesRef = useRef<ChangeFile[]>([]);
   const diffRef = useRef<FileDiff | null>(null);
+  const diffCacheRef = useRef(new Map<string, FileDiff>());
+  const diffPrefetchRef = useRef(new Map<string, Promise<FileDiff | null>>());
   const pendingStageMutationRef = useRef<PendingStageMutation | null>(null);
   const searchRequestRef = useRef<AbortController | null>(null);
   const diffRequestRef = useRef<{ generation: number; controller: AbortController } | null>(
@@ -598,6 +657,8 @@ export function App() {
     null,
   );
   const pwa = usePwaUpdate();
+
+  filesRef.current = files;
 
   useEffect(() => {
     diffRef.current = diff;
@@ -764,32 +825,128 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
+  const primeDiffRendering = useCallback(
+    (nextDiff: FileDiff) => {
+      try {
+        preloadFileDiffRendering(nextDiff, workerPool);
+      } catch {
+        // The visible viewer owns rendering errors. Background preloading is
+        // best-effort and must never turn a neighboring file into app failure.
+      }
+    },
+    [workerPool],
+  );
+
+  const prefetchDiff = useCallback(
+    (activeRepositoryId: string, file: ChangeFile): Promise<FileDiff | null> => {
+      const cached = readCachedDiff(
+        diffCacheRef.current,
+        activeRepositoryId,
+        file,
+      );
+      if (cached) {
+        primeDiffRendering(cached);
+        return Promise.resolve(cached);
+      }
+
+      const key = diffCacheKey(
+        activeRepositoryId,
+        file.id,
+        file.contentRevision,
+      );
+      const existing = diffPrefetchRef.current.get(key);
+      if (existing) return existing;
+
+      let pending: Promise<FileDiff | null>;
+      pending = api
+        .diff(
+          activeRepositoryId,
+          file.id,
+          repositoryRequestRef.current?.signal,
+        )
+        .then((response) => {
+          if (
+            repositoryIdRef.current !== activeRepositoryId ||
+            response.diff.fileId !== file.id ||
+            response.diff.contentRevision !== file.contentRevision
+          ) {
+            return null;
+          }
+          rememberDiff(
+            diffCacheRef.current,
+            activeRepositoryId,
+            response.diff,
+          );
+          primeDiffRendering(response.diff);
+          return response.diff;
+        })
+        .catch(() => null)
+        .finally(() => {
+          if (diffPrefetchRef.current.get(key) === pending) {
+            diffPrefetchRef.current.delete(key);
+          }
+        });
+      diffPrefetchRef.current.set(key, pending);
+      return pending;
+    },
+    [primeDiffRendering],
+  );
+
   const loadDiff = useCallback(
     async (fileId: string, resetPosition = false) => {
       const activeRepositoryId = repositoryIdRef.current;
       if (!activeRepositoryId) return;
+      const file = filesRef.current.find((candidate) => candidate.id === fileId);
+      if (!file) return;
       diffRequestRef.current?.controller.abort();
       const generation = (diffRequestRef.current?.generation ?? 0) + 1;
       const controller = new AbortController();
       diffRequestRef.current = { generation, controller };
-      setDiffLoading(true);
       setDiffError("");
-      try {
-        const response = await api.diff(activeRepositoryId, fileId, controller.signal);
-        if (
-          diffRequestRef.current?.generation !== generation ||
-          repositoryIdRef.current !== activeRepositoryId ||
-          currentFileIdRef.current !== fileId ||
-          response.diff.fileId !== fileId
-        ) {
-          return;
-        }
+      const cached = readCachedDiff(
+        diffCacheRef.current,
+        activeRepositoryId,
+        file,
+      );
+      if (cached) {
         if (resetPosition) {
           setSelection(null);
           setHunkNavigation(navigationBeforeFirstHunk());
         }
-        diffRef.current = response.diff;
-        setDiff(response.diff);
+        primeDiffRendering(cached);
+        diffRef.current = cached;
+        setDiff(cached);
+        setDiffLoading(false);
+        return;
+      }
+
+      setDiffLoading(true);
+      try {
+        const key = diffCacheKey(
+          activeRepositoryId,
+          file.id,
+          file.contentRevision,
+        );
+        const prefetched = await diffPrefetchRef.current.get(key);
+        const nextDiff =
+          prefetched ??
+          (await api.diff(activeRepositoryId, fileId, controller.signal)).diff;
+        if (
+          diffRequestRef.current?.generation !== generation ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          currentFileIdRef.current !== fileId ||
+          nextDiff.fileId !== fileId
+        ) {
+          return;
+        }
+        rememberDiff(diffCacheRef.current, activeRepositoryId, nextDiff);
+        primeDiffRendering(nextDiff);
+        if (resetPosition) {
+          setSelection(null);
+          setHunkNavigation(navigationBeforeFirstHunk());
+        }
+        diffRef.current = nextDiff;
+        setDiff(nextDiff);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         if (diffRequestRef.current?.generation === generation) {
@@ -801,7 +958,7 @@ export function App() {
         }
       }
     },
-    [reportFailure],
+    [primeDiffRendering, reportFailure],
   );
 
   const refreshChanges = useCallback(async () => {
@@ -813,6 +970,7 @@ export function App() {
     );
     if (repositoryIdRef.current !== activeRepositoryId) return response;
     operationRevisionRef.current = response.operationRevision;
+    filesRef.current = response.files;
     setFiles(response.files);
     setOperationRevision(response.operationRevision);
     setRepository(response.repository);
@@ -968,6 +1126,7 @@ export function App() {
           return;
         }
         setRepository(changes.repository);
+        filesRef.current = changes.files;
         setFiles(changes.files);
         operationRevisionRef.current = changes.operationRevision;
         setOperationRevision(changes.operationRevision);
@@ -1360,24 +1519,61 @@ export function App() {
     output.scrollTop = output.scrollHeight;
   }, [packageRunSnapshot?.output]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSelection(null);
     setHunkNavigation(navigationBeforeFirstHunk());
-    diffRef.current = null;
-    setDiff(null);
     setDiffError("");
     if (!currentFileId) {
       diffRequestRef.current?.controller.abort();
+      diffRef.current = null;
+      setDiff(null);
       setDiffLoading(false);
       return;
     }
+    const activeRepositoryId = repositoryIdRef.current;
+    const file = filesRef.current.find(
+      (candidate) => candidate.id === currentFileId,
+    );
+    const cached =
+      activeRepositoryId && file
+        ? readCachedDiff(diffCacheRef.current, activeRepositoryId, file)
+        : null;
+    if (cached) {
+      diffRequestRef.current?.controller.abort();
+      primeDiffRendering(cached);
+      diffRef.current = cached;
+      setDiff(cached);
+      setDiffLoading(false);
+      return;
+    }
+    diffRef.current = null;
+    setDiff(null);
     void loadDiff(currentFileId);
     return () => {
       if (currentFileIdRef.current !== currentFileId) {
         diffRequestRef.current?.controller.abort();
       }
     };
-  }, [currentFileId, loadDiff]);
+  }, [currentFileId, loadDiff, primeDiffRendering]);
+
+  useEffect(() => {
+    if (!repositoryId || !currentFileId) return;
+    const index = files.findIndex((file) => file.id === currentFileId);
+    if (index < 0) return;
+    const neighbors = [files[index + 1], files[index - 1]].filter(
+      (file): file is ChangeFile => Boolean(file),
+    );
+    if (neighbors.length === 0) return;
+
+    const preload = () => {
+      if (repositoryIdRef.current !== repositoryId) return;
+      for (const file of neighbors) {
+        void prefetchDiff(repositoryId, file);
+      }
+    };
+    const timeout = window.setTimeout(preload, 0);
+    return () => window.clearTimeout(timeout);
+  }, [currentFileId, files, prefetchDiff, repositoryId]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--code-size", `${fontSize}px`);
@@ -2595,7 +2791,7 @@ export function App() {
       <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
         <div className="error-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
           <AlertTriangle className="state-icon" size={32} />
-          <h1 className="state-title">Couldn’t open Couch Review</h1>
+          <h1 className="state-title">Couldn’t open Couchview</h1>
           <p className="state-copy">{loadError}</p>
           <button className="action-button" onClick={() => void loadApp()} type="button">
             <RefreshCw size={16} /> Retry
@@ -2953,10 +3149,10 @@ export function App() {
               aria-haspopup="dialog"
               className="compact-repo-name repository-trigger"
               onClick={openRepositoryPicker}
-              title={`${repository?.name ?? "Couch Review"} · ${repository?.branch ?? "detached"}`}
+              title={`${repository?.name ?? "Couchview"} · ${repository?.branch ?? "detached"}`}
               type="button"
             >
-              <span>{repository?.name ?? "Couch Review"}</span>
+              <span>{repository?.name ?? "Couchview"}</span>
               <ChevronDown size={12} />
             </button>
             <span className="compact-context-divider">/</span>
@@ -2987,7 +3183,7 @@ export function App() {
               type="button"
             >
               <span className={`connection-dot ${connected ? "" : "offline"}`} />
-              <span>{repository?.name ?? "Couch Review"}</span>
+              <span>{repository?.name ?? "Couchview"}</span>
               <ChevronDown size={13} />
             </button>
             <div className="repo-meta">
@@ -3410,7 +3606,7 @@ export function App() {
             </div>
             <footer className="sheet-footer">
               <div className="progress-label">
-                Run <code>couch-review</code> inside another Git project to add it.
+                Run <code>couchview</code> inside another Git project to add it.
               </div>
             </footer>
           </section>
@@ -4064,7 +4260,7 @@ export function App() {
         )}
         {pwa.canInstall && (
           <div className="toast">
-            <span>Install Couch Review for full-screen access.</span>
+            <span>Install Couchview for full-screen access.</span>
             <span>
               <button className="text-button" onClick={pwa.dismissInstall} type="button">
                 Not now

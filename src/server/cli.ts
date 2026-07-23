@@ -11,7 +11,7 @@ import {
 } from "../shared/contracts.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import {
-  createCouchReviewApp,
+  createCouchviewApp,
   hostForUrl,
   INSTANCE_PROTOCOL_VERSION,
   normalizeBindHost,
@@ -34,8 +34,8 @@ interface StartServerRuntime {
 }
 
 export function parseCli(argv: string[]): CliOptions {
-  let root = Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
-  let host = Bun.env.COUCH_REVIEW_HOST ?? "0.0.0.0";
+  let root = Bun.env.COUCHVIEW_ROOT ?? Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
+  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "0.0.0.0";
   let port = Number(Bun.env.PORT ?? 4173);
   let explicitRoot = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -110,7 +110,7 @@ async function fetchWithTimeout(
 function isInstanceResponse(value: unknown): value is InstanceResponse {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<InstanceResponse>;
-  return candidate.service === "couch-review" &&
+  return candidate.service === "couchview" &&
     typeof candidate.protocolVersion === "number" &&
     typeof candidate.version === "string" &&
     typeof candidate.instanceId === "string" &&
@@ -142,23 +142,23 @@ async function registerWithRunningServer(
   if (!instanceResponse) return null;
   if (!instanceResponse.ok) {
     throw new Error(
-      `Port ${options.port} is occupied by a service that is not a compatible Couch Review server`,
+      `Port ${options.port} is occupied by a service that is not a compatible Couchview server`,
     );
   }
   const rawInstance: unknown = await instanceResponse.json().catch(() => null);
   if (!isInstanceResponse(rawInstance)) {
     throw new Error(
-      `Port ${options.port} is occupied by a service that is not a compatible Couch Review server`,
+      `Port ${options.port} is occupied by a service that is not a compatible Couchview server`,
     );
   }
   if (rawInstance.protocolVersion !== INSTANCE_PROTOCOL_VERSION) {
     throw new Error(
-      `Couch Review ${rawInstance.version} uses control protocol ${rawInstance.protocolVersion}; use another port or stop it first`,
+      `Couchview ${rawInstance.version} uses control protocol ${rawInstance.protocolVersion}; use another port or stop it first`,
     );
   }
   if (explicitHost && !requestedHostIsCompatible(options.host, rawInstance.bindHost)) {
     throw new Error(
-      `Couch Review is already using port ${options.port} on ${rawInstance.bindHost}, which does not satisfy --host ${options.host}`,
+      `Couchview is already using port ${options.port} on ${rawInstance.bindHost}, which does not satisfy --host ${options.host}`,
     );
   }
 
@@ -167,7 +167,7 @@ async function registerWithRunningServer(
     const stored = database.serverInstance(rawInstance.instanceId);
     if (!stored) {
       throw new Error(
-        "The running Couch Review server uses a different XDG data directory; use the matching XDG_DATA_HOME or another port",
+        "The running Couchview server uses a different XDG data directory; use the matching XDG_DATA_HOME or another port",
       );
     }
     const response = await fetchWithTimeout(
@@ -182,7 +182,7 @@ async function registerWithRunningServer(
         body: JSON.stringify({ root: options.root }),
       },
     );
-    if (!response) throw new Error("The running Couch Review server stopped responding");
+    if (!response) throw new Error("The running Couchview server stopped responding");
     if (!response.ok) throw new Error(await responseError(response));
     return {
       instance: rawInstance,
@@ -215,7 +215,7 @@ export function printServerAccess(
   bindHost: string,
 ): void {
   const copyableOrigins = projectOrigins(origins, repositoryId);
-  console.log(copyableOrigins.length === 1 ? "Couch Review URL:" : "Couch Review URLs:");
+  console.log(copyableOrigins.length === 1 ? "Couchview URL:" : "Couchview URLs:");
   for (const origin of copyableOrigins) console.log(`  ${origin}`);
   console.log(`Repository: ${repositoryRoot}`);
   if (bindHost === "0.0.0.0" || bindHost === "::") {
@@ -254,15 +254,19 @@ export async function startServer(
     serve: runtimeOverrides.serve ?? Bun.serve,
   };
   const options = parseCli(argv);
-  const explicitHost = argv.includes("--host") || Bun.env.COUCH_REVIEW_HOST !== undefined;
-  const reuseEnabled = Bun.env.COUCH_REVIEW_DISABLE_REUSE !== "1";
+  const explicitHost =
+    argv.includes("--host") ||
+    Bun.env.COUCHVIEW_HOST !== undefined ||
+    Bun.env.COUCH_REVIEW_HOST !== undefined;
+  const reuseEnabled =
+    (Bun.env.COUCHVIEW_DISABLE_REUSE ?? Bun.env.COUCH_REVIEW_DISABLE_REUSE) !== "1";
   if (reuseEnabled) {
     const running = await registerWithRunningServer(options, explicitHost, runtime.fetch);
     if (running) {
       console.log(
         running.registration.added
-          ? "Repository added to the running Couch Review server."
-          : "Repository is already available in the running Couch Review server.",
+          ? "Repository added to the running Couchview server."
+          : "Repository is already available in the running Couchview server.",
       );
       printServerAccess(
         running.instance.accessOrigins,
@@ -282,7 +286,7 @@ export async function startServer(
   if (Bun.env.NODE_ENV === "development") {
     allowedOrigins.push("http://127.0.0.1:5173", "http://localhost:5173");
   }
-  const app = await createCouchReviewApp({
+  const app = await createCouchviewApp({
     root: options.root,
     host: options.host,
     port: options.port,
@@ -307,8 +311,8 @@ export async function startServer(
       if (running) {
         console.log(
           running.registration.added
-            ? "Repository added to the running Couch Review server."
-            : "Repository is already available in the running Couch Review server.",
+            ? "Repository added to the running Couchview server."
+            : "Repository is already available in the running Couchview server.",
         );
         printServerAccess(
           running.instance.accessOrigins,
@@ -352,7 +356,7 @@ export async function startServer(
 
 if (import.meta.main) {
   startServer().catch((error) => {
-    console.error(`Couch Review could not start: ${(error as Error).message}`);
+    console.error(`Couchview could not start: ${(error as Error).message}`);
     process.exitCode = 1;
   });
 }

@@ -1,5 +1,5 @@
 {
-  "name": "couch-review",
+  "name": "couchview",
   "version": "0.1.0",
   "private": true,
   "description": "A compact local-first Git diff review PWA powered by Bun.",
@@ -9,7 +9,7 @@
     "bun": ">=1.3.0"
   },
   "bin": {
-    "couch-review": "./src/server/cli.ts"
+    "couchview": "./src/server/cli.ts"
   },
   "scripts": {
     "dev": "bun run scripts/dev.ts",

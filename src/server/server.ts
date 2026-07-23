@@ -42,7 +42,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 export const INSTANCE_PROTOCOL_VERSION = 1;
 export const APP_VERSION = packageJson.version;
 
-export interface CouchReviewAppOptions {
+export interface CouchviewAppOptions {
   root: string;
   host?: string;
   port?: number;
@@ -55,7 +55,7 @@ export interface CouchReviewAppOptions {
   revisionPollIntervalMs?: number;
 }
 
-export interface CouchReviewApp {
+export interface CouchviewApp {
   repository: GitRepository;
   repositories: RepositoryManager;
   packageCommands: PackageCommandService;
@@ -187,12 +187,12 @@ function errorResponse(error: unknown): Response {
     } else if (error.kind === "capture") {
       status = 502;
       code = "git_output_capture";
-      message = `Git ${error.operation} returned data that Couch Review could not capture safely`;
+      message = `Git ${error.operation} returned data that Couchview could not capture safely`;
       retryable = true;
     } else if (error.kind === "output_limit") {
       status = 502;
       code = "git_output_limit";
-      message = `Git ${error.operation} returned more data than Couch Review can safely process`;
+      message = `Git ${error.operation} returned more data than Couchview can safely process`;
     } else if (error.kind === "empty_output") {
       status = 503;
       code = "git_empty_output";
@@ -226,7 +226,7 @@ function errorResponse(error: unknown): Response {
     };
     return json(body, {
       status,
-      headers: { "X-Couch-Review-Diagnostic": diagnosticId },
+      headers: { "X-Couchview-Diagnostic": diagnosticId },
     });
   }
   console.error(error);
@@ -350,9 +350,9 @@ function decodeSegment(value: string): string {
   }
 }
 
-export async function createCouchReviewApp(
-  options: CouchReviewAppOptions,
-): Promise<CouchReviewApp> {
+export async function createCouchviewApp(
+  options: CouchviewAppOptions,
+): Promise<CouchviewApp> {
   const host = normalizeBindHost(options.host ?? "0.0.0.0");
   const port = options.port ?? 4173;
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -539,7 +539,7 @@ export async function createCouchReviewApp(
 
     if (url.pathname === API_ROUTES.instance && request.method === "GET") {
       const response: InstanceResponse = {
-        service: "couch-review",
+        service: "couchview",
         protocolVersion: INSTANCE_PROTOCOL_VERSION,
         version,
         instanceId,
@@ -881,7 +881,7 @@ export async function createCouchReviewApp(
     });
   };
 
-  const app: CouchReviewApp = {
+  const app: CouchviewApp = {
     repository: initialBackend,
     repositories,
     packageCommands,
