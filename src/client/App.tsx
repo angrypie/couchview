@@ -28,9 +28,12 @@ import {
   MessageSquareText,
   Minus,
   Pencil,
+  Play,
   Plus,
   RefreshCw,
   Search,
+  Square,
+  SquareTerminal,
   Trash2,
   Undo2,
   WifiOff,
@@ -42,10 +45,17 @@ import {
   type ApiErrorDiagnostic,
   type BootstrapResponse,
   type ChangeFile,
+  type ChangeFileDelta,
   type DiffHunk,
   type DiffLine,
   type DiffSide,
   type FileDiff,
+  type PackageRunEvent,
+  type PackageRunSnapshot,
+  type PackageRunSummary,
+  type PackageScriptDefinition,
+  type PackageScriptsPackage,
+  type PackageScriptsResponse,
   type ReviewComment,
   type RepositoryCatalogEntry,
   type RepositorySummary,
@@ -70,6 +80,7 @@ type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
 type StageFilter = "all" | "unstaged" | "staged";
 type SearchScope = "current" | "other";
+type DrawerView = "files" | "commands";
 
 interface HunkRow {
   type: "hunk";
@@ -123,6 +134,17 @@ interface FailureState {
   status: number | null;
   diagnostic?: ApiErrorDiagnostic;
 }
+
+interface PendingStageMutation {
+  repositoryId: string;
+  fileId: string;
+  queuedOperationRevision: string | null;
+}
+
+const emptyPackageScripts: PackageScriptsResponse = {
+  packages: [],
+  warnings: [],
+};
 
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 16;
@@ -384,6 +406,64 @@ function stageLabel(
   return null;
 }
 
+function applyChangeFileDelta(
+  current: readonly ChangeFile[],
+  delta: ChangeFileDelta,
+): ChangeFile[] {
+  const removed = new Set(delta.removedFileIds);
+  const upserted = new Map(delta.upserted.map((file) => [file.id, file]));
+  const next = current.flatMap((file) => {
+    if (removed.has(file.id)) return [];
+    return [upserted.get(file.id) ?? file];
+  });
+  for (const file of delta.upserted) {
+    if (!current.some((candidate) => candidate.id === file.id)) next.push(file);
+  }
+  const nextById = new Map(next.map((file) => [file.id, file]));
+  return delta.orderedFileIds.flatMap((fileId) => {
+    const file = nextById.get(fileId);
+    return file ? [file] : [];
+  });
+}
+
+function withDiffFileMetadata(
+  current: FileDiff,
+  file: ChangeFile,
+  operationRevision: string,
+): FileDiff {
+  return {
+    ...current,
+    path: file.path,
+    previousPath: file.previousPath,
+    kind: file.kind,
+    operationRevision,
+  };
+}
+
+function packageLabel(packageEntry: PackageScriptsPackage): string {
+  return packageEntry.name ?? (
+    packageEntry.directory === "." ? "Repository root" : packageEntry.directory
+  );
+}
+
+function runStatusLabel(status: PackageRunSummary["status"]): string {
+  if (status === "succeeded") return "Passed";
+  if (status === "failed") return "Failed";
+  if (status === "stopped") return "Stopped";
+  if (status === "stopping") return "Stopping";
+  return "Running";
+}
+
+function runElapsed(run: PackageRunSummary, now = Date.now()): string {
+  const started = Date.parse(run.startedAt);
+  const finished = run.finishedAt ? Date.parse(run.finishedAt) : now;
+  const milliseconds = Math.max(0, finished - started);
+  if (milliseconds < 1_000) return `${milliseconds} ms`;
+  const seconds = Math.floor(milliseconds / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 async function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     try {
@@ -435,6 +515,7 @@ export function App() {
   const [diffLoading, setDiffLoading] = useState(false);
   const [connected, setConnected] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerView, setDrawerView] = useState<DrawerView>("files");
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
   const [forgetRepositoryBusy, setForgetRepositoryBusy] = useState<string | null>(null);
   const [fileQuery, setFileQuery] = useState("");
@@ -466,6 +547,17 @@ export function App() {
   const [commitComposerOpen, setCommitComposerOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitBusy, setCommitBusy] = useState(false);
+  const [packageScripts, setPackageScripts] =
+    useState<PackageScriptsResponse>(emptyPackageScripts);
+  const [packageRuns, setPackageRuns] = useState<PackageRunSummary[]>([]);
+  const [packageCommandsLoading, setPackageCommandsLoading] = useState(false);
+  const [packageRunBusy, setPackageRunBusy] = useState<string | null>(null);
+  const [selectedPackageRunId, setSelectedPackageRunId] = useState<string | null>(
+    null,
+  );
+  const [packageRunSnapshot, setPackageRunSnapshot] =
+    useState<PackageRunSnapshot | null>(null);
+  const [runClock, setRunClock] = useState(() => Date.now());
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchScope, setSearchScope] = useState<SearchScope>("current");
@@ -493,6 +585,10 @@ export function App() {
   const repositoryLoadGenerationRef = useRef(0);
   const repositoryRequestRef = useRef<AbortController | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const packageRunEventSourceRef = useRef<EventSource | null>(null);
+  const packageOutputRef = useRef<HTMLPreElement>(null);
+  const diffRef = useRef<FileDiff | null>(null);
+  const pendingStageMutationRef = useRef<PendingStageMutation | null>(null);
   const searchRequestRef = useRef<AbortController | null>(null);
   const diffRequestRef = useRef<{ generation: number; controller: AbortController } | null>(
     null,
@@ -501,6 +597,10 @@ export function App() {
     null,
   );
   const pwa = usePwaUpdate();
+
+  useEffect(() => {
+    diffRef.current = diff;
+  }, [diff]);
 
   const rows = useMemo(() => rowsForDiff(diff), [diff]);
 
@@ -532,6 +632,14 @@ export function App() {
 
   const reviewedCount = files.filter((file) => file.reviewed).length;
   const stagedCount = files.filter((file) => file.staged).length;
+  const commandsAvailable =
+    packageScripts.packages.length > 0 ||
+    packageScripts.warnings.length > 0 ||
+    packageRuns.length > 0;
+  const selectedPackageRun =
+    packageRunSnapshot?.run ??
+    packageRuns.find((run) => run.id === selectedPackageRunId) ??
+    null;
   const hunkCount = diff?.hunks.length ?? 0;
   const canNavigatePreviousHunk =
     hunkNavigation.previous !== null && hunkNavigation.previous < hunkCount;
@@ -677,6 +785,7 @@ export function App() {
           setSelection(null);
           setHunkNavigation(navigationBeforeFirstHunk());
         }
+        diffRef.current = response.diff;
         setDiff(response.diff);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -739,6 +848,30 @@ export function App() {
     return response;
   }, []);
 
+  const refreshPackageScripts = useCallback(async () => {
+    const activeRepositoryId = repositoryIdRef.current;
+    if (!activeRepositoryId) throw new Error("No repository is selected");
+    const response = await api.packageScripts(
+      activeRepositoryId,
+      repositoryRequestRef.current?.signal,
+    );
+    if (repositoryIdRef.current !== activeRepositoryId) return response;
+    setPackageScripts(response);
+    return response;
+  }, []);
+
+  const refreshPackageRuns = useCallback(async () => {
+    const activeRepositoryId = repositoryIdRef.current;
+    if (!activeRepositoryId) throw new Error("No repository is selected");
+    const response = await api.packageRuns(
+      activeRepositoryId,
+      repositoryRequestRef.current?.signal,
+    );
+    if (repositoryIdRef.current !== activeRepositoryId) return response;
+    setPackageRuns(response.runs);
+    return response;
+  }, []);
+
   const refreshRepositories = useCallback(async () => {
     const response = await api.repositories();
     repositoryCatalogRef.current = response.repositories;
@@ -760,8 +893,11 @@ export function App() {
       const showLoadingState = repositoryIdRef.current === null;
       repositoryLoadGenerationRef.current = generation;
       repositoryRequestRef.current?.abort();
+      pendingStageMutationRef.current = null;
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
+      packageRunEventSourceRef.current?.close();
+      packageRunEventSourceRef.current = null;
       searchRequestRef.current?.abort();
       const controller = new AbortController();
       repositoryRequestRef.current = controller;
@@ -776,6 +912,7 @@ export function App() {
       operationRevisionRef.current = "";
       setOperationRevision("");
       setCurrentFileId(null);
+      diffRef.current = null;
       setDiff(null);
       setDiffError("");
       setDiffLoading(false);
@@ -794,6 +931,13 @@ export function App() {
       setCopyFallbackText("");
       setCommitComposerOpen(false);
       setCommitMessage("");
+      setPackageScripts(emptyPackageScripts);
+      setPackageRuns([]);
+      setPackageCommandsLoading(false);
+      setPackageRunBusy(null);
+      setSelectedPackageRunId(null);
+      setPackageRunSnapshot(null);
+      setDrawerView("files");
       setReviewBusy(false);
       setStageBusy(false);
       setCommitBusy(false);
@@ -843,6 +987,34 @@ export function App() {
         }
         setConnected(true);
         setPhase("ready");
+        setPackageCommandsLoading(true);
+        void Promise.all([
+          api.packageScripts(nextRepositoryId, controller.signal),
+          api.packageRuns(nextRepositoryId, controller.signal),
+        ])
+          .then(([scripts, runs]) => {
+            if (
+              repositoryLoadGenerationRef.current !== generation ||
+              repositoryIdRef.current !== nextRepositoryId
+            ) {
+              return;
+            }
+            setPackageScripts(scripts);
+            setPackageRuns(runs.runs);
+          })
+          .catch((error) => {
+            if (
+              !(error instanceof DOMException && error.name === "AbortError") &&
+              repositoryIdRef.current === nextRepositoryId
+            ) {
+              showToast(messageOf(error));
+            }
+          })
+          .finally(() => {
+            if (repositoryIdRef.current === nextRepositoryId) {
+              setPackageCommandsLoading(false);
+            }
+          });
       } catch (error) {
         if (repositoryLoadGenerationRef.current !== generation) return;
         if (error instanceof DOMException && error.name === "AbortError") return;
@@ -853,7 +1025,7 @@ export function App() {
         if (repositoryLoadGenerationRef.current === generation) setRepositoryLoading(false);
       }
     },
-    [],
+    [showToast],
   );
 
   const clearRepositorySelection = useCallback(() => {
@@ -862,6 +1034,9 @@ export function App() {
     repositoryRequestRef.current = null;
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
+    packageRunEventSourceRef.current?.close();
+    packageRunEventSourceRef.current = null;
+    pendingStageMutationRef.current = null;
     searchRequestRef.current?.abort();
     diffRequestRef.current?.controller.abort();
     sourceRequestRef.current?.controller.abort();
@@ -875,6 +1050,7 @@ export function App() {
     operationRevisionRef.current = "";
     setOperationRevision("");
     setCurrentFileId(null);
+    diffRef.current = null;
     setDiff(null);
     setDiffError("");
     setDiffLoading(false);
@@ -892,6 +1068,13 @@ export function App() {
     setPendingCommentJump(null);
     setCommitComposerOpen(false);
     setCommitMessage("");
+    setPackageScripts(emptyPackageScripts);
+    setPackageRuns([]);
+    setPackageCommandsLoading(false);
+    setPackageRunBusy(null);
+    setSelectedPackageRunId(null);
+    setPackageRunSnapshot(null);
+    setDrawerView("files");
     setReviewBusy(false);
     setStageBusy(false);
     setCommitBusy(false);
@@ -947,6 +1130,7 @@ export function App() {
       diffRequestRef.current?.controller.abort();
       sourceRequestRef.current?.controller.abort();
       eventSourceRef.current?.close();
+      packageRunEventSourceRef.current?.close();
       searchRequestRef.current?.abort();
     };
   }, [loadApp]);
@@ -991,6 +1175,15 @@ export function App() {
         const event = JSON.parse(message.data) as ServerEvent;
         if (event.repositoryId !== repositoryId) return;
         if (event.type === "changes" || event.type === "ready") {
+          void refreshPackageScripts().catch(() => undefined);
+          const pendingStage = pendingStageMutationRef.current;
+          if (
+            event.type === "changes" &&
+            pendingStage?.repositoryId === repositoryId
+          ) {
+            pendingStage.queuedOperationRevision = event.operationRevision;
+            return;
+          }
           if (event.operationRevision === operationRevisionRef.current) {
             if (event.type === "ready") {
               void refreshReviewState().catch(() => setConnected(false));
@@ -1001,7 +1194,23 @@ export function App() {
           void refreshChanges()
             .then(async (response) => {
               await refreshReviewState();
-              if (!fileId || !response.files.some((file) => file.id === fileId)) return;
+              if (!fileId) return;
+              const file = response.files.find((candidate) => candidate.id === fileId);
+              if (!file) return;
+              const currentDiff = diffRef.current;
+              if (
+                currentDiff?.fileId === fileId &&
+                currentDiff.contentRevision === file.contentRevision
+              ) {
+                const nextDiff = withDiffFileMetadata(
+                  currentDiff,
+                  file,
+                  response.operationRevision,
+                );
+                diffRef.current = nextDiff;
+                setDiff(nextDiff);
+                return;
+              }
               await loadDiff(fileId, true);
             })
             .catch(() => setConnected(false));
@@ -1036,6 +1245,7 @@ export function App() {
     loadRepository,
     phase,
     refreshChanges,
+    refreshPackageScripts,
     refreshRepositories,
     refreshReviewState,
     repositoryId,
@@ -1043,8 +1253,112 @@ export function App() {
   ]);
 
   useEffect(() => {
+    if (
+      phase !== "ready" ||
+      repositoryLoading ||
+      !repositoryId ||
+      drawerView !== "commands"
+    ) {
+      return;
+    }
+    setPackageCommandsLoading(true);
+    void Promise.all([refreshPackageScripts(), refreshPackageRuns()])
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          showToast(messageOf(error));
+        }
+      })
+      .finally(() => setPackageCommandsLoading(false));
+    const interval = window.setInterval(() => {
+      void refreshPackageRuns().catch(() => undefined);
+    }, 2_000);
+    return () => window.clearInterval(interval);
+  }, [
+    drawerView,
+    phase,
+    refreshPackageRuns,
+    refreshPackageScripts,
+    repositoryId,
+    repositoryLoading,
+    showToast,
+  ]);
+
+  useEffect(() => {
+    packageRunEventSourceRef.current?.close();
+    packageRunEventSourceRef.current = null;
+    if (!repositoryId || !selectedPackageRunId) {
+      setPackageRunSnapshot(null);
+      return;
+    }
+    const stream = new EventSource(
+      API_ROUTES.packageRunEvents(repositoryId, selectedPackageRunId),
+    );
+    packageRunEventSourceRef.current = stream;
+    stream.onmessage = (message) => {
+      try {
+        const event = JSON.parse(message.data) as PackageRunEvent;
+        if (event.type === "snapshot") {
+          setPackageRunSnapshot(event.snapshot);
+          setPackageRuns((current) => [
+            event.snapshot.run,
+            ...current.filter((run) => run.id !== event.snapshot.run.id),
+          ]);
+          return;
+        }
+        if (event.type === "output") {
+          setPackageRunSnapshot((current) => {
+            if (!current || current.run.id !== selectedPackageRunId) return current;
+            if (
+              current.output.some(
+                (chunk) => chunk.sequence === event.chunk.sequence,
+              )
+            ) {
+              return current;
+            }
+            return { ...current, output: [...current.output, event.chunk] };
+          });
+          return;
+        }
+        setPackageRunSnapshot((current) =>
+          current?.run.id === event.run.id
+            ? { ...current, run: event.run }
+            : current
+        );
+        setPackageRuns((current) => [
+          event.run,
+          ...current.filter((run) => run.id !== event.run.id),
+        ]);
+      } catch {
+        // Ignore malformed run events; EventSource will continue reconnecting.
+      }
+    };
+    return () => {
+      stream.close();
+      if (packageRunEventSourceRef.current === stream) {
+        packageRunEventSourceRef.current = null;
+      }
+    };
+  }, [repositoryId, selectedPackageRunId]);
+
+  useEffect(() => {
+    const active =
+      selectedPackageRun &&
+      ["running", "stopping"].includes(selectedPackageRun.status);
+    if (!active) return;
+    const interval = window.setInterval(() => setRunClock(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [selectedPackageRun]);
+
+  useEffect(() => {
+    const output = packageOutputRef.current;
+    if (!output) return;
+    output.scrollTop = output.scrollHeight;
+  }, [packageRunSnapshot?.output]);
+
+  useEffect(() => {
     setSelection(null);
     setHunkNavigation(navigationBeforeFirstHunk());
+    diffRef.current = null;
     setDiff(null);
     setDiffError("");
     if (!currentFileId) {
@@ -1347,12 +1661,49 @@ export function App() {
     [bootstrap, files, refreshReviewState, repositoryId, showToast],
   );
 
+  const reconcileChangedFile = useCallback(
+    async (fileId: string, resetPosition = false) => {
+      const response = await refreshChanges();
+      const file = response.files.find((candidate) => candidate.id === fileId);
+      if (!file || currentFileIdRef.current !== fileId) return;
+      const currentDiff = diffRef.current;
+      if (
+        currentDiff?.fileId === fileId &&
+        currentDiff.contentRevision === file.contentRevision
+      ) {
+        const nextDiff = withDiffFileMetadata(
+          currentDiff,
+          file,
+          response.operationRevision,
+        );
+        diffRef.current = nextDiff;
+        setDiff(nextDiff);
+        return;
+      }
+      await loadDiff(fileId, resetPosition);
+    },
+    [loadDiff, refreshChanges],
+  );
+
   const toggleStageActiveFile = useCallback(async () => {
     if (!activeFile || !bootstrap || !repositoryId || stageBusy) return;
     const activeRepositoryId = repositoryId;
     const signal = repositoryRequestRef.current?.signal;
     const shouldStage = !activeFile.staged || activeFile.unstaged;
+    const mutation: PendingStageMutation = {
+      repositoryId: activeRepositoryId,
+      fileId: activeFile.id,
+      queuedOperationRevision: null,
+    };
+    pendingStageMutationRef.current = mutation;
     setStageBusy(true);
+    setFiles((current) =>
+      current.map((file) =>
+        file.id === activeFile.id
+          ? { ...file, staged: shouldStage, unstaged: !shouldStage }
+          : file,
+      ),
+    );
     try {
       const response = await api.stage(
         activeRepositoryId,
@@ -1366,15 +1717,66 @@ export function App() {
         signal,
       );
       if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+      const queuedOperationRevision = mutation.queuedOperationRevision;
+      if (pendingStageMutationRef.current === mutation) {
+        pendingStageMutationRef.current = null;
+      }
       operationRevisionRef.current = response.operationRevision;
       setOperationRevision(response.operationRevision);
-      await refreshChanges();
-      if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
-      if (currentFileIdRef.current === activeFile.id) {
+      setFiles((current) => applyChangeFileDelta(current, response.changes));
+      if (
+        !response.file &&
+        response.changes.removedFileIds.includes(activeFile.id)
+      ) {
+        const remainingFiles = applyChangeFileDelta(files, response.changes);
+        const nextFileId =
+          remainingFiles[Math.min(activeFileIndex, remainingFiles.length - 1)]?.id ??
+          null;
+        currentFileIdRef.current = nextFileId;
+        setCurrentFileId(nextFileId);
+      }
+      const currentDiff = diffRef.current;
+      if (
+        response.file &&
+        currentDiff?.fileId === activeFile.id &&
+        currentDiff.contentRevision === response.file.contentRevision
+      ) {
+        const nextDiff = withDiffFileMetadata(
+          currentDiff,
+          response.file,
+          response.operationRevision,
+        );
+        diffRef.current = nextDiff;
+        setDiff(nextDiff);
+      } else if (
+        response.file &&
+        currentFileIdRef.current === activeFile.id
+      ) {
         await loadDiff(activeFile.id);
+      }
+      if (
+        queuedOperationRevision &&
+        queuedOperationRevision !== response.operationRevision
+      ) {
+        await reconcileChangedFile(activeFile.id, true);
       }
       showToast(shouldStage ? "File staged" : "File unstaged");
     } catch (error) {
+      const queuedOperationRevision = mutation.queuedOperationRevision;
+      if (pendingStageMutationRef.current === mutation) {
+        pendingStageMutationRef.current = null;
+      }
+      setFiles((current) =>
+        current.map((file) =>
+          file.id === activeFile.id
+            ? {
+                ...file,
+                staged: activeFile.staged,
+                unstaged: activeFile.unstaged,
+              }
+            : file,
+        ),
+      );
       if (
         signal?.aborted ||
         repositoryIdRef.current !== activeRepositoryId ||
@@ -1383,17 +1785,27 @@ export function App() {
         return;
       }
       reportFailure(error, shouldStage ? "Stage file" : "Unstage file");
-      if (error instanceof ApiError && error.status === 409) void refreshChanges();
+      if (
+        queuedOperationRevision ||
+        (error instanceof ApiError && error.status === 409)
+      ) {
+        void reconcileChangedFile(activeFile.id, true);
+      }
     } finally {
+      if (pendingStageMutationRef.current === mutation) {
+        pendingStageMutationRef.current = null;
+      }
       if (repositoryIdRef.current === activeRepositoryId) setStageBusy(false);
     }
   }, [
     activeFile,
+    activeFileIndex,
     bootstrap,
+    files,
     loadDiff,
     operationRevision,
+    reconcileChangedFile,
     reportFailure,
-    refreshChanges,
     repositoryId,
     showToast,
     stageBusy,
@@ -1451,6 +1863,100 @@ export function App() {
       stagedCount,
     ],
   );
+
+  const startPackageScript = useCallback(
+    async (
+      packageEntry: PackageScriptsPackage,
+      script: PackageScriptDefinition,
+    ) => {
+      if (!bootstrap || !repositoryId) return;
+      const activeRepositoryId = repositoryId;
+      const busyKey = `${packageEntry.packagePath}\0${script.name}`;
+      const signal = repositoryRequestRef.current?.signal;
+      setPackageRunBusy(busyKey);
+      try {
+        const response = await api.startPackageRun(
+          activeRepositoryId,
+          {
+            packagePath: packageEntry.packagePath,
+            scriptName: script.name,
+            manifestRevision: packageEntry.manifestRevision,
+          },
+          bootstrap.csrfToken,
+          signal,
+        );
+        if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+        setPackageRuns((current) => [
+          response.run,
+          ...current.filter((run) => run.id !== response.run.id),
+        ]);
+        setPackageRunSnapshot({ run: response.run, output: [] });
+        setSelectedPackageRunId(response.run.id);
+        setDrawerOpen(false);
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        showToast(messageOf(error));
+        if (
+          error instanceof ApiError &&
+          error.code === "package_scripts_changed"
+        ) {
+          void refreshPackageScripts();
+        }
+      } finally {
+        if (repositoryIdRef.current === activeRepositoryId) {
+          setPackageRunBusy(null);
+        }
+      }
+    },
+    [bootstrap, refreshPackageScripts, repositoryId, showToast],
+  );
+
+  const stopPackageRun = useCallback(async () => {
+    if (!bootstrap || !repositoryId || !selectedPackageRunId) return;
+    const activeRepositoryId = repositoryId;
+    const runId = selectedPackageRunId;
+    const signal = repositoryRequestRef.current?.signal;
+    setPackageRunBusy(runId);
+    try {
+      const response = await api.stopPackageRun(
+        activeRepositoryId,
+        runId,
+        bootstrap.csrfToken,
+        signal,
+      );
+      if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+      setPackageRunSnapshot((current) =>
+        current?.run.id === runId ? { ...current, run: response.run } : current
+      );
+      setPackageRuns((current) => [
+        response.run,
+        ...current.filter((run) => run.id !== response.run.id),
+      ]);
+    } catch (error) {
+      if (
+        signal?.aborted ||
+        repositoryIdRef.current !== activeRepositoryId ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
+      showToast(messageOf(error));
+    } finally {
+      if (repositoryIdRef.current === activeRepositoryId) setPackageRunBusy(null);
+    }
+  }, [bootstrap, repositoryId, selectedPackageRunId, showToast]);
+
+  const openPackageRun = useCallback((run: PackageRunSummary) => {
+    setPackageRunSnapshot({ run, output: [] });
+    setSelectedPackageRunId(run.id);
+    setDrawerOpen(false);
+  }, []);
 
   const openCommentComposer = useCallback(() => {
     if (!selectedLineRange) return;
@@ -1766,6 +2272,7 @@ export function App() {
         searchOpen ||
         failureDetailsOpen ||
         commitComposerOpen ||
+        Boolean(selectedPackageRunId) ||
         commentComposerOpen ||
         commentTrayOpen ||
         Boolean(copyFallbackText) ||
@@ -1776,6 +2283,7 @@ export function App() {
         else if (failureDetailsOpen) setFailureDetailsOpen(false);
         else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
         else if (commitComposerOpen) setCommitComposerOpen(false);
+        else if (selectedPackageRunId) setSelectedPackageRunId(null);
         else if (commentComposerOpen) setCommentComposerOpen(false);
         else if (commentTrayOpen) setCommentTrayOpen(false);
         else if (searchOpen) setSearchOpen(false);
@@ -1808,6 +2316,7 @@ export function App() {
     navigateHunk,
     repositoryPickerOpen,
     searchOpen,
+    selectedPackageRunId,
     setReviewed,
   ]);
 
@@ -1816,6 +2325,7 @@ export function App() {
     searchOpen ||
     failureDetailsOpen ||
     commitComposerOpen ||
+    Boolean(selectedPackageRunId) ||
     commentComposerOpen ||
     commentTrayOpen ||
     Boolean(copyFallbackText) ||
@@ -1867,6 +2377,7 @@ export function App() {
     overlayVisible,
     repositoryPickerOpen,
     searchOpen,
+    selectedPackageRunId,
   ]);
 
   if (phase === "loading") {
@@ -1920,8 +2431,16 @@ export function App() {
           <aside aria-label="Changed files" className="drawer">
             <header className="drawer-header">
               <div>
-                <h2 className="drawer-title">Changed files</h2>
-                <div className="repo-meta">{files.length} total</div>
+                <h2 className="drawer-title">
+                  {drawerView === "files" ? "Changed files" : "Package commands"}
+                </h2>
+                <div className="repo-meta">
+                  {drawerView === "files"
+                    ? `${files.length} total`
+                    : `${packageScripts.packages.length} ${
+                        packageScripts.packages.length === 1 ? "package" : "packages"
+                      }`}
+                </div>
               </div>
               <button
                 aria-label="Close changed files"
@@ -1934,110 +2453,242 @@ export function App() {
             </header>
 
             <div className="filter-area">
-              <label className="sr-only" htmlFor="file-filter">
-                Filter changed files
-              </label>
-              <input
-                className="filter-input"
-                id="file-filter"
-                onChange={(event) => setFileQuery(event.target.value)}
-                placeholder="Filter paths…"
-                type="search"
-                value={fileQuery}
-              />
-              <div className="chips" aria-label="Review filters">
-                {(["all", "unreviewed", "reviewed"] as const).map((filter) => (
+              {commandsAvailable && (
+                <div className="drawer-tabs" aria-label="Project drawer views">
                   <button
-                    className={`chip ${reviewFilter === filter ? "active" : ""}`}
-                    key={filter}
-                    onClick={() => setReviewFilter(filter)}
+                    aria-pressed={drawerView === "files"}
+                    className={drawerView === "files" ? "active" : ""}
+                    onClick={() => setDrawerView("files")}
                     type="button"
                   >
-                    {filter === "all" ? "All reviews" : filter}
+                    Files
                   </button>
-                ))}
-              </div>
-              <div className="chips" aria-label="Stage filters">
-                {(["all", "unstaged", "staged"] as const).map((filter) => (
                   <button
-                    className={`chip ${stageFilter === filter ? "active" : ""}`}
-                    key={filter}
-                    onClick={() => setStageFilter(filter)}
+                    aria-pressed={drawerView === "commands"}
+                    className={drawerView === "commands" ? "active" : ""}
+                    onClick={() => setDrawerView("commands")}
                     type="button"
                   >
-                    {filter === "all" ? "Any stage" : filter}
+                    <SquareTerminal size={13} /> Commands
                   </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="file-list">
-              {filteredFiles.map((file) => (
-                <button
-                  className={`file-row ${file.id === currentFileId ? "current" : ""}`}
-                  key={file.id}
-                  onClick={() => selectFile(file.id)}
-                  type="button"
-                >
-                  {file.reviewed ? (
-                    <CheckCircle2 color="var(--green)" size={16} />
-                  ) : (
-                    <Circle size={16} />
-                  )}
-                  <span style={{ minWidth: 0 }}>
-                    <span className="file-row-path">{file.path}</span>
-                    <span className="file-row-meta">
-                      <span>{changeLabel(file)}</span>
-                      {stageLabel(file) && stageLabel(file) !== changeLabel(file) && (
-                        <span>{stageLabel(file)}</span>
-                      )}
-                      {file.additions !== null && (
-                        <span className="additions">+{file.additions}</span>
-                      )}
-                      {file.deletions !== null && (
-                        <span className="deletions">−{file.deletions}</span>
-                      )}
-                    </span>
-                  </span>
-                  <span className="file-state-icons">
-                    {file.staged && <GitPullRequestArrow aria-label="Staged" size={13} />}
-                    {file.commentCount > 0 && <span className="badge">{file.commentCount}</span>}
-                  </span>
-                </button>
-              ))}
-              {filteredFiles.length === 0 && (
-                <div className="empty-state" style={{ minHeight: 160 }}>
-                  <ListFilter className="state-icon" size={24} />
-                  <p className="state-copy">No files match these filters.</p>
+                </div>
+              )}
+              {drawerView === "files" ? (
+                <>
+                  <label className="sr-only" htmlFor="file-filter">
+                    Filter changed files
+                  </label>
+                  <input
+                    className="filter-input"
+                    id="file-filter"
+                    onChange={(event) => setFileQuery(event.target.value)}
+                    placeholder="Filter paths…"
+                    type="search"
+                    value={fileQuery}
+                  />
+                  <div className="chips" aria-label="Review filters">
+                    {(["all", "unreviewed", "reviewed"] as const).map((filter) => (
+                      <button
+                        className={`chip ${reviewFilter === filter ? "active" : ""}`}
+                        key={filter}
+                        onClick={() => setReviewFilter(filter)}
+                        type="button"
+                      >
+                        {filter === "all" ? "All reviews" : filter}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="chips" aria-label="Stage filters">
+                    {(["all", "unstaged", "staged"] as const).map((filter) => (
+                      <button
+                        className={`chip ${stageFilter === filter ? "active" : ""}`}
+                        key={filter}
+                        onClick={() => setStageFilter(filter)}
+                        type="button"
+                      >
+                        {filter === "all" ? "Any stage" : filter}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="command-warning">
+                  Package scripts run on this computer as your user. Only run commands
+                  from repositories and networks you trust.
                 </div>
               )}
             </div>
 
+            {drawerView === "files" ? (
+              <div className="file-list">
+                {filteredFiles.map((file) => (
+                  <button
+                    className={`file-row ${file.id === currentFileId ? "current" : ""}`}
+                    key={file.id}
+                    onClick={() => selectFile(file.id)}
+                    type="button"
+                  >
+                    {file.reviewed ? (
+                      <CheckCircle2 color="var(--green)" size={16} />
+                    ) : (
+                      <Circle size={16} />
+                    )}
+                    <span style={{ minWidth: 0 }}>
+                      <span className="file-row-path">{file.path}</span>
+                      <span className="file-row-meta">
+                        <span>{changeLabel(file)}</span>
+                        {stageLabel(file) && stageLabel(file) !== changeLabel(file) && (
+                          <span>{stageLabel(file)}</span>
+                        )}
+                        {file.additions !== null && (
+                          <span className="additions">+{file.additions}</span>
+                        )}
+                        {file.deletions !== null && (
+                          <span className="deletions">−{file.deletions}</span>
+                        )}
+                      </span>
+                    </span>
+                    <span className="file-state-icons">
+                      {file.staged && <GitPullRequestArrow aria-label="Staged" size={13} />}
+                      {file.commentCount > 0 && <span className="badge">{file.commentCount}</span>}
+                    </span>
+                  </button>
+                ))}
+                {filteredFiles.length === 0 && (
+                  <div className="empty-state" style={{ minHeight: 160 }}>
+                    <ListFilter className="state-icon" size={24} />
+                    <p className="state-copy">No files match these filters.</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="commands-list">
+                {packageCommandsLoading && packageScripts.packages.length === 0 ? (
+                  <div className="loading-state" style={{ minHeight: 140 }}>
+                    <LoaderCircle className="state-icon spinner" size={23} />
+                    <p className="state-copy">Finding package scripts…</p>
+                  </div>
+                ) : (
+                  <>
+                    {packageRuns.length > 0 && (
+                      <section className="command-group" aria-label="Recent package runs">
+                        <h3 className="command-group-title">Active and recent runs</h3>
+                        {packageRuns.map((run) => (
+                          <button
+                            className="package-run-row"
+                            key={run.id}
+                            onClick={() => openPackageRun(run)}
+                            type="button"
+                          >
+                            <span>
+                              <span className="package-script-name">{run.scriptName}</span>
+                              <span className="package-script-command">
+                                {run.directory} · {run.invocation}
+                              </span>
+                            </span>
+                            <span className={`run-status ${run.status}`}>
+                              {runStatusLabel(run.status)}
+                            </span>
+                          </button>
+                        ))}
+                      </section>
+                    )}
+                    {packageScripts.packages.map((packageEntry) => (
+                      <section className="command-group" key={packageEntry.packagePath}>
+                        <h3 className="command-group-title">
+                          <span>{packageLabel(packageEntry)}</span>
+                          <code>{packageEntry.directory}</code>
+                        </h3>
+                        {packageEntry.scripts.length > 0 ? (
+                          packageEntry.scripts.map((script) => {
+                            const busyKey = `${packageEntry.packagePath}\0${script.name}`;
+                            const active = packageRuns.some(
+                              (run) =>
+                                run.packagePath === packageEntry.packagePath &&
+                                run.scriptName === script.name &&
+                                ["running", "stopping"].includes(run.status),
+                            );
+                            return (
+                              <div className="package-script-row" key={script.name}>
+                                <span>
+                                  <span className="package-script-name">{script.name}</span>
+                                  <span className="package-script-command">{script.command}</span>
+                                </span>
+                                <button
+                                  aria-label={`Run ${script.name} in ${packageEntry.directory}`}
+                                  className="icon-button command-run-button"
+                                  disabled={active || packageRunBusy === busyKey}
+                                  onClick={() => void startPackageScript(packageEntry, script)}
+                                  title={active ? "This script is already running" : "Run script"}
+                                  type="button"
+                                >
+                                  {packageRunBusy === busyKey ? (
+                                    <LoaderCircle className="spinner" size={16} />
+                                  ) : (
+                                    <Play size={15} />
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p className="command-empty">No scripts in this package.</p>
+                        )}
+                      </section>
+                    ))}
+                    {packageScripts.warnings.map((warning) => (
+                      <div className="package-warning" key={`${warning.packagePath}:${warning.message}`}>
+                        <strong>{warning.packagePath}</strong>
+                        <span>{warning.message}</span>
+                      </div>
+                    ))}
+                    {packageScripts.packages.length === 0 &&
+                      packageRuns.length === 0 &&
+                      packageScripts.warnings.length === 0 && (
+                        <div className="empty-state" style={{ minHeight: 160 }}>
+                          <SquareTerminal className="state-icon" size={26} />
+                          <p className="state-copy">No package.json files were detected.</p>
+                        </div>
+                      )}
+                  </>
+                )}
+              </div>
+            )}
+
             <footer className="drawer-footer">
-              <div className="progress-track" aria-hidden="true">
-                <div
-                  className="progress-value"
-                  style={{ width: `${files.length ? (reviewedCount / files.length) * 100 : 0}%` }}
-                />
-              </div>
-              <div className="progress-label">
-                {reviewedCount} of {files.length} reviewed
-              </div>
-              <button
-                className="action-button commit-action"
-                disabled={stagedCount === 0 || commitBusy}
-                onClick={() => {
-                  setDrawerOpen(false);
-                  setCommitMessage("");
-                  setCommitComposerOpen(true);
-                }}
-                type="button"
-              >
-                <GitCommitHorizontal size={16} />
-                {stagedCount === 0
-                  ? "No staged changes"
-                  : `Commit ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
-              </button>
+              {drawerView === "files" ? (
+                <>
+                  <div className="progress-track" aria-hidden="true">
+                    <div
+                      className="progress-value"
+                      style={{ width: `${files.length ? (reviewedCount / files.length) * 100 : 0}%` }}
+                    />
+                  </div>
+                  <div className="progress-label">
+                    {reviewedCount} of {files.length} reviewed
+                  </div>
+                  <button
+                    className="action-button commit-action"
+                    disabled={stagedCount === 0 || commitBusy}
+                    onClick={() => {
+                      setDrawerOpen(false);
+                      setCommitMessage("");
+                      setCommitComposerOpen(true);
+                    }}
+                    type="button"
+                  >
+                    <GitCommitHorizontal size={16} />
+                    {stagedCount === 0
+                      ? "No staged changes"
+                      : `Commit ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
+                  </button>
+                </>
+              ) : (
+                <div className="progress-label command-footer-copy">
+                  Commands keep running when this panel closes. Open a recent run to
+                  reconnect to its output.
+                </div>
+              )}
             </footer>
           </aside>
         </>
@@ -2245,12 +2896,12 @@ export function App() {
             <h2 className="state-title">Working tree is clean</h2>
             <p className="state-copy">New changes will appear here automatically.</p>
           </div>
-        ) : diffLoading ? (
+        ) : diffLoading && !diff ? (
           <div className="loading-state">
             <LoaderCircle className="state-icon spinner" size={27} />
             <p className="state-copy">Loading diff…</p>
           </div>
-        ) : diffError ? (
+        ) : diffError && !diff ? (
           <div className="error-state">
             <AlertTriangle className="state-icon" size={28} />
             <h2 className="state-title">Couldn’t load this diff</h2>
@@ -2317,6 +2968,13 @@ export function App() {
             selectedRange={selectedViewerRange}
           />
         ) : null}
+
+        {diffLoading && diff && (
+          <div className="diff-refresh-indicator" role="status">
+            <LoaderCircle className="spinner" size={14} />
+            <span>Refreshing diff…</span>
+          </div>
+        )}
 
         {selectedLineRange && !commentComposerOpen && (
           <div className="selection-banner" role="status">
@@ -2776,6 +3434,117 @@ export function App() {
               </button>
             </footer>
           </form>
+        </>
+      )}
+
+      {selectedPackageRunId && selectedPackageRun && (
+        <>
+          <button
+            aria-label="Close package command output"
+            className="sheet-scrim"
+            onClick={() => setSelectedPackageRunId(null)}
+            type="button"
+          />
+          <section
+            aria-label="Package command output"
+            aria-modal="true"
+            className="bottom-sheet package-run-sheet"
+            role="dialog"
+          >
+            <span className="sheet-grabber" />
+            <header className="sheet-header">
+              <div>
+                <h2 className="sheet-title">
+                  {selectedPackageRun.packageName ?? selectedPackageRun.directory}
+                  <span className="command-title-separator"> / </span>
+                  {selectedPackageRun.scriptName}
+                </h2>
+                <div className="repo-meta package-run-meta">
+                  <span className={`run-status ${selectedPackageRun.status}`}>
+                    {runStatusLabel(selectedPackageRun.status)}
+                  </span>
+                  <span>{runElapsed(selectedPackageRun, runClock)}</span>
+                  {selectedPackageRun.exitCode !== null && (
+                    <span>exit {selectedPackageRun.exitCode}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                aria-label="Close package command output"
+                className="icon-button"
+                onClick={() => setSelectedPackageRunId(null)}
+                type="button"
+              >
+                <X size={19} />
+              </button>
+            </header>
+            <div className="package-run-context">
+              <div>
+                <span>Working directory</span>
+                <code>
+                  {selectedPackageRun.directory === "."
+                    ? repository?.root
+                    : `${repository?.root}/${selectedPackageRun.directory}`}
+                </code>
+              </div>
+              <div>
+                <span>Invocation</span>
+                <code>{selectedPackageRun.invocation}</code>
+              </div>
+              <div>
+                <span>package.json script</span>
+                <code>{selectedPackageRun.command}</code>
+              </div>
+            </div>
+            <pre className="package-output" ref={packageOutputRef}>
+              {selectedPackageRun.outputTruncated && (
+                <span className="package-output-notice">
+                  [Earlier output was truncated.]
+                  {"\n"}
+                </span>
+              )}
+              {packageRunSnapshot?.output.length ? (
+                packageRunSnapshot.output.map((chunk) => (
+                  <span className={`package-output-${chunk.stream}`} key={chunk.sequence}>
+                    {chunk.text}
+                  </span>
+                ))
+              ) : (
+                <span className="package-output-empty">
+                  {["running", "stopping"].includes(selectedPackageRun.status)
+                    ? "Waiting for output…"
+                    : "The command produced no output."}
+                </span>
+              )}
+            </pre>
+            <footer className="sheet-footer package-run-actions">
+              <button
+                className="action-button secondary"
+                onClick={() => setSelectedPackageRunId(null)}
+                type="button"
+              >
+                Close
+              </button>
+              {["running", "stopping"].includes(selectedPackageRun.status) && (
+                <button
+                  className="action-button danger-action"
+                  disabled={
+                    selectedPackageRun.status === "stopping" ||
+                    packageRunBusy === selectedPackageRun.id
+                  }
+                  onClick={() => void stopPackageRun()}
+                  type="button"
+                >
+                  {packageRunBusy === selectedPackageRun.id ? (
+                    <LoaderCircle className="spinner" size={16} />
+                  ) : (
+                    <Square size={14} />
+                  )}
+                  {selectedPackageRun.status === "stopping" ? "Stopping…" : "Stop"}
+                </button>
+              )}
+            </footer>
+          </section>
         </>
       )}
 

@@ -62,7 +62,7 @@ Repository: /absolute/path/to/project
 
 Copy the `192.168...` address into the phone browser. If it does not connect, confirm both devices are on the same Wi-Fi and allow incoming Bun connections in the computer firewall. The interface list is captured at startup, so restart Couch Review after changing networks. A specific interface address can be used instead of `0.0.0.0`, and `COUCH_REVIEW_HOST` provides the same setting through the environment.
 
-LAN mode exposes repository diffs and staging controls to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
+LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
 
 To run without linking the command:
 
@@ -90,6 +90,7 @@ Development also binds both processes to `0.0.0.0` by default and prints the pho
 - Mark reviewed to record the current content revision and automatically advance to the next unreviewed file. In compact landscape mode, Review only toggles the mark because Next is a separate adjacent control. Undo is offered. A later content change clears the review and marks existing comment anchors stale.
 - Stage writes the whole file to the real Git index; once fully staged, the same control becomes Unstage and restores that path in the index from `HEAD` without changing its working copy. Review and stage are independent actions, and a stale operation is rejected instead of changing the index.
 - Commit is available from the changed-files drawer once at least one path is staged. It commits exactly the current Git index with the supplied message; unstaged working-tree edits remain local, and stale or conflicted states are rejected.
+- When tracked or non-ignored `package.json` files are present, the drawer adds a **Commands** view. Scripts are grouped by subproject, run with the package manager declared by the project or indicated by its nearest lockfile, and stream stdout and stderr into a reconnectable output sheet. Long-running scripts keep running when the sheet closes and can be stopped explicitly.
 - If Git fails or stops producing output, Couch Review shows the operation-specific message instead of treating an empty response as a valid diff. Open **Details** to see a diagnostic ID, failure kind, exit code, and bounded Git output, or copy the complete diagnostic for reporting.
 - Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk and comment actions in the dock; compact landscape moves hunk/comments into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
 - Use the minus and plus controls to adjust code from 9–16 px. The compact 11 px default and the selected preference are stored in the browser.
@@ -104,7 +105,7 @@ The UI shell is available when disconnected, but repository data is intentionall
 
 ## Local state and security
 
-The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. LAN binding is the default, so run Couch Review only on a trusted network or pass `--host 127.0.0.1`; the tool can read selected repositories and stage files in their indexes.
+The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. LAN binding is the default, so run Couch Review only on a trusted network or pass `--host 127.0.0.1`; the tool can read selected repositories, stage files in their indexes, and execute their declared package scripts.
 
 Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
@@ -112,9 +113,11 @@ Review flags, comments, and the saved-project catalog are stored in a user-only 
 ${XDG_DATA_HOME:-$HOME/.local/share}/couch-review/state.sqlite
 ```
 
-Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions.
+Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
 
 Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couch Review no longer reads them. `COUCH_REVIEW_ROOT`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo` and `--port` take precedence.
+
+Package scripts execute on the host computer with the same operating-system permissions and environment as Couch Review. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 
 ## Test and verification commands
 

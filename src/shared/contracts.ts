@@ -28,6 +28,16 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/comments`,
   comment: (repositoryId: string, commentId: string) =>
     `${repositoryApiPath(repositoryId)}/comments/${encodeURIComponent(commentId)}`,
+  packageScripts: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/package-scripts`,
+  packageRuns: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/package-runs`,
+  packageRun: (repositoryId: string, runId: string) =>
+    `${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}`,
+  packageRunStop: (repositoryId: string, runId: string) =>
+    `${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/stop`,
+  packageRunEvents: (repositoryId: string, runId: string) =>
+    `${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/events`,
   events: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/events`,
 } as const;
@@ -280,8 +290,15 @@ export interface StageFileRequest {
   staged?: boolean;
 }
 
+export interface ChangeFileDelta {
+  upserted: ChangeFile[];
+  removedFileIds: string[];
+  orderedFileIds: string[];
+}
+
 export interface StageFileResponse {
   file: ChangeFile | null;
+  changes: ChangeFileDelta;
   operationRevision: string;
 }
 
@@ -294,6 +311,86 @@ export interface CommitResponse {
   commit: string;
   operationRevision: string;
 }
+
+export type PackageRunner = "bun" | "npm" | "pnpm" | "yarn";
+
+export interface PackageScriptDefinition {
+  name: string;
+  command: string;
+}
+
+export interface PackageScriptsPackage {
+  packagePath: string;
+  directory: string;
+  name: string | null;
+  manifestRevision: string;
+  runner: PackageRunner;
+  scripts: PackageScriptDefinition[];
+}
+
+export interface PackageScriptWarning {
+  packagePath: string;
+  message: string;
+}
+
+export interface PackageScriptsResponse {
+  packages: PackageScriptsPackage[];
+  warnings: PackageScriptWarning[];
+}
+
+export interface StartPackageRunRequest {
+  packagePath: string;
+  scriptName: string;
+  manifestRevision: string;
+}
+
+export type PackageRunStatus =
+  | "running"
+  | "stopping"
+  | "succeeded"
+  | "failed"
+  | "stopped";
+
+export interface PackageRunSummary {
+  id: string;
+  repositoryId: string;
+  packagePath: string;
+  packageName: string | null;
+  directory: string;
+  scriptName: string;
+  command: string;
+  runner: PackageRunner;
+  invocation: string;
+  status: PackageRunStatus;
+  exitCode: number | null;
+  startedAt: string;
+  finishedAt: string | null;
+  outputTruncated: boolean;
+}
+
+export interface PackageRunsResponse {
+  runs: PackageRunSummary[];
+}
+
+export interface PackageRunResponse {
+  run: PackageRunSummary;
+}
+
+export interface PackageRunOutputChunk {
+  sequence: number;
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+export interface PackageRunSnapshot {
+  run: PackageRunSummary;
+  output: PackageRunOutputChunk[];
+}
+
+export type PackageRunEvent =
+  | { type: "snapshot"; snapshot: PackageRunSnapshot }
+  | { type: "output"; chunk: PackageRunOutputChunk }
+  | { type: "status"; run: PackageRunSummary };
 
 export type ServerEventType = "changes" | "state" | "repositories" | "ready";
 

@@ -307,6 +307,40 @@ test.describe("mobile fixture review", () => {
     await expect(currentFile).toContainText("src/format.ts");
   });
 
+  test("runs grouped package commands and reconnects to their output", async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    const drawer = page.getByRole("complementary", { name: "Changed files" });
+    await drawer.getByRole("button", { name: /Commands/ }).click();
+    await expect(drawer).toContainText("sample-project");
+    await expect(drawer).toContainText("@sample/mobile");
+    await expect(drawer).toContainText("expo export");
+    await expect(drawer).toContainText("Only run commands");
+
+    await drawer
+      .getByRole("button", { name: "Run build in apps/mobile" })
+      .click();
+    const output = page.getByRole("dialog", { name: "Package command output" });
+    await expect(output).toBeVisible();
+    await expect(output).toContainText("pnpm run build");
+    await expect(output).toContainText("fixture output: pnpm run build");
+    await expect(output).toContainText("Passed");
+    await output
+      .getByRole("button", { name: "Close package command output" })
+      .click();
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    await expect(
+      page
+        .getByRole("complementary", { name: "Changed files" })
+        .getByText("Active and recent runs"),
+    ).toBeVisible();
+  });
+
   test("switches projects through URL history while tabs remain independent", async ({
     context,
     page,

@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, type FSWatcher, watch } from "node:fs";
 import {
-	copyFile,
 	lstat,
 	mkdir,
 	mkdtemp,
@@ -21,6 +20,7 @@ import path from "node:path";
 
 import type {
 	ChangeFile,
+	ChangeFileDelta,
 	ChangesResponse,
 	CommitRequest,
 	CommitResponse,
@@ -99,6 +99,43 @@ interface WorkingFile {
 	mode: "100644" | "100755" | "120000";
 }
 
+interface ContentRevisionCacheEntry {
+	signature: string;
+	revision: string;
+}
+
+function basePathForEntry(entry: ParsedStatusEntry): string {
+	return entry.kind === "renamed" && entry.previousPath
+		? entry.previousPath
+		: entry.path;
+}
+
+function changeFileDelta(
+	before: readonly ChangeFile[],
+	after: readonly ChangeFile[],
+): ChangeFileDelta {
+	const beforeById = new Map(before.map((file) => [file.id, file]));
+	const afterIds = new Set(after.map((file) => file.id));
+	return {
+		upserted: after.filter(
+			(file) => JSON.stringify(beforeById.get(file.id)) !== JSON.stringify(file),
+		),
+		removedFileIds: before
+			.filter((file) => !afterIds.has(file.id))
+			.map((file) => file.id),
+		orderedFileIds: after.map((file) => file.id),
+	};
+}
+
+function bytesEqual(
+	left: Uint8Array | null,
+	right: Uint8Array | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return left.byteLength === right.byteLength &&
+		left.every((value, index) => value === right[index]);
+}
+
 function assertNonEmptyString(
 	value: unknown,
 	field: string,
@@ -166,6 +203,10 @@ export class GitRepository {
 	private watchTimer: ReturnType<typeof setTimeout> | null = null;
 	private snapshotInFlight: Promise<Snapshot> | null = null;
 	private lastSnapshot: Snapshot | null = null;
+	private readonly contentRevisionCache = new Map<
+		string,
+		ContentRevisionCacheEntry
+	>();
 
 	private constructor(
 		root: string,
@@ -618,22 +659,6 @@ export class GitRepository {
 				);
 			}
 			const shouldStage = input.staged ?? true;
-			const before = await this.getSnapshot(true);
-			if (before.operationRevision !== input.operationRevision) {
-				throw new HttpError(
-					409,
-					"operation_changed",
-					"Project changes changed; refresh before staging",
-				);
-			}
-			const file = this.requireFile(before, input.fileId);
-			if (file.contentRevision !== input.contentRevision) {
-				throw new HttpError(
-					409,
-					"content_changed",
-					"File content changed; refresh before staging",
-				);
-			}
 			const lockPath = `${this.indexPath}.lock`;
 			const temporaryIndex = path.join(
 				path.dirname(this.indexPath),
@@ -665,12 +690,28 @@ export class GitRepository {
 						"Project changes changed; refresh before staging",
 					);
 				}
-				this.requireCurrentContent(locked, input.fileId, input.contentRevision);
-
+				const file = this.requireCurrentContent(
+					locked,
+					input.fileId,
+					input.contentRevision,
+				);
+				const lockedEntry = locked.entries.get(file.id);
+				if (!lockedEntry) {
+					throw new HttpError(
+						409,
+						"content_changed",
+						"The file is no longer available for staging",
+					);
+				}
+				let originalIndex: Uint8Array | null = null;
 				try {
 					const indexMetadata = await stat(this.indexPath);
-					await copyFile(this.indexPath, temporaryIndex);
-					// copyFile gives the temporary index a new timestamp, which can hide
+					originalIndex = Uint8Array.from(await readFile(this.indexPath));
+					await writeFile(temporaryIndex, originalIndex, {
+						flag: "wx",
+						mode: 0o600,
+					});
+					// Writing gives the temporary index a new timestamp, which can hide
 					// same-size working-tree edits from Git's racy-clean detection.
 					await utimes(
 						temporaryIndex,
@@ -688,6 +729,10 @@ export class GitRepository {
 						temporaryIndex,
 						file.path,
 						file.kind === "deleted",
+						locked.files.flatMap((candidate) => [
+							candidate.path,
+							...(candidate.previousPath ? [candidate.previousPath] : []),
+						]),
 					);
 					if (
 						file.kind === "renamed" &&
@@ -728,16 +773,34 @@ export class GitRepository {
 					);
 				}
 
-				const unchanged = await this.getSnapshot(true);
-				const unchangedFile = this.requireFile(unchanged, input.fileId);
-				if (
-					unchanged.operationRevision !== input.operationRevision ||
-					unchangedFile.contentRevision !== input.contentRevision
-				) {
+				const currentBaseEntries = await this.readBaseEntries(
+					[lockedEntry],
+					locked.repository.head,
+				);
+				const currentContentRevision = await this.contentRevision(
+					lockedEntry,
+					locked.repository.head,
+					currentBaseEntries.get(basePathForEntry(lockedEntry)) ?? "",
+					false,
+				);
+				if (currentContentRevision !== input.contentRevision) {
+					throw new HttpError(
+						409,
+						"content_changed",
+						"The file changed while it was being staged; refresh first",
+					);
+				}
+				const currentIndex = await readFile(this.indexPath)
+					.then((bytes) => Uint8Array.from(bytes))
+					.catch((error) => {
+						if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+						throw error;
+					});
+				if (!bytesEqual(originalIndex, currentIndex)) {
 					throw new HttpError(
 						409,
 						"operation_changed",
-						"Project changes changed while staging; refresh first",
+						"The Git index changed while staging; refresh first",
 					);
 				}
 
@@ -755,6 +818,7 @@ export class GitRepository {
 					file:
 						after.files.find((candidate) => candidate.id === input.fileId) ??
 						null,
+					changes: changeFileDelta(locked.files, after.files),
 					operationRevision: after.operationRevision,
 				};
 			} finally {
@@ -1216,6 +1280,40 @@ export class GitRepository {
 		return { indexResult, parsed };
 	}
 
+	private async readBaseEntries(
+		entries: readonly ParsedStatusEntry[],
+		head: string | null,
+	): Promise<Map<string, string>> {
+		const baseEntries = new Map<string, string>();
+		if (!head) return baseEntries;
+		const paths = [
+			...new Set(entries.map((entry) => basePathForEntry(entry))),
+		];
+		const pathsByDepth = new Map<number, string[]>();
+		for (const filePath of paths) {
+			const depth = filePath.split("/").length;
+			pathsByDepth.set(depth, [...(pathsByDepth.get(depth) ?? []), filePath]);
+		}
+		for (const sameDepthPaths of pathsByDepth.values()) {
+			for (let offset = 0; offset < sameDepthPaths.length; offset += 256) {
+				const result = await runGit(this.root, [
+					"ls-tree",
+					"-z",
+					head,
+					"--",
+					...sameDepthPaths.slice(offset, offset + 256),
+				]);
+				for (const record of decodeGitOutput(result.stdout).split("\0")) {
+					if (!record) continue;
+					const separator = record.indexOf("\t");
+					if (separator < 0) continue;
+					baseEntries.set(record.slice(separator + 1), `${record}\0`);
+				}
+			}
+		}
+		return baseEntries;
+	}
+
 	private async buildSnapshot(): Promise<Snapshot> {
 		let { indexResult, parsed } = await this.readValidatedSnapshotInputs();
 
@@ -1232,6 +1330,7 @@ export class GitRepository {
 				if (parsed.entries.length > 0) break;
 			}
 		}
+		const baseEntries = await this.readBaseEntries(parsed.entries, parsed.head);
 		const state = await this.store.snapshot();
 		const reviews = new Map(
 			state.reviews.map((review) => [review.fileId, review]),
@@ -1247,7 +1346,11 @@ export class GitRepository {
 		const files = await Promise.all(
 			parsed.entries.map(async (entry): Promise<ChangeFile> => {
 				const id = sha256(this.id, "\0", entry.path).slice(0, 24);
-				const contentRevision = await this.contentRevision(entry, parsed.head);
+				const contentRevision = await this.contentRevision(
+					entry,
+					parsed.head,
+					baseEntries.get(basePathForEntry(entry)) ?? "",
+				);
 				const review = reviews.get(id);
 				return {
 					id,
@@ -1263,6 +1366,14 @@ export class GitRepository {
 				};
 			}),
 		);
+		const activeRevisionKeys = new Set(
+			parsed.entries.map((entry) =>
+				this.contentRevisionCacheKey(entry, parsed.head)
+			),
+		);
+		for (const key of this.contentRevisionCache.keys()) {
+			if (!activeRevisionKeys.has(key)) this.contentRevisionCache.delete(key);
+		}
 		files.sort((left, right) =>
 			left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
 		);
@@ -1328,26 +1439,14 @@ export class GitRepository {
 	private async contentRevision(
 		entry: ParsedStatusEntry,
 		head: string | null,
+		baseEntry: string,
+		useCache = true,
 	): Promise<string> {
 		const relativePath = entry.path;
 		const absolutePath = this.resolveProjectPath(relativePath);
+		const cacheKey = this.contentRevisionCacheKey(entry, head);
 		const hash = createHash("sha256");
-		const basePath =
-			entry.kind === "renamed" && entry.previousPath
-				? entry.previousPath
-				: relativePath;
-		if (head) {
-			const baseEntry = await runGit(this.root, [
-				"ls-tree",
-				"-z",
-				head,
-				"--",
-				basePath,
-			]);
-			hash.update(baseEntry.stdout);
-		} else {
-			hash.update("unborn");
-		}
+		hash.update(head ? baseEntry : "unborn");
 		hash.update("\0");
 		hash.update(relativePath);
 		hash.update("\0");
@@ -1364,6 +1463,23 @@ export class GitRepository {
 						? "160000"
 						: "special";
 			hash.update(`\0${gitMode}\0`);
+			const cacheSignature = [
+				head ?? "unborn",
+				baseEntry,
+				gitMode,
+				metadata.dev,
+				metadata.ino,
+				metadata.size,
+				metadata.mtimeMs,
+				metadata.ctimeMs,
+			].join("\0");
+			if (
+				useCache &&
+				!metadata.isDirectory() &&
+				this.contentRevisionCache.get(cacheKey)?.signature === cacheSignature
+			) {
+				return this.contentRevisionCache.get(cacheKey)!.revision;
+			}
 			if (metadata.isSymbolicLink()) {
 				hash.update("symlink\0");
 				hash.update(await readlink(absolutePath));
@@ -1400,6 +1516,14 @@ export class GitRepository {
 			} else {
 				hash.update("special");
 			}
+			const revision = hash.digest("hex");
+			if (!metadata.isDirectory()) {
+				this.contentRevisionCache.set(cacheKey, {
+					signature: cacheSignature,
+					revision,
+				});
+			}
+			return revision;
 		} catch (error) {
 			if (
 				!["ENOENT", "ENOTDIR"].includes(
@@ -1409,14 +1533,31 @@ export class GitRepository {
 				throw error;
 			}
 			hash.update("\0deleted");
+			const signature = `${head ?? "unborn"}\0${baseEntry}\0deleted`;
+			const cached = this.contentRevisionCache.get(cacheKey);
+			if (useCache && cached?.signature === signature) return cached.revision;
+			const revision = hash.digest("hex");
+			this.contentRevisionCache.set(cacheKey, { signature, revision });
+			return revision;
 		}
-		return hash.digest("hex");
+	}
+
+	private contentRevisionCacheKey(
+		entry: ParsedStatusEntry,
+		head: string | null,
+	): string {
+		return [
+			head ?? "unborn",
+			entry.path,
+			entry.previousPath ?? "",
+		].join("\0");
 	}
 
 	private async stageExactPath(
 		indexPath: string,
 		relativePath: string,
 		forceRemove = false,
+		candidateConflictPaths: readonly string[] = [],
 	): Promise<void> {
 		const absolutePath = this.resolveProjectPath(relativePath);
 		if (forceRemove) {
@@ -1501,7 +1642,11 @@ export class GitRepository {
 				"This filesystem entry cannot be staged",
 			);
 		}
-		await this.removeIndexPathConflicts(indexPath, relativePath);
+		await this.removeIndexPathConflicts(
+			indexPath,
+			relativePath,
+			candidateConflictPaths,
+		);
 		await runGit(
 			this.root,
 			["update-index", "--add", "--cacheinfo", mode, objectId, relativePath],
@@ -1536,15 +1681,12 @@ export class GitRepository {
 	private async removeIndexPathConflicts(
 		indexPath: string,
 		relativePath: string,
+		candidatePaths: readonly string[],
 	): Promise<void> {
-		const result = await runGit(this.root, ["ls-files", "--cached", "-z"], {
-			env: { GIT_INDEX_FILE: indexPath },
-		});
 		const descendantPrefix = `${relativePath}/`;
 		const conflicts = [
 			...new Set(
-				decodeGitOutput(result.stdout)
-					.split("\0")
+				candidatePaths
 					.filter(
 						(trackedPath) =>
 							trackedPath &&

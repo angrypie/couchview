@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type {
+  FileDiff,
+  PackageRunSummary,
+  ReviewComment,
+} from "../shared/contracts.ts";
 
 mock.module("virtual:pwa-register/react", () => ({
   useRegisterSW: () => ({
@@ -202,6 +206,31 @@ const repositoryCatalog = [repository, alternateRepository].map((item) => ({
   addedAt: "2026-07-20T10:00:00.000Z",
 }));
 
+const packageScriptsFixture = {
+  packages: [
+    {
+      packagePath: "package.json",
+      directory: ".",
+      name: "fixture-root",
+      manifestRevision: "root-package-revision",
+      runner: "bun" as const,
+      scripts: [
+        { name: "test", command: "bun test" },
+        { name: "dev", command: "vite" },
+      ],
+    },
+    {
+      packagePath: "apps/web/package.json",
+      directory: "apps/web",
+      name: "@fixture/web",
+      manifestRevision: "web-package-revision",
+      runner: "pnpm" as const,
+      scripts: [{ name: "build", command: "vite build" }],
+    },
+  ],
+  warnings: [],
+};
+
 const initialFiles = [
   {
     id: "first",
@@ -360,23 +389,37 @@ describe("Couch Review app", () => {
   let files = structuredClone(initialFiles);
   let comments: Array<Record<string, unknown>> = [];
   let reviews: Array<Record<string, unknown>> = [];
+  let packageRuns: PackageRunSummary[] = [];
   let requests: Array<{ path: string; method: string; body: unknown }> = [];
   let catalog = structuredClone(repositoryCatalog);
   let servedFirstDiff: FileDiff = structuredClone(firstDiff);
   let currentOperationRevision = "operation-1";
   let diffFailure = false;
   let stageFailure = false;
+  let delayNextDiffResponse = false;
+  let releaseDiffResponse: (() => void) | null = null;
+  let delayStageResponse = false;
+  let releaseStageResponse: (() => void) | null = null;
+  let emitSseDuringStage = false;
+  let removeActiveFileOnStage = false;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
     comments = [];
     reviews = [];
+    packageRuns = [];
     requests = [];
     catalog = structuredClone(repositoryCatalog);
     servedFirstDiff = structuredClone(firstDiff);
     currentOperationRevision = "operation-1";
     diffFailure = false;
     stageFailure = false;
+    delayNextDiffResponse = false;
+    releaseDiffResponse = null;
+    delayStageResponse = false;
+    releaseStageResponse = null;
+    emitSseDuringStage = false;
+    removeActiveFileOnStage = false;
     EventSourceStub.instances.length = 0;
     viewerCommentJumps.length = 0;
     viewerHunkJumps.length = 0;
@@ -444,6 +487,50 @@ describe("Couch Review app", () => {
         catalog = catalog.filter((entry) => entry.id !== requestedRepositoryId);
         return Response.json({ deletedId: requestedRepositoryId });
       }
+      if (nestedPath === "package-scripts" && method === "GET") {
+        return Response.json(packageScriptsFixture);
+      }
+      if (nestedPath === "package-runs" && method === "GET") {
+        return Response.json({ runs: packageRuns });
+      }
+      if (nestedPath === "package-runs" && method === "POST") {
+        const input = body as {
+          packagePath: string;
+          scriptName: string;
+        };
+        const packageEntry = packageScriptsFixture.packages.find(
+          (item) => item.packagePath === input.packagePath,
+        )!;
+        const script = packageEntry.scripts.find(
+          (item) => item.name === input.scriptName,
+        )!;
+        const run: PackageRunSummary = {
+          id: `package-run-${packageRuns.length + 1}`,
+          repositoryId: requestedRepositoryId!,
+          packagePath: packageEntry.packagePath,
+          packageName: packageEntry.name,
+          directory: packageEntry.directory,
+          scriptName: script.name,
+          command: script.command,
+          runner: packageEntry.runner,
+          invocation: `${packageEntry.runner} run ${script.name}`,
+          status: "running",
+          exitCode: null,
+          startedAt: "2026-07-23T10:00:00.000Z",
+          finishedAt: null,
+          outputTruncated: false,
+        };
+        packageRuns = [run, ...packageRuns];
+        return Response.json({ run }, { status: 201 });
+      }
+      const packageRunStopRoute = /^package-runs\/([^/]+)\/stop$/.exec(nestedPath);
+      if (packageRunStopRoute && method === "POST") {
+        const run = packageRuns.find(
+          (item) => item.id === decodeURIComponent(packageRunStopRoute[1]!),
+        )!;
+        run.status = "stopping";
+        return Response.json({ run });
+      }
       if (nestedPath === "files") {
         return Response.json({
           repository: requestedRepository,
@@ -475,6 +562,12 @@ describe("Couch Review app", () => {
             },
             { status: 503 },
           );
+        }
+        if (delayNextDiffResponse) {
+          delayNextDiffResponse = false;
+          await new Promise<void>((resolve) => {
+            releaseDiffResponse = resolve;
+          });
         }
         return Response.json({ diff: servedFirstDiff });
       }
@@ -546,7 +639,37 @@ describe("Couch Review app", () => {
         files[0]!.indexStatus = staged ? "M" : ".";
         files[0]!.worktreeStatus = staged ? "." : "M";
         currentOperationRevision = `operation-${staged ? 2 : 3}`;
-        return Response.json({ file: files[0], operationRevision: currentOperationRevision });
+        const removedFileId = removeActiveFileOnStage ? files[0]!.id : null;
+        const responseFile = removedFileId ? null : files[0]!;
+        if (removedFileId) files = files.slice(1);
+        if (emitSseDuringStage) {
+          EventSourceStub.instances.at(-1)?.onmessage?.(
+            new MessageEvent("message", {
+              data: JSON.stringify({
+                type: "changes",
+                repositoryId: "repo",
+                operationRevision: currentOperationRevision,
+                stateRevision: 0,
+                catalogRevision: 1,
+                at: "2026-07-22T10:00:00.000Z",
+              }),
+            }),
+          );
+        }
+        if (delayStageResponse) {
+          await new Promise<void>((resolve) => {
+            releaseStageResponse = resolve;
+          });
+        }
+        return Response.json({
+          file: responseFile,
+          changes: {
+            upserted: responseFile ? [responseFile] : [],
+            removedFileIds: removedFileId ? [removedFileId] : [],
+            orderedFileIds: files.map((file) => file.id),
+          },
+          operationRevision: currentOperationRevision,
+        });
       }
       if (nestedPath === "commit" && method === "POST") {
         files = files.filter((file) => !file.staged || file.unstaged);
@@ -660,6 +783,155 @@ describe("Couch Review app", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(diffRequestCount()).toBe(initialDiffRequests);
+  });
+
+  test("stages optimistically without refreshing files or reloading an unchanged diff", async () => {
+    delayStageResponse = true;
+    emitSseDuringStage = true;
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+    const fileRequestCount = () =>
+      requests.filter(
+        (request) =>
+          request.path === "/api/repositories/repo/files" &&
+          request.method === "GET",
+      ).length;
+    const diffRequestCount = () =>
+      requests.filter(
+        (request) => request.path === "/api/repositories/repo/files/first/diff",
+      ).length;
+    const initialFileRequests = fileRequestCount();
+    const initialDiffRequests = diffRequestCount();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+    await waitFor(() => expect(releaseStageResponse).not.toBeNull());
+
+    expect(screen.getByRole("button", { name: "Unstage current file" })).toBeTruthy();
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+    expect(screen.queryByText("Loading diff…")).toBeNull();
+    expect(fileRequestCount()).toBe(initialFileRequests);
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+
+    await act(async () => {
+      releaseStageResponse?.();
+      await Promise.resolve();
+    });
+
+    await screen.findByText("File staged");
+    expect(fileRequestCount()).toBe(initialFileRequests);
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+  });
+
+  test("selects the next file when an authoritative stage delta removes the active file", async () => {
+    files[0] = {
+      ...files[0]!,
+      indexStatus: "A",
+      worktreeStatus: "D",
+      staged: true,
+      unstaged: true,
+    };
+    removeActiveFileOnStage = true;
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
+
+    await screen.findByText("src/second.ts");
+    await waitFor(() =>
+      expect(screen.getByTestId("pierre-code-view").textContent).toContain(
+        "export const second = true;",
+      ),
+    );
+  });
+
+  test("applies external staging metadata without reloading unchanged diff content", async () => {
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+    const stream = EventSourceStub.instances[0];
+    if (!stream?.onmessage) throw new Error("event stream was not connected");
+    const diffRequestCount = () =>
+      requests.filter(
+        (request) => request.path === "/api/repositories/repo/files/first/diff",
+      ).length;
+    const initialDiffRequests = diffRequestCount();
+    files[0] = {
+      ...files[0]!,
+      indexStatus: "M",
+      worktreeStatus: ".",
+      staged: true,
+      unstaged: false,
+    };
+    currentOperationRevision = "operation-external-stage";
+
+    await act(async () => {
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "changes",
+            repositoryId: "repo",
+            operationRevision: currentOperationRevision,
+            stateRevision: 0,
+            catalogRevision: 1,
+            at: "2026-07-22T10:00:00.000Z",
+          }),
+        }),
+      );
+    });
+
+    await screen.findByRole("button", { name: "Unstage current file" });
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+  });
+
+  test("keeps the current diff mounted during a real background diff refresh", async () => {
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+    const stream = EventSourceStub.instances[0];
+    if (!stream?.onmessage) throw new Error("event stream was not connected");
+    files[0] = {
+      ...files[0]!,
+      contentRevision: "first-v2",
+    };
+    servedFirstDiff = {
+      ...servedFirstDiff,
+      contentRevision: "first-v2",
+      operationRevision: "operation-content-change",
+    };
+    currentOperationRevision = "operation-content-change";
+    delayNextDiffResponse = true;
+
+    await act(async () => {
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "changes",
+            repositoryId: "repo",
+            operationRevision: currentOperationRevision,
+            stateRevision: 0,
+            catalogRevision: 1,
+            at: "2026-07-22T10:00:00.000Z",
+          }),
+        }),
+      );
+    });
+    await screen.findByText("Refreshing diff…");
+
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+    expect(screen.queryByText("Loading diff…")).toBeNull();
+
+    await act(async () => {
+      releaseDiffResponse?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.queryByText("Refreshing diff…")).toBeNull());
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
   });
 
   test("switches repositories through the picker and follows URL history", async () => {
@@ -877,6 +1149,108 @@ describe("Couch Review app", () => {
       },
     });
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
+  });
+
+  test("groups package scripts by subproject and streams a completed run", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Commands/ }),
+    );
+    expect(await screen.findByText("fixture-root")).toBeTruthy();
+    expect(screen.getByText("@fixture/web")).toBeTruthy();
+    expect(screen.getByText("vite build")).toBeTruthy();
+    expect(screen.getByText(/Package scripts run on this computer/)).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Run build in apps/web" }),
+    );
+    const output = await screen.findByRole("dialog", {
+      name: "Package command output",
+    });
+    expect(
+      requests.find(
+        (request) =>
+          request.path === "/api/repositories/repo/package-runs" &&
+          request.method === "POST",
+      ),
+    ).toMatchObject({
+      body: {
+        packagePath: "apps/web/package.json",
+        scriptName: "build",
+        manifestRevision: "web-package-revision",
+      },
+    });
+    await waitFor(() => expect(EventSourceStub.instances.length).toBeGreaterThan(1));
+    const stream = EventSourceStub.instances.at(-1)!;
+    const running = packageRuns[0]!;
+    await act(async () => {
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "snapshot",
+            snapshot: {
+              run: running,
+              output: [
+                { sequence: 1, stream: "stdout", text: "building web\n" },
+              ],
+            },
+          }),
+        }),
+      );
+      stream.onmessage?.(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "status",
+            run: {
+              ...running,
+              status: "succeeded",
+              exitCode: 0,
+              finishedAt: "2026-07-23T10:00:02.000Z",
+            },
+          }),
+        }),
+      );
+    });
+
+    expect(within(output).getByText("building web")).toBeTruthy();
+    expect(within(output).getByText("Passed")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Package command output" }),
+      ).toBeNull()
+    );
+    expect(
+      requests.some((request) => request.path.endsWith("/stop")),
+    ).toBe(false);
+  });
+
+  test("stops a running package script from its output sheet", async () => {
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Commands/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run dev in ." }));
+    const output = await screen.findByRole("dialog", {
+      name: "Package command output",
+    });
+    fireEvent.click(within(output).getByRole("button", { name: "Stop" }));
+
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (request) =>
+            request.path ===
+              "/api/repositories/repo/package-runs/package-run-1/stop" &&
+            request.method === "POST",
+        ),
+      ).toBe(true)
+    );
+    expect(await within(output).findByText("Stopping")).toBeTruthy();
   });
 
   test("hides line numbers by default and remembers the 123 toggle", async () => {

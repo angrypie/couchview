@@ -9,6 +9,9 @@ import {
 	type CreateCommentRequest,
 	CSRF_HEADER,
 	type DiffResponse,
+	type PackageRunEvent,
+	type PackageRunSummary,
+	type PackageScriptsResponse,
 	type ReviewComment,
 	type ReviewRecord,
 	type ReviewStateResponse,
@@ -22,6 +25,7 @@ const port = Number(process.env.E2E_PORT || 4174);
 const distRoot = resolve(import.meta.dir, "..", "dist");
 const csrfToken = "e2e-csrf-token";
 let operationRevision = "fixture-operation-1";
+let packageRuns: PackageRunSummary[] = [];
 
 const repository = {
 	id: "fixture-repository",
@@ -39,6 +43,31 @@ const alternateRepository = {
 	branch: "main",
 	head: "fedcba9876543210fedcba9876543210fedcba98",
 	unborn: false,
+};
+
+const packageScripts: PackageScriptsResponse = {
+	packages: [
+		{
+			packagePath: "package.json",
+			directory: ".",
+			name: "sample-project",
+			manifestRevision: "fixture-root-package",
+			runner: "bun",
+			scripts: [
+				{ name: "test", command: "bun test src" },
+				{ name: "dev", command: "bun run scripts/dev.ts" },
+			],
+		},
+		{
+			packagePath: "apps/mobile/package.json",
+			directory: "apps/mobile",
+			name: "@sample/mobile",
+			manifestRevision: "fixture-mobile-package",
+			runner: "pnpm",
+			scripts: [{ name: "build", command: "expo export" }],
+		},
+	],
+	warnings: [],
 };
 
 const repositoryCatalog: RepositoryCatalogEntry[] = [repository, alternateRepository].map(
@@ -397,6 +426,8 @@ const server = Bun.serve({
 			nestedPath,
 		);
 		const commentRoute = /^comments\/([^/]+)$/.exec(nestedPath);
+		const packageRunRoute =
+			/^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath);
 
 		if (url.pathname === "/api/bootstrap" && request.method === "GET") {
 			return json({
@@ -438,6 +469,14 @@ const server = Bun.serve({
 
 		if (nestedPath === "comments" && request.method === "GET") {
 			return json({ reviews, comments } satisfies ReviewStateResponse);
+		}
+
+		if (nestedPath === "package-scripts" && request.method === "GET") {
+			return json(packageScripts);
+		}
+
+		if (nestedPath === "package-runs" && request.method === "GET") {
+			return json({ runs: packageRuns });
 		}
 
 		if (nestedPath === "search" && request.method === "GET") {
@@ -504,6 +543,54 @@ const server = Bun.serve({
 			});
 		}
 
+		if (packageRunRoute?.[2] === "events" && request.method === "GET") {
+			const run = packageRuns.find(
+				(candidate) =>
+					candidate.id === decodeURIComponent(packageRunRoute[1] || ""),
+			);
+			if (!run) {
+				return json(
+					{
+						error: {
+							code: "package_run_not_found",
+							message: "Fixture package run not found",
+						},
+					},
+					404,
+				);
+			}
+			const event: PackageRunEvent = {
+				type: "snapshot",
+				snapshot: {
+					run,
+					output: [
+						{
+							sequence: 1,
+							stream: "stdout",
+							text: `fixture output: ${run.invocation}\n`,
+						},
+					],
+				},
+			};
+			const body = new ReadableStream({
+				start(controller) {
+					controller.enqueue(
+						new TextEncoder().encode(
+							`data: ${JSON.stringify(event)}\n\n`,
+						),
+					);
+				},
+			});
+			return new Response(body, {
+				headers: {
+					...securityHeaders,
+					"Cache-Control": "no-cache, no-store, no-transform",
+					"Content-Type": "text/event-stream",
+					"X-Accel-Buffering": "no",
+				},
+			});
+		}
+
 		if (url.pathname.startsWith("/api/") && request.method !== "GET") {
 			const csrfError = requireCsrf(request);
 			if (csrfError) return csrfError;
@@ -513,8 +600,75 @@ const server = Bun.serve({
 			files.splice(0, files.length, ...structuredClone(initialFiles));
 			reviews.splice(0);
 			comments.splice(0);
+			packageRuns = [];
 			operationRevision = "fixture-operation-1";
 			return json({ reset: true });
+		}
+
+		if (nestedPath === "package-runs" && request.method === "POST") {
+			const input = (await request.json()) as {
+				packagePath: string;
+				scriptName: string;
+				manifestRevision: string;
+			};
+			const packageEntry = packageScripts.packages.find(
+				(candidate) => candidate.packagePath === input.packagePath,
+			);
+			const script = packageEntry?.scripts.find(
+				(candidate) => candidate.name === input.scriptName,
+			);
+			if (
+				!packageEntry ||
+				!script ||
+				packageEntry.manifestRevision !== input.manifestRevision
+			) {
+				return json(
+					{
+						error: {
+							code: "package_scripts_changed",
+							message: "Fixture package scripts changed",
+						},
+					},
+					409,
+				);
+			}
+			const now = new Date();
+			const run: PackageRunSummary = {
+				id: `fixture-package-run-${packageRuns.length + 1}`,
+				repositoryId: repositoryId!,
+				packagePath: packageEntry.packagePath,
+				packageName: packageEntry.name,
+				directory: packageEntry.directory,
+				scriptName: script.name,
+				command: script.command,
+				runner: packageEntry.runner,
+				invocation: `${packageEntry.runner} run ${script.name}`,
+				status: "succeeded",
+				exitCode: 0,
+				startedAt: now.toISOString(),
+				finishedAt: new Date(now.getTime() + 350).toISOString(),
+				outputTruncated: false,
+			};
+			packageRuns = [run, ...packageRuns];
+			return json({ run }, 201);
+		}
+
+		if (packageRunRoute?.[2] === "stop" && request.method === "POST") {
+			const run = packageRuns.find(
+				(candidate) =>
+					candidate.id === decodeURIComponent(packageRunRoute[1] || ""),
+			);
+			return run
+				? json({ run })
+				: json(
+						{
+							error: {
+								code: "package_run_not_found",
+								message: "Fixture package run not found",
+							},
+						},
+						404,
+					);
 		}
 
 		if (fileRoute?.[2] === "review" && request.method === "PUT") {
@@ -555,7 +709,15 @@ const server = Bun.serve({
 			file.indexStatus = staged ? (file.kind === "added" ? "A" : "M") : ".";
 			file.worktreeStatus = staged ? "." : file.kind === "added" ? "?" : "M";
 			operationRevision = `fixture-operation-${Date.now()}`;
-			return json({ file, operationRevision });
+			return json({
+				file,
+				changes: {
+					upserted: [file],
+					removedFileIds: [],
+					orderedFileIds: files.map((candidate) => candidate.id),
+				},
+				operationRevision,
+			});
 		}
 
 		if (nestedPath === "commit" && request.method === "POST") {

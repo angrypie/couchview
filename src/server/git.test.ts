@@ -262,6 +262,12 @@ describe("GitRepository", () => {
       });
       expect(staged.file).toMatchObject({ staged: true, unstaged: false, reviewed: true, commentCount: 1 });
       expect(staged.file?.contentRevision).toBe(file.contentRevision);
+      if (!staged.file) throw new Error("staged fixture disappeared");
+      expect(staged.changes).toEqual({
+        upserted: [staged.file],
+        removedFileIds: [],
+        orderedFileIds: before.files.map((candidate) => candidate.id),
+      });
 
       const unstaged = await repository.stage({
         fileId: file.id,
@@ -276,6 +282,12 @@ describe("GitRepository", () => {
         commentCount: 1,
       });
       expect(unstaged.file?.contentRevision).toBe(file.contentRevision);
+      if (!unstaged.file) throw new Error("unstaged fixture disappeared");
+      expect(unstaged.changes).toEqual({
+        upserted: [unstaged.file],
+        removedFileIds: [],
+        orderedFileIds: before.files.map((candidate) => candidate.id),
+      });
     } finally {
       repository.close();
     }
@@ -305,6 +317,37 @@ describe("GitRepository", () => {
       expect(await readFile(path.join(directory, "tracked.ts"), "utf8")).toBe(
         "export const value = 2;\n",
       );
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("returns a removal delta when staging eliminates the change", async () => {
+    const directory = await committedRepository({ "base.ts": "export {};\n" });
+    await writeFile(path.join(directory, "temporary.ts"), "export const value = 1;\n");
+    git(directory, ["add", "--", "temporary.ts"]);
+    await rm(path.join(directory, "temporary.ts"));
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      const file = before.files.find((candidate) => candidate.path === "temporary.ts");
+      expect(file).toMatchObject({ staged: true, unstaged: true });
+      if (!file) throw new Error("temporary fixture missing");
+
+      const result = await repository.stage({
+        fileId: file.id,
+        operationRevision: before.operationRevision,
+        contentRevision: file.contentRevision,
+      });
+
+      expect(result.file).toBeNull();
+      expect(result.changes).toEqual({
+        upserted: [],
+        removedFileIds: [file.id],
+        orderedFileIds: [],
+      });
+      expect((await repository.changes()).files).toEqual([]);
     } finally {
       repository.close();
     }
@@ -854,11 +897,13 @@ describe("GitRepository", () => {
         const current = await repository.changes();
         const file = current.files.find((candidate) => candidate.path === pathName);
         if (!file) throw new Error(`stage fixture missing: ${pathName}`);
-        await repository.stage({
+        const staged = await repository.stage({
           fileId: file.id,
           operationRevision: current.operationRevision,
           contentRevision: file.contentRevision,
         });
+        if (!staged.file) throw new Error(`staged fixture disappeared: ${pathName}`);
+        expect(staged.changes.upserted).toContainEqual(staged.file);
       };
       for (const pathName of [
         "delete.txt",

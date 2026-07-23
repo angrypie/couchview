@@ -16,17 +16,23 @@ import {
   type DeleteCommentRequest,
   type ForgetRepositoryResponse,
   type InstanceResponse,
+  type PackageRunEvent,
+  type PackageRunResponse,
+  type PackageRunsResponse,
+  type PackageScriptsResponse,
   type RegisterRepositoryRequest,
   type RegisterRepositoryResponse,
   type ServerEvent,
   type ServerEventType,
   type SetReviewRequest,
+  type StartPackageRunRequest,
   type StageFileRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git.ts";
+import { PackageCommandService } from "./packageCommands.ts";
 import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
 
@@ -51,6 +57,7 @@ export interface CouchReviewAppOptions {
 export interface CouchReviewApp {
   repository: GitRepository;
   repositories: RepositoryManager;
+  packageCommands: PackageCommandService;
   database: StateDatabase;
   csrfToken: string;
   controlToken: string;
@@ -353,6 +360,7 @@ export async function createCouchReviewApp(
 
   const database = await StateDatabase.open(options.stateDatabasePath);
   const repositories = new RepositoryManager(database);
+  const packageCommands = new PackageCommandService();
   let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
   let initialBackend: GitRepository;
   try {
@@ -569,6 +577,7 @@ export async function createCouchReviewApp(
     const nestedPath = repositoryRoute[2] ?? "";
 
     if (!nestedPath && request.method === "DELETE") {
+      packageCommands.stopRepository(repositoryId);
       repositories.forget(repositoryId);
       if (defaultRepositoryId === repositoryId) {
         defaultRepositoryId = (await repositories.list()).find((item) => item.available)?.id ?? null;
@@ -581,6 +590,9 @@ export async function createCouchReviewApp(
     const repository = await repositories.get(repositoryId);
     const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath);
     const commentRoute = /^comments\/([^/]+)$/.exec(nestedPath);
+    const packageRunRoute = /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(
+      nestedPath,
+    );
 
     if (nestedPath === "files" && request.method === "GET") {
       return json(await repository.changes());
@@ -620,6 +632,95 @@ export async function createCouchReviewApp(
       const result = await repository.commit(input);
       await emitRepository(repositoryId, "changes", result.operationRevision);
       return json(result, { status: 201 });
+    }
+    if (nestedPath === "package-scripts" && request.method === "GET") {
+      const response: PackageScriptsResponse = await packageCommands.discover(
+        repository.root,
+      );
+      return json(response);
+    }
+    if (nestedPath === "package-runs" && request.method === "GET") {
+      const response: PackageRunsResponse = {
+        runs: packageCommands.runs(repositoryId),
+      };
+      return json(response);
+    }
+    if (nestedPath === "package-runs" && request.method === "POST") {
+      const input = await readJsonObject<StartPackageRunRequest>(request);
+      const response: PackageRunResponse = {
+        run: await packageCommands.start(repositoryId, repository.root, input),
+      };
+      return json(response, { status: 201 });
+    }
+    if (packageRunRoute?.[2] === "stop" && request.method === "POST") {
+      const runId = decodeSegment(packageRunRoute[1] ?? "");
+      const response: PackageRunResponse = {
+        run: packageCommands.stop(repositoryId, runId),
+      };
+      return json(response);
+    }
+    if (packageRunRoute?.[2] === "events" && request.method === "GET") {
+      const runId = decodeSegment(packageRunRoute[1] ?? "");
+      let cleanup: () => void = () => undefined;
+      let keepAlive: ReturnType<typeof setInterval> | null = null;
+      let closed = false;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const send = (event: PackageRunEvent): void => {
+            if (closed) return;
+            try {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify(event)}\n\n`,
+                ),
+              );
+            } catch {
+              closed = true;
+              cleanup();
+              if (keepAlive) clearInterval(keepAlive);
+            }
+          };
+          const subscription = packageCommands.subscribe(
+            repositoryId,
+            runId,
+            send,
+          );
+          cleanup = subscription.unsubscribe;
+          send({ type: "snapshot", snapshot: subscription.snapshot });
+          keepAlive = setInterval(() => {
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(": keep-alive\n\n"));
+            } catch {
+              closed = true;
+              cleanup();
+              if (keepAlive) clearInterval(keepAlive);
+            }
+          }, 5_000);
+        },
+        cancel() {
+          closed = true;
+          cleanup();
+          if (keepAlive) clearInterval(keepAlive);
+        },
+      });
+      request.signal.addEventListener(
+        "abort",
+        () => {
+          closed = true;
+          cleanup();
+          if (keepAlive) clearInterval(keepAlive);
+        },
+        { once: true },
+      );
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      });
     }
     if (nestedPath === "comments" && request.method === "GET") {
       return json(await repository.reviewState());
@@ -776,6 +877,7 @@ export async function createCouchReviewApp(
   const app: CouchReviewApp = {
     repository: initialBackend,
     repositories,
+    packageCommands,
     database,
     csrfToken,
     controlToken,
@@ -848,6 +950,7 @@ export async function createCouchReviewApp(
       }
       streams.clear();
       database.removeServerInstance(instanceId);
+      packageCommands.close();
       repositories.close();
       database.close();
     },

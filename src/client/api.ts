@@ -15,12 +15,16 @@ import {
   type ReviewStateResponse,
   type RepositoryCatalogResponse,
   type ForgetRepositoryResponse,
+  type PackageRunResponse,
+  type PackageRunsResponse,
+  type PackageScriptsResponse,
   type SearchResponse,
   type SetReviewRequest,
   type SetReviewResponse,
   type SourcePreviewResponse,
   type StageFileRequest,
   type StageFileResponse,
+  type StartPackageRunRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 
@@ -122,6 +126,20 @@ export const api = {
     return request<ReviewStateResponse>(API_ROUTES.comments(repositoryId), { signal });
   },
 
+  packageScripts(repositoryId: string, signal?: AbortSignal) {
+    return request<PackageScriptsResponse>(
+      API_ROUTES.packageScripts(repositoryId),
+      { signal },
+    );
+  },
+
+  packageRuns(repositoryId: string, signal?: AbortSignal) {
+    return request<PackageRunsResponse>(
+      API_ROUTES.packageRuns(repositoryId),
+      { signal },
+    );
+  },
+
   search(repositoryId: string, query: string, currentPath: string, signal?: AbortSignal) {
     return request<SearchResponse>(
       withQuery(API_ROUTES.search(repositoryId), { q: query, currentPath }),
@@ -171,6 +189,32 @@ export const api = {
     return request<CommitResponse>(
       API_ROUTES.commit(repositoryId),
       { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  startPackageRun(
+    repositoryId: string,
+    body: StartPackageRunRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<PackageRunResponse>(
+      API_ROUTES.packageRuns(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  stopPackageRun(
+    repositoryId: string,
+    runId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<PackageRunResponse>(
+      API_ROUTES.packageRunStop(repositoryId, runId),
+      { method: "POST", body: JSON.stringify({}), signal },
       csrfToken,
     );
   },

@@ -10,6 +10,10 @@ import {
   type BootstrapResponse,
   type ChangesResponse,
   type CommitResponse,
+  type PackageRunEvent,
+  type PackageRunResponse,
+  type PackageRunsResponse,
+  type PackageScriptsResponse,
   type RegisterRepositoryResponse,
   type RepositoryCatalogResponse,
   type ReviewStateResponse,
@@ -89,7 +93,148 @@ async function nextSseEvent(
   throw new Error(`Timed out waiting for ${expectedType} SSE event`);
 }
 
+async function nextPackageRunEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<PackageRunEvent> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), deadline - Date.now())
+      ),
+    ]);
+    if (result === "timeout" || result.done) break;
+    const text = new TextDecoder().decode(result.value);
+    for (const line of text.split("\n")) {
+      if (line.startsWith("data: ")) {
+        return JSON.parse(line.slice(6)) as PackageRunEvent;
+      }
+    }
+  }
+  throw new Error("Timed out waiting for package-run SSE event");
+}
+
 describe("Couch Review HTTP security and routes", () => {
+  test("discovers and runs package scripts through protected repository routes", async () => {
+    const app = await fixture();
+    await writeFile(
+      path.join(app.repository.root, "package.json"),
+      JSON.stringify({
+        scripts: {
+          verify: "printf 'server-route-output'",
+          dev: "sleep 30",
+        },
+      }),
+    );
+
+    const scriptsResponse = await app.fetch(
+      request(API_ROUTES.packageScripts(app.repository.id)),
+    );
+    expect(scriptsResponse.status).toBe(200);
+    const scripts = (await scriptsResponse.json()) as PackageScriptsResponse;
+    expect(scripts.packages).toHaveLength(1);
+    expect(scripts.packages[0]).toMatchObject({
+      packagePath: "package.json",
+      directory: ".",
+      runner: "bun",
+    });
+    const packageEntry = scripts.packages[0]!;
+    const startBody = JSON.stringify({
+      packagePath: packageEntry.packagePath,
+      scriptName: "verify",
+      manifestRevision: packageEntry.manifestRevision,
+    });
+
+    const unprotected = await app.fetch(
+      request(API_ROUTES.packageRuns(app.repository.id), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: startBody,
+      }),
+    );
+    expect(unprotected.status).toBe(403);
+
+    const startedResponse = await app.fetch(
+      request(API_ROUTES.packageRuns(app.repository.id), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3001",
+          [CSRF_HEADER]: app.csrfToken,
+        },
+        body: startBody,
+      }),
+    );
+    expect(startedResponse.status).toBe(201);
+    const started = (await startedResponse.json()) as PackageRunResponse;
+    await Bun.sleep(80);
+
+    const eventsResponse = await app.fetch(
+      request(API_ROUTES.packageRunEvents(app.repository.id, started.run.id)),
+    );
+    expect(eventsResponse.status).toBe(200);
+    const reader = eventsResponse.body!.getReader();
+    const event = await nextPackageRunEvent(reader);
+    expect(event.type).toBe("snapshot");
+    if (event.type !== "snapshot") throw new Error("Package snapshot missing");
+    expect(
+      event.snapshot.run,
+      event.snapshot.output.map((chunk) => chunk.text).join(""),
+    ).toMatchObject({
+      id: started.run.id,
+      status: "succeeded",
+      exitCode: 0,
+    });
+    expect(event.snapshot.output.map((chunk) => chunk.text).join("")).toContain(
+      "server-route-output",
+    );
+    await reader.cancel();
+
+    const runs = (await (
+      await app.fetch(request(API_ROUTES.packageRuns(app.repository.id)))
+    ).json()) as PackageRunsResponse;
+    expect(runs.runs.map((run) => run.id)).toContain(started.run.id);
+
+    const longRunResponse = await app.fetch(
+      request(API_ROUTES.packageRuns(app.repository.id), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: "http://127.0.0.1:3001",
+          [CSRF_HEADER]: app.csrfToken,
+        },
+        body: JSON.stringify({
+          packagePath: packageEntry.packagePath,
+          scriptName: "dev",
+          manifestRevision: packageEntry.manifestRevision,
+        }),
+      }),
+    );
+    const longRun = (await longRunResponse.json()) as PackageRunResponse;
+    const stop = async () =>
+      app.fetch(
+        request(
+          API_ROUTES.packageRunStop(app.repository.id, longRun.run.id),
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: "http://127.0.0.1:3001",
+              [CSRF_HEADER]: app.csrfToken,
+            },
+            body: "{}",
+          },
+        ),
+      );
+    expect(((await (await stop()).json()) as PackageRunResponse).run.status).toBe(
+      "stopping",
+    );
+    expect(
+      ((await (await stop()).json()) as PackageRunResponse).run.status,
+    ).toMatch(/stopping|stopped/);
+  });
+
   test("bootstraps, rejects foreign origins, and protects staging and committing", async () => {
     const app = await fixture();
     const bootstrapResponse = await app.fetch(request(API_ROUTES.bootstrap));
@@ -141,6 +286,12 @@ describe("Couch Review HTTP security and routes", () => {
     expect(staged.status).toBe(200);
     expect(staged.headers.has("access-control-allow-origin")).toBe(false);
     const stagedState = (await staged.json()) as StageFileResponse;
+    if (!stagedState.file) throw new Error("staged fixture disappeared");
+    expect(stagedState.changes).toEqual({
+      upserted: [stagedState.file],
+      removedFileIds: [],
+      orderedFileIds: [stagedState.file.id],
+    });
 
     const committed = await app.fetch(
       request(API_ROUTES.commit(app.repository.id), {
