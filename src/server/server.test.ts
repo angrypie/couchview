@@ -19,6 +19,7 @@ import {
   type ReviewStateResponse,
   type ServerEvent,
   type StageFileResponse,
+  type StageFilesResponse,
 } from "../shared/contracts.ts";
 import {
   accessOriginsForHost,
@@ -311,6 +312,67 @@ describe("Couch Review HTTP security and routes", () => {
     const commit = (await committed.json()) as CommitResponse;
     expect(commit.commit).toMatch(/^[0-9a-f]{40}$/);
     expect((await app.repository.changes()).files).toHaveLength(0);
+  });
+
+  test("bulk stages an exact validated set of files", async () => {
+    const app = await fixture();
+    await writeFile(
+      path.join(app.repository.root, "second.ts"),
+      "const second = true;\n",
+      "utf8",
+    );
+    const bootstrap = (await (
+      await app.fetch(request(API_ROUTES.bootstrap))
+    ).json()) as BootstrapResponse;
+    const changes = (await (
+      await app.fetch(request(API_ROUTES.files(app.repository.id)))
+    ).json()) as ChangesResponse;
+    expect(changes.files).toHaveLength(2);
+    const headers = {
+      "content-type": "application/json",
+      [CSRF_HEADER]: bootstrap.csrfToken,
+      origin: "http://127.0.0.1:3001",
+    };
+
+    const duplicate = await app.fetch(
+      request(API_ROUTES.fileStages(app.repository.id), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          files: [
+            {
+              fileId: changes.files[0]!.id,
+              contentRevision: changes.files[0]!.contentRevision,
+            },
+            {
+              fileId: changes.files[0]!.id,
+              contentRevision: changes.files[0]!.contentRevision,
+            },
+          ],
+          operationRevision: changes.operationRevision,
+        }),
+      }),
+    );
+    expect(duplicate.status).toBe(400);
+
+    const staged = await app.fetch(
+      request(API_ROUTES.fileStages(app.repository.id), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          files: changes.files.map((file) => ({
+            fileId: file.id,
+            contentRevision: file.contentRevision,
+          })),
+          operationRevision: changes.operationRevision,
+        }),
+      }),
+    );
+    expect(staged.status).toBe(200);
+    const result = (await staged.json()) as StageFilesResponse;
+    expect(result.files).toHaveLength(2);
+    expect(result.files.every((file) => file.staged && !file.unstaged)).toBe(true);
+    expect(result.changes.upserted).toHaveLength(2);
   });
 
   test("rejects missing origins and malformed mutation bodies with structured errors", async () => {

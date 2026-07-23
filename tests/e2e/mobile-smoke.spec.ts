@@ -307,6 +307,50 @@ test.describe("mobile fixture review", () => {
     await expect(currentFile).toContainText("src/format.ts");
   });
 
+  test("bulk stages reviewed files or the entire change set", async ({
+    page,
+  }, testInfo) => {
+    const currentFile = await openFixture(page);
+    await dismissPwaNotices(page);
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    const landscape = testInfo.project.name.includes("landscape");
+
+    await actions
+      .getByRole("button", {
+        name: landscape ? "Review current file" : "Review + next",
+      })
+      .click();
+    if (!landscape) {
+      await expect(currentFile).toContainText("src/format.ts");
+      await currentFile.getByRole("button", { name: "Previous file" }).click();
+    }
+    await expect(currentFile).toContainText("src/review.ts");
+
+    await page.getByRole("button", { name: "Open changed files" }).click();
+    const drawer = page.getByRole("complementary", { name: "Changed files" });
+    await expect(
+      drawer.getByRole("button", { name: "Stage reviewed files (1)" }),
+    ).toBeVisible();
+    await drawer
+      .getByRole("button", { name: "Stage reviewed files (1)" })
+      .click();
+    await expect(
+      page.getByText("1 reviewed file staged", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      drawer.getByRole("button", { name: "Stage reviewed files (0)" }),
+    ).toBeDisabled();
+    await expect(
+      drawer.getByRole("button", { name: "Stage all files (1)" }),
+    ).toBeEnabled();
+
+    await drawer.getByRole("button", { name: "Stage all files (1)" }).click();
+    await expect(page.getByText("1 file staged", { exact: true })).toBeVisible();
+    await expect(
+      drawer.getByRole("button", { name: "Commit 2 staged files" }),
+    ).toBeEnabled();
+  });
+
   test("runs grouped package commands and reconnects to their output", async ({
     page,
   }) => {

@@ -611,6 +611,29 @@ describe("Couch Review app", () => {
         reviews = [review];
         return Response.json({ review });
       }
+      if (nestedPath === "files/stage" && method === "POST") {
+        const targets = (
+          body as { files: Array<{ fileId: string; contentRevision: string }> }
+        ).files;
+        const targetIds = new Set(targets.map((target) => target.fileId));
+        const stagedFiles = files.filter((file) => targetIds.has(file.id));
+        for (const file of stagedFiles) {
+          file.staged = true;
+          file.unstaged = false;
+          file.indexStatus = file.kind === "added" ? "A" : "M";
+          file.worktreeStatus = ".";
+        }
+        currentOperationRevision = "operation-bulk-stage";
+        return Response.json({
+          files: stagedFiles,
+          changes: {
+            upserted: stagedFiles,
+            removedFileIds: [],
+            orderedFileIds: files.map((file) => file.id),
+          },
+          operationRevision: currentOperationRevision,
+        });
+      }
       if (nestedPath === "files/first/stage" && method === "POST") {
         if (stageFailure) {
           return Response.json(
@@ -823,6 +846,90 @@ describe("Couch Review app", () => {
     expect(fileRequestCount()).toBe(initialFileRequests);
     expect(diffRequestCount()).toBe(initialDiffRequests);
     expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+  });
+
+  test("stages only reviewed files from the changed-files drawer", async () => {
+    files[0] = { ...files[0]!, reviewed: true };
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    const diffRequestCount = () =>
+      requests.filter(
+        (request) => request.path === "/api/repositories/repo/files/first/diff",
+      ).length;
+    const initialDiffRequests = diffRequestCount();
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    const drawer = await screen.findByRole("complementary", {
+      name: "Changed files",
+    });
+    expect(
+      within(drawer).getByRole("button", { name: "Stage all files (2)" }),
+    ).toBeTruthy();
+    fireEvent.click(
+      within(drawer).getByRole("button", {
+        name: "Stage reviewed files (1)",
+      }),
+    );
+
+    await screen.findByText("1 reviewed file staged");
+    expect(
+      requests.find(
+        (request) => request.path === "/api/repositories/repo/files/stage",
+      )?.body,
+    ).toMatchObject({
+      files: [{ fileId: "first", contentRevision: "first-v1" }],
+      operationRevision: "operation-1",
+    });
+    expect(
+      within(drawer).getByRole("button", { name: "Stage all files (1)" }),
+    ).toBeTruthy();
+    expect(
+      (
+        within(drawer).getByRole("button", {
+          name: "Stage reviewed files (0)",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    expect(diffRequestCount()).toBe(initialDiffRequests);
+    expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+  });
+
+  test("stages every changed file from the drawer in one request", async () => {
+    render(<App />);
+
+    await screen.findByTestId("pierre-code-view");
+    fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+    const drawer = await screen.findByRole("complementary", {
+      name: "Changed files",
+    });
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Stage all files (2)" }),
+    );
+
+    await screen.findByText("2 files staged");
+    expect(
+      requests.find(
+        (request) => request.path === "/api/repositories/repo/files/stage",
+      )?.body,
+    ).toMatchObject({
+      files: [
+        { fileId: "first", contentRevision: "first-v1" },
+        { fileId: "second", contentRevision: "second-v1" },
+      ],
+      operationRevision: "operation-1",
+    });
+    expect(
+      within(drawer).getByRole("button", {
+        name: "Commit 2 staged files",
+      }),
+    ).toBeTruthy();
+    expect(
+      (
+        within(drawer).getByRole("button", {
+          name: "Stage all files (0)",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 
   test("selects the next file when an authoritative stage delta removes the active file", async () => {

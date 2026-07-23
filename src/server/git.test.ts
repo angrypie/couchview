@@ -353,6 +353,69 @@ describe("GitRepository", () => {
     }
   });
 
+  test("stages multiple files atomically from one repository revision", async () => {
+    const directory = await committedRepository({
+      "first.ts": "export const first = 1;\n",
+      "second.ts": "export const second = 1;\n",
+    });
+    await writeFile(path.join(directory, "first.ts"), "export const first = 2;\n");
+    await writeFile(path.join(directory, "second.ts"), "export const second = 2;\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      expect(before.files).toHaveLength(2);
+      const result = await repository.stageFiles({
+        files: before.files.map((file) => ({
+          fileId: file.id,
+          contentRevision: file.contentRevision,
+        })),
+        operationRevision: before.operationRevision,
+      });
+
+      expect(result.files).toHaveLength(2);
+      expect(result.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "first.ts", staged: true, unstaged: false }),
+          expect.objectContaining({ path: "second.ts", staged: true, unstaged: false }),
+        ]),
+      );
+      expect(result.changes.upserted).toHaveLength(2);
+      expect(git(directory, ["diff", "--cached", "--name-only"]).trim().split("\n"))
+        .toEqual(["first.ts", "second.ts"]);
+    } finally {
+      repository.close();
+    }
+  });
+
+  test("does not partially bulk-stage files from a stale revision", async () => {
+    const directory = await committedRepository({
+      "first.ts": "export const first = 1;\n",
+      "second.ts": "export const second = 1;\n",
+    });
+    await writeFile(path.join(directory, "first.ts"), "export const first = 2;\n");
+    await writeFile(path.join(directory, "second.ts"), "export const second = 2;\n");
+    const repository = await GitRepository.open(directory);
+
+    try {
+      const before = await repository.changes();
+      await writeFile(path.join(directory, "second.ts"), "export const second = 3;\n");
+
+      await expect(
+        repository.stageFiles({
+          files: before.files.map((file) => ({
+            fileId: file.id,
+            contentRevision: file.contentRevision,
+          })),
+          operationRevision: before.operationRevision,
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(git(directory, ["diff", "--cached", "--name-only"])).toBe("");
+    } finally {
+      repository.close();
+    }
+  });
+
   test("returns complete file context while preserving compact review hunks", async () => {
     const original = Array.from(
       { length: 30 },

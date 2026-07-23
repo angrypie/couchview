@@ -18,6 +18,7 @@ import {
 	type RepositoryCatalogEntry,
 	type SetReviewRequest,
 	type StageFileRequest,
+	type StageFilesRequest,
 } from "../src/shared/contracts.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
@@ -713,6 +714,45 @@ const server = Bun.serve({
 				file,
 				changes: {
 					upserted: [file],
+					removedFileIds: [],
+					orderedFileIds: files.map((candidate) => candidate.id),
+				},
+				operationRevision,
+			});
+		}
+
+		if (nestedPath === "files/stage" && request.method === "POST") {
+			const body = (await request.json()) as StageFilesRequest;
+			if (body.operationRevision !== operationRevision) {
+				return json(
+					{
+						error: {
+							code: "operation_changed",
+							message: "Project changes changed; refresh before staging",
+						},
+					},
+					409,
+				);
+			}
+			const targetIds = new Set(body.files.map((target) => target.fileId));
+			const stagedFiles = files.filter((file) => targetIds.has(file.id));
+			if (stagedFiles.length !== targetIds.size) {
+				return json(
+					{ error: { code: "not_found", message: "Fixture file not found" } },
+					404,
+				);
+			}
+			for (const file of stagedFiles) {
+				file.staged = true;
+				file.unstaged = false;
+				file.indexStatus = file.kind === "added" ? "A" : "M";
+				file.worktreeStatus = ".";
+			}
+			operationRevision = `fixture-operation-${Date.now()}`;
+			return json({
+				files: stagedFiles,
+				changes: {
+					upserted: stagedFiles,
 					removedFileIds: [],
 					orderedFileIds: files.map((candidate) => candidate.id),
 				},

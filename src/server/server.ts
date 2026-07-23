@@ -27,6 +27,7 @@ import {
   type SetReviewRequest,
   type StartPackageRunRequest,
   type StageFileRequest,
+  type StageFilesRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import { StateDatabase } from "./database.ts";
@@ -624,6 +625,12 @@ export async function createCouchReviewApp(
         throw new HttpError(400, "file_mismatch", "Request file does not match the API path");
       }
       const result = await repository.stage(input);
+      await emitRepository(repositoryId, "changes", result.operationRevision);
+      return json(result);
+    }
+    if (nestedPath === "files/stage" && request.method === "POST") {
+      const input = await readJsonObject<StageFilesRequest>(request);
+      const result = await repository.stageFiles(input);
       await emitRepository(repositoryId, "changes", result.operationRevision);
       return json(result);
     }

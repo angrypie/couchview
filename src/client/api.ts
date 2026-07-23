@@ -24,6 +24,8 @@ import {
   type SourcePreviewResponse,
   type StageFileRequest,
   type StageFileResponse,
+  type StageFilesRequest,
+  type StageFilesResponse,
   type StartPackageRunRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
@@ -175,6 +177,19 @@ export const api = {
   ) {
     return request<StageFileResponse>(
       API_ROUTES.fileStage(repositoryId, body.fileId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  stageFiles(
+    repositoryId: string,
+    body: StageFilesRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<StageFilesResponse>(
+      API_ROUTES.fileStages(repositoryId),
       { method: "POST", body: JSON.stringify(body), signal },
       csrfToken,
     );

@@ -994,6 +994,19 @@ textarea:focus-visible,
   text-align: center;
 }
 
+.bulk-stage-actions {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.bulk-stage-actions .action-button {
+  min-height: 38px;
+  padding-inline: 6px;
+  font-size: 10px;
+}
+
 .commit-action {
   width: 100%;
   min-height: 42px;

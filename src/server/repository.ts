@@ -37,6 +37,9 @@ import type {
 	SourcePreviewResponse,
 	StageFileRequest,
 	StageFileResponse,
+	StageFilesRequest,
+	StageFilesResponse,
+	StageFileTarget,
 } from "../shared/contracts.ts";
 import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
@@ -640,25 +643,91 @@ export class GitRepository {
 	}
 
 	async stage(input: StageFileRequest): Promise<StageFileResponse> {
+		if (!input || typeof input !== "object" || Array.isArray(input)) {
+			throw new HttpError(
+				400,
+				"invalid_request",
+				"Staging request is invalid",
+			);
+		}
+		assertNonEmptyString(input.fileId, "file id", 100);
+		assertNonEmptyString(input.operationRevision, "operation revision", 200);
+		assertNonEmptyString(input.contentRevision, "content revision", 200);
+		if (input.staged !== undefined && typeof input.staged !== "boolean") {
+			throw new HttpError(
+				400,
+				"invalid_request",
+				"Staging target is invalid",
+			);
+		}
+		const result = await this.updateStageTargets(
+			[
+				{
+					fileId: input.fileId,
+					contentRevision: input.contentRevision,
+				},
+			],
+			input.operationRevision,
+			input.staged ?? true,
+		);
+		return {
+			file:
+				result.files.find((candidate) => candidate.id === input.fileId) ??
+				null,
+			changes: result.changes,
+			operationRevision: result.operationRevision,
+		};
+	}
+
+	async stageFiles(input: StageFilesRequest): Promise<StageFilesResponse> {
+		if (!input || typeof input !== "object" || Array.isArray(input)) {
+			throw new HttpError(
+				400,
+				"invalid_request",
+				"Bulk staging request is invalid",
+			);
+		}
+		assertNonEmptyString(input.operationRevision, "operation revision", 200);
+		if (
+			!Array.isArray(input.files) ||
+			input.files.length === 0 ||
+			input.files.length > 10_000
+		) {
+			throw new HttpError(
+				400,
+				"invalid_request",
+				"Bulk staging requires between 1 and 10,000 files",
+			);
+		}
+		const seen = new Set<string>();
+		for (const target of input.files) {
+			if (!target || typeof target !== "object" || Array.isArray(target)) {
+				throw new HttpError(
+					400,
+					"invalid_request",
+					"Bulk staging file is invalid",
+				);
+			}
+			assertNonEmptyString(target.fileId, "file id", 100);
+			assertNonEmptyString(target.contentRevision, "content revision", 200);
+			if (seen.has(target.fileId)) {
+				throw new HttpError(
+					400,
+					"invalid_request",
+					"Bulk staging contains a duplicate file",
+				);
+			}
+			seen.add(target.fileId);
+		}
+		return this.updateStageTargets(input.files, input.operationRevision, true);
+	}
+
+	private async updateStageTargets(
+		targets: readonly StageFileTarget[],
+		operationRevision: string,
+		shouldStage: boolean,
+	): Promise<StageFilesResponse> {
 		return this.withStageLock(async () => {
-			if (!input || typeof input !== "object" || Array.isArray(input)) {
-				throw new HttpError(
-					400,
-					"invalid_request",
-					"Staging request is invalid",
-				);
-			}
-			assertNonEmptyString(input.fileId, "file id", 100);
-			assertNonEmptyString(input.operationRevision, "operation revision", 200);
-			assertNonEmptyString(input.contentRevision, "content revision", 200);
-			if (input.staged !== undefined && typeof input.staged !== "boolean") {
-				throw new HttpError(
-					400,
-					"invalid_request",
-					"Staging target is invalid",
-				);
-			}
-			const shouldStage = input.staged ?? true;
 			const lockPath = `${this.indexPath}.lock`;
 			const temporaryIndex = path.join(
 				path.dirname(this.indexPath),
@@ -683,26 +752,41 @@ export class GitRepository {
 				}
 
 				const locked = await this.getSnapshot(true);
-				if (locked.operationRevision !== input.operationRevision) {
+				if (locked.operationRevision !== operationRevision) {
 					throw new HttpError(
 						409,
 						"operation_changed",
 						"Project changes changed; refresh before staging",
 					);
 				}
-				const file = this.requireCurrentContent(
-					locked,
-					input.fileId,
-					input.contentRevision,
+				const targetsById = new Map(
+					targets.map((target) => [target.fileId, target]),
 				);
-				const lockedEntry = locked.entries.get(file.id);
-				if (!lockedEntry) {
-					throw new HttpError(
-						409,
-						"content_changed",
-						"The file is no longer available for staging",
+				const selectedById = new Map<
+					string,
+					{ file: ChangeFile; entry: ParsedStatusEntry }
+				>();
+				for (const target of targets) {
+					const file = this.requireCurrentContent(
+						locked,
+						target.fileId,
+						target.contentRevision,
 					);
+					const entry = locked.entries.get(file.id);
+					if (!entry) {
+						throw new HttpError(
+							409,
+							"content_changed",
+							"The file is no longer available for staging",
+						);
+					}
+					selectedById.set(file.id, { file, entry });
 				}
+				const selected = locked.files.flatMap((file) => {
+					const target = selectedById.get(file.id);
+					return target ? [target] : [];
+				});
+
 				let originalIndex: Uint8Array | null = null;
 				try {
 					const indexMetadata = await stat(this.indexPath);
@@ -724,71 +808,84 @@ export class GitRepository {
 						env: { GIT_INDEX_FILE: temporaryIndex },
 					});
 				}
-				if (shouldStage) {
-					await this.stageExactPath(
-						temporaryIndex,
-						file.path,
-						file.kind === "deleted",
-						locked.files.flatMap((candidate) => [
-							candidate.path,
-							...(candidate.previousPath ? [candidate.previousPath] : []),
-						]),
-					);
-					if (
-						file.kind === "renamed" &&
-						file.previousPath &&
-						!locked.files.some(
-							(candidate) =>
-								candidate.id !== file.id &&
-								candidate.path === file.previousPath,
-						)
-					) {
-						const previousExists = await lstat(
-							this.resolveProjectPath(file.previousPath),
-						)
-							.then(() => true)
-							.catch((error) => {
-								if (
-									["ENOENT", "ENOTDIR"].includes(
-										(error as NodeJS.ErrnoException).code ?? "",
-									)
-								) {
-									return false;
-								}
-								throw error;
-							});
-						if (!previousExists) {
-							await runGit(
-								this.root,
-								["update-index", "--force-remove", "--", file.previousPath],
-								{ env: { GIT_INDEX_FILE: temporaryIndex } },
-							);
+
+				const candidateConflictPaths = locked.files.flatMap((candidate) => [
+					candidate.path,
+					...(candidate.previousPath ? [candidate.previousPath] : []),
+				]);
+				for (const { file } of selected) {
+					if (shouldStage) {
+						await this.stageExactPath(
+							temporaryIndex,
+							file.path,
+							file.kind === "deleted",
+							candidateConflictPaths,
+						);
+						if (
+							file.kind === "renamed" &&
+							file.previousPath &&
+							!locked.files.some(
+								(candidate) =>
+									candidate.id !== file.id &&
+									candidate.path === file.previousPath,
+							)
+						) {
+							const previousExists = await lstat(
+								this.resolveProjectPath(file.previousPath),
+							)
+								.then(() => true)
+								.catch((error) => {
+									if (
+										["ENOENT", "ENOTDIR"].includes(
+											(error as NodeJS.ErrnoException).code ?? "",
+										)
+									) {
+										return false;
+									}
+									throw error;
+								});
+							if (!previousExists) {
+								await runGit(
+									this.root,
+									["update-index", "--force-remove", "--", file.previousPath],
+									{ env: { GIT_INDEX_FILE: temporaryIndex } },
+								);
+							}
 						}
+					} else {
+						await this.unstageExactPath(
+							temporaryIndex,
+							file,
+							locked.repository.head,
+						);
 					}
-				} else {
-					await this.unstageExactPath(
-						temporaryIndex,
-						file,
-						locked.repository.head,
-					);
 				}
 
 				const currentBaseEntries = await this.readBaseEntries(
-					[lockedEntry],
+					selected.map(({ entry }) => entry),
 					locked.repository.head,
 				);
-				const currentContentRevision = await this.contentRevision(
-					lockedEntry,
-					locked.repository.head,
-					currentBaseEntries.get(basePathForEntry(lockedEntry)) ?? "",
-					false,
+				const currentContentRevisions = await Promise.all(
+					selected.map(({ entry }) =>
+						this.contentRevision(
+							entry,
+							locked.repository.head,
+							currentBaseEntries.get(basePathForEntry(entry)) ?? "",
+							false,
+						),
+					),
 				);
-				if (currentContentRevision !== input.contentRevision) {
-					throw new HttpError(
-						409,
-						"content_changed",
-						"The file changed while it was being staged; refresh first",
-					);
+				for (const [index, { file }] of selected.entries()) {
+					if (
+						currentContentRevisions[index] !==
+						targetsById.get(file.id)?.contentRevision
+					) {
+						throw new HttpError(
+							409,
+							"content_changed",
+							"A file changed while it was being staged; refresh first",
+						);
+					}
 				}
 				const currentIndex = await readFile(this.indexPath)
 					.then((bytes) => Uint8Array.from(bytes))
@@ -815,9 +912,9 @@ export class GitRepository {
 
 				const after = await this.getSnapshot(true);
 				return {
-					file:
-						after.files.find((candidate) => candidate.id === input.fileId) ??
-						null,
+					files: after.files.filter((candidate) =>
+						targetsById.has(candidate.id),
+					),
 					changes: changeFileDelta(locked.files, after.files),
 					operationRevision: after.operationRevision,
 				};

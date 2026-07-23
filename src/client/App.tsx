@@ -81,6 +81,7 @@ type ReviewFilter = "all" | "unreviewed" | "reviewed";
 type StageFilter = "all" | "unstaged" | "staged";
 type SearchScope = "current" | "other";
 type DrawerView = "files" | "commands";
+type BulkStageScope = "all" | "reviewed";
 
 interface HunkRow {
   type: "hunk";
@@ -137,7 +138,6 @@ interface FailureState {
 
 interface PendingStageMutation {
   repositoryId: string;
-  fileId: string;
   queuedOperationRevision: string | null;
 }
 
@@ -544,6 +544,7 @@ export function App() {
   const [commentBusy, setCommentBusy] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
   const [stageBusy, setStageBusy] = useState(false);
+  const [bulkStageBusy, setBulkStageBusy] = useState<BulkStageScope | null>(null);
   const [commitComposerOpen, setCommitComposerOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState("");
   const [commitBusy, setCommitBusy] = useState(false);
@@ -632,6 +633,8 @@ export function App() {
 
   const reviewedCount = files.filter((file) => file.reviewed).length;
   const stagedCount = files.filter((file) => file.staged).length;
+  const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
+  const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
   const commandsAvailable =
     packageScripts.packages.length > 0 ||
     packageScripts.warnings.length > 0 ||
@@ -940,6 +943,7 @@ export function App() {
       setDrawerView("files");
       setReviewBusy(false);
       setStageBusy(false);
+      setBulkStageBusy(null);
       setCommitBusy(false);
       setCommentBusy(false);
       setSearchBusy(false);
@@ -1077,6 +1081,7 @@ export function App() {
     setDrawerView("files");
     setReviewBusy(false);
     setStageBusy(false);
+    setBulkStageBusy(null);
     setCommitBusy(false);
     setCommentBusy(false);
     setSearchBusy(false);
@@ -1686,13 +1691,20 @@ export function App() {
   );
 
   const toggleStageActiveFile = useCallback(async () => {
-    if (!activeFile || !bootstrap || !repositoryId || stageBusy) return;
+    if (
+      !activeFile ||
+      !bootstrap ||
+      !repositoryId ||
+      stageBusy ||
+      bulkStageBusy
+    ) {
+      return;
+    }
     const activeRepositoryId = repositoryId;
     const signal = repositoryRequestRef.current?.signal;
     const shouldStage = !activeFile.staged || activeFile.unstaged;
     const mutation: PendingStageMutation = {
       repositoryId: activeRepositoryId,
-      fileId: activeFile.id,
       queuedOperationRevision: null,
     };
     pendingStageMutationRef.current = mutation;
@@ -1801,6 +1813,7 @@ export function App() {
     activeFile,
     activeFileIndex,
     bootstrap,
+    bulkStageBusy,
     files,
     loadDiff,
     operationRevision,
@@ -1810,6 +1823,191 @@ export function App() {
     showToast,
     stageBusy,
   ]);
+
+  const stageMultipleFiles = useCallback(
+    async (scope: BulkStageScope) => {
+      if (
+        !bootstrap ||
+        !repositoryId ||
+        stageBusy ||
+        bulkStageBusy
+      ) {
+        return;
+      }
+      const targets = files.filter(
+        (file) =>
+          (!file.staged || file.unstaged) &&
+          (scope === "all" || file.reviewed),
+      );
+      if (targets.length === 0) return;
+
+      const activeRepositoryId = repositoryId;
+      const signal = repositoryRequestRef.current?.signal;
+      const targetIds = new Set(targets.map((file) => file.id));
+      const previousById = new Map(
+        targets.map((file) => [
+          file.id,
+          { staged: file.staged, unstaged: file.unstaged },
+        ]),
+      );
+      const mutation: PendingStageMutation = {
+        repositoryId: activeRepositoryId,
+        queuedOperationRevision: null,
+      };
+      pendingStageMutationRef.current = mutation;
+      setBulkStageBusy(scope);
+      setFiles((current) =>
+        current.map((file) =>
+          targetIds.has(file.id)
+            ? { ...file, staged: true, unstaged: false }
+            : file,
+        ),
+      );
+
+      try {
+        const response = await api.stageFiles(
+          activeRepositoryId,
+          {
+            files: targets.map((file) => ({
+              fileId: file.id,
+              contentRevision: file.contentRevision,
+            })),
+            operationRevision,
+          },
+          bootstrap.csrfToken,
+          signal,
+        );
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId
+        ) {
+          return;
+        }
+
+        const queuedOperationRevision = mutation.queuedOperationRevision;
+        if (pendingStageMutationRef.current === mutation) {
+          pendingStageMutationRef.current = null;
+        }
+        operationRevisionRef.current = response.operationRevision;
+        setOperationRevision(response.operationRevision);
+        setFiles((current) =>
+          applyChangeFileDelta(current, response.changes),
+        );
+
+        const previousActiveFileId = currentFileIdRef.current;
+        if (
+          previousActiveFileId &&
+          response.changes.removedFileIds.includes(previousActiveFileId)
+        ) {
+          const remainingFiles = applyChangeFileDelta(files, response.changes);
+          const previousIndex = files.findIndex(
+            (file) => file.id === previousActiveFileId,
+          );
+          const nextFileId =
+            remainingFiles[
+              Math.min(
+                Math.max(previousIndex, 0),
+                remainingFiles.length - 1,
+              )
+            ]?.id ?? null;
+          currentFileIdRef.current = nextFileId;
+          setCurrentFileId(nextFileId);
+        } else if (previousActiveFileId) {
+          const currentDiff = diffRef.current;
+          const updatedActiveFile = response.files.find(
+            (file) => file.id === previousActiveFileId,
+          );
+          if (
+            updatedActiveFile &&
+            currentDiff?.fileId === previousActiveFileId &&
+            currentDiff.contentRevision === updatedActiveFile.contentRevision
+          ) {
+            const nextDiff = withDiffFileMetadata(
+              currentDiff,
+              updatedActiveFile,
+              response.operationRevision,
+            );
+            diffRef.current = nextDiff;
+            setDiff(nextDiff);
+          } else if (
+            updatedActiveFile &&
+            currentFileIdRef.current === previousActiveFileId
+          ) {
+            await loadDiff(previousActiveFileId);
+          } else if (currentDiff?.fileId === previousActiveFileId) {
+            const nextDiff = {
+              ...currentDiff,
+              operationRevision: response.operationRevision,
+            };
+            diffRef.current = nextDiff;
+            setDiff(nextDiff);
+          }
+        }
+
+        if (
+          queuedOperationRevision &&
+          queuedOperationRevision !== response.operationRevision
+        ) {
+          const fileId = currentFileIdRef.current;
+          if (fileId) await reconcileChangedFile(fileId, true);
+        }
+        const noun = targets.length === 1 ? "file" : "files";
+        showToast(
+          scope === "reviewed"
+            ? `${targets.length} reviewed ${noun} staged`
+            : `${targets.length} ${noun} staged`,
+        );
+      } catch (error) {
+        const queuedOperationRevision = mutation.queuedOperationRevision;
+        if (pendingStageMutationRef.current === mutation) {
+          pendingStageMutationRef.current = null;
+        }
+        setFiles((current) =>
+          current.map((file) => {
+            const previous = previousById.get(file.id);
+            return previous ? { ...file, ...previous } : file;
+          }),
+        );
+        if (
+          signal?.aborted ||
+          repositoryIdRef.current !== activeRepositoryId ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return;
+        }
+        reportFailure(
+          error,
+          scope === "reviewed" ? "Stage reviewed files" : "Stage all files",
+        );
+        if (
+          queuedOperationRevision ||
+          (error instanceof ApiError && error.status === 409)
+        ) {
+          const fileId = currentFileIdRef.current;
+          if (fileId) void reconcileChangedFile(fileId, true);
+        }
+      } finally {
+        if (pendingStageMutationRef.current === mutation) {
+          pendingStageMutationRef.current = null;
+        }
+        if (repositoryIdRef.current === activeRepositoryId) {
+          setBulkStageBusy(null);
+        }
+      }
+    },
+    [
+      bootstrap,
+      bulkStageBusy,
+      files,
+      loadDiff,
+      operationRevision,
+      reconcileChangedFile,
+      reportFailure,
+      repositoryId,
+      showToast,
+      stageBusy,
+    ],
+  );
 
   const commitStagedChanges = useCallback(
     async (event?: FormEvent) => {
@@ -2667,6 +2865,46 @@ export function App() {
                   <div className="progress-label">
                     {reviewedCount} of {files.length} reviewed
                   </div>
+                  <div className="bulk-stage-actions">
+                    <button
+                      aria-label={`Stage all files (${stageableFiles.length})`}
+                      className="action-button secondary"
+                      disabled={
+                        stageableFiles.length === 0 ||
+                        stageBusy ||
+                        bulkStageBusy !== null
+                      }
+                      onClick={() => void stageMultipleFiles("all")}
+                      type="button"
+                    >
+                      {bulkStageBusy === "all" ? (
+                        <LoaderCircle className="spinner" size={15} />
+                      ) : (
+                        <GitPullRequestArrow size={15} />
+                      )}
+                      <span>Stage all ({stageableFiles.length})</span>
+                    </button>
+                    <button
+                      aria-label={`Stage reviewed files (${stageableReviewedFiles.length})`}
+                      className="action-button secondary"
+                      disabled={
+                        stageableReviewedFiles.length === 0 ||
+                        stageBusy ||
+                        bulkStageBusy !== null
+                      }
+                      onClick={() => void stageMultipleFiles("reviewed")}
+                      type="button"
+                    >
+                      {bulkStageBusy === "reviewed" ? (
+                        <LoaderCircle className="spinner" size={15} />
+                      ) : (
+                        <CheckCircle2 size={15} />
+                      )}
+                      <span>
+                        Stage reviewed ({stageableReviewedFiles.length})
+                      </span>
+                    </button>
+                  </div>
                   <button
                     className="action-button commit-action"
                     disabled={stagedCount === 0 || commitBusy}
@@ -3068,12 +3306,12 @@ export function App() {
         <button
           aria-label={activeFileFullyStaged ? "Unstage current file" : "Stage current file"}
           className="icon-button stage-action"
-          disabled={!activeFile || stageBusy}
+          disabled={!activeFile || stageBusy || bulkStageBusy !== null}
           onClick={() => void toggleStageActiveFile()}
           title={activeFileFullyStaged ? "Unstage file" : "Stage file"}
           type="button"
         >
-          {stageBusy ? (
+          {stageBusy || bulkStageBusy ? (
             <LoaderCircle className="spinner" size={19} />
           ) : (
             <GitPullRequestArrow color={activeFile?.staged ? "var(--accent)" : undefined} size={19} />

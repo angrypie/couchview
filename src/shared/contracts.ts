@@ -14,6 +14,8 @@ export const API_ROUTES = {
     `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/diff`,
   fileStage: (repositoryId: string, fileId: string) =>
     `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/stage`,
+  fileStages: (repositoryId: string) =>
+    `${repositoryFilesApiPath(repositoryId)}/stage`,
   fileReview: (repositoryId: string, fileId: string) =>
     `${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/review`,
   fileComments: (repositoryId: string, fileId: string) =>
@@ -283,11 +285,19 @@ export interface DeleteCommentResponse {
   deletedId: string;
 }
 
-export interface StageFileRequest {
+export interface StageFileTarget {
   fileId: string;
-  operationRevision: string;
   contentRevision: string;
+}
+
+export interface StageFileRequest extends StageFileTarget {
+  operationRevision: string;
   staged?: boolean;
+}
+
+export interface StageFilesRequest {
+  files: StageFileTarget[];
+  operationRevision: string;
 }
 
 export interface ChangeFileDelta {
@@ -298,6 +308,12 @@ export interface ChangeFileDelta {
 
 export interface StageFileResponse {
   file: ChangeFile | null;
+  changes: ChangeFileDelta;
+  operationRevision: string;
+}
+
+export interface StageFilesResponse {
+  files: ChangeFile[];
   changes: ChangeFileDelta;
   operationRevision: string;
 }
