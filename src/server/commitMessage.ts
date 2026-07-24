@@ -10,7 +10,7 @@ export const CODEX_COMMIT_MESSAGE_REASONING = "low";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_STDOUT_BYTES = 16 * 1024;
-const MAX_STDERR_BYTES = 64 * 1024;
+const MAX_RETAINED_STDERR_BYTES = 64 * 1024;
 const CONVENTIONAL_HEADER_SOURCE =
   "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([a-z0-9][a-z0-9._/-]*\\))?!?: \\S([^\\r\\n]*\\S)?$";
 const CONVENTIONAL_HEADER = new RegExp(CONVENTIONAL_HEADER_SOURCE);
@@ -72,6 +72,53 @@ interface CapturedStream {
   exceeded: boolean;
 }
 
+interface CaptureStreamOptions {
+  maximumBytes: number;
+  overflow: "terminate" | "truncate-middle";
+  onLimit?: () => void;
+}
+
+function appendBoundedTail(
+  chunks: Uint8Array[],
+  currentBytes: number,
+  value: Uint8Array,
+  maximumBytes: number,
+): number {
+  if (maximumBytes === 0 || value.byteLength === 0) return currentBytes;
+  const relevant = value.byteLength > maximumBytes
+    ? value.subarray(value.byteLength - maximumBytes)
+    : value;
+  const copied = Uint8Array.from(relevant);
+  chunks.push(copied);
+  currentBytes += copied.byteLength;
+  while (currentBytes > maximumBytes) {
+    const first = chunks[0];
+    if (!first) break;
+    const excess = currentBytes - maximumBytes;
+    if (first.byteLength <= excess) {
+      chunks.shift();
+      currentBytes -= first.byteLength;
+      continue;
+    }
+    chunks[0] = Uint8Array.from(first.subarray(excess));
+    currentBytes -= excess;
+  }
+  return currentBytes;
+}
+
+function concatenateChunks(
+  chunks: readonly Uint8Array[],
+  byteLength: number,
+): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 function defaultSpawn(
   command: readonly string[],
   options: SpawnOptions,
@@ -95,13 +142,21 @@ function defaultSpawn(
 
 async function captureStream(
   stream: ReadableStream<Uint8Array> | null,
-  maximumBytes: number,
-  onLimit: () => void,
+  options: CaptureStreamOptions,
 ): Promise<CapturedStream> {
   if (!stream) return { bytes: new Uint8Array(), exceeded: false };
+  const { maximumBytes, overflow, onLimit } = options;
+  const prefixLimit = overflow === "truncate-middle"
+    ? Math.floor(maximumBytes / 4)
+    : maximumBytes;
+  const tailLimit = overflow === "truncate-middle"
+    ? maximumBytes - prefixLimit
+    : 0;
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let capturedBytes = 0;
+  const prefixChunks: Uint8Array[] = [];
+  const tailChunks: Uint8Array[] = [];
+  let prefixBytes = 0;
+  let tailBytes = 0;
   let totalBytes = 0;
   let exceeded = false;
   try {
@@ -109,27 +164,51 @@ async function captureStream(
       const result = await reader.read();
       if (result.done) break;
       totalBytes += result.value.byteLength;
-      const remaining = Math.max(0, maximumBytes - capturedBytes);
-      if (remaining > 0) {
-        const chunk = result.value.subarray(0, remaining);
-        chunks.push(chunk);
-        capturedBytes += chunk.byteLength;
+      let offset = 0;
+      const prefixRemaining = Math.max(0, prefixLimit - prefixBytes);
+      if (prefixRemaining > 0) {
+        const chunk = Uint8Array.from(
+          result.value.subarray(0, prefixRemaining),
+        );
+        prefixChunks.push(chunk);
+        prefixBytes += chunk.byteLength;
+        offset = chunk.byteLength;
+      }
+      if (tailLimit > 0 && offset < result.value.byteLength) {
+        tailBytes = appendBoundedTail(
+          tailChunks,
+          tailBytes,
+          result.value.subarray(offset),
+          tailLimit,
+        );
       }
       if (totalBytes > maximumBytes && !exceeded) {
         exceeded = true;
-        onLimit();
+        if (overflow === "terminate") onLimit?.();
       }
     }
   } finally {
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(capturedBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
+  if (!exceeded || overflow === "terminate") {
+    return {
+      bytes: concatenateChunks(
+        [...prefixChunks, ...tailChunks],
+        prefixBytes + tailBytes,
+      ),
+      exceeded,
+    };
   }
-  return { bytes, exceeded };
+  const marker = new TextEncoder().encode(
+    "\n[... middle of Codex stderr omitted ...]\n",
+  );
+  return {
+    bytes: concatenateChunks(
+      [...prefixChunks, marker, ...tailChunks],
+      prefixBytes + marker.byteLength + tailBytes,
+    ),
+    exceeded,
+  };
 }
 
 function codexEnvironment(): Record<string, string | undefined> {
@@ -165,8 +244,7 @@ function cleanProcessText(value: string): string {
   return value
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
     .replaceAll("\0", "�")
-    .trim()
-    .slice(0, 4_000);
+    .trim();
 }
 
 function processFailure(stderr: string): HttpError {
@@ -193,12 +271,17 @@ function processFailure(stderr: string): HttpError {
       `Codex model ${CODEX_COMMIT_MESSAGE_MODEL} is unavailable for this account`,
     );
   }
-  const firstLine = detail.split("\n").find(Boolean)?.slice(0, 240);
+  const summary = detail
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1)
+    ?.slice(0, 240);
   return new HttpError(
     502,
     "codex_failed",
-    firstLine
-      ? `Codex could not generate a commit message: ${firstLine}`
+    summary
+      ? `Codex could not generate a commit message: ${summary}`
       : "Codex could not generate a commit message",
   );
 }
@@ -314,16 +397,15 @@ export class CodexCommitMessageService implements CommitMessageGenerator {
       }
 
       const timeout = setTimeout(() => stop("timeout"), this.timeoutMs);
-      const stdoutPromise = captureStream(
-        process.stdout,
-        MAX_STDOUT_BYTES,
-        () => stop("limit"),
-      );
-      const stderrPromise = captureStream(
-        process.stderr,
-        MAX_STDERR_BYTES,
-        () => stop("limit"),
-      );
+      const stdoutPromise = captureStream(process.stdout, {
+        maximumBytes: MAX_STDOUT_BYTES,
+        overflow: "terminate",
+        onLimit: () => stop("limit"),
+      });
+      const stderrPromise = captureStream(process.stderr, {
+        maximumBytes: MAX_RETAINED_STDERR_BYTES,
+        overflow: "truncate-middle",
+      });
       let exitCode: number;
       let stdout: CapturedStream;
       let stderr: CapturedStream;
@@ -351,8 +433,7 @@ export class CodexCommitMessageService implements CommitMessageGenerator {
       }
       if (
         terminalReason === "limit" ||
-        stdout.exceeded ||
-        stderr.exceeded
+        stdout.exceeded
       ) {
         throw new HttpError(
           502,

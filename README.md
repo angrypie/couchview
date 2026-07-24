@@ -38,16 +38,16 @@ The repository and port can also be explicit:
 couchview --repo /absolute/path/to/project --port 4173
 ```
 
-Open one of the project-specific URLs printed by the command, such as `http://192.168.1.42:4173/?repo=8f14e45fceea167a5a36dedd`. Couchview resolves the containing repository root and binds to `0.0.0.0` by default, so it is immediately reachable from other devices on the same network. Use `--host 127.0.0.1` when access should be limited to this computer.
+Open the project-specific URL printed by the command, such as `http://127.0.0.1:4173/?repo=8f14e45fceea167a5a36dedd`. Couchview resolves the containing repository root and binds to `127.0.0.1` by default, so it is accessible only from this computer. Use `--host 0.0.0.0` to opt into access from other devices on the local network.
 
 Run `couchview` inside another Git project while that endpoint is active to add it to the same server. The command prints whether the project was added, repeats its URL, and exits. Click the repository name in the app to switch projects; the selected repository is stored in `?repo=...`, so browser history and separate tabs can keep independent projects open. Use another `--port` when intentionally running a different Couchview version or server instance.
 
 ### Open it from a phone
 
-The default launch binds to all IPv4 interfaces. Start Couchview and use a printed non-loopback URL on a phone connected to the same network:
+To use Couchview from a phone on the same network, explicitly bind it to all IPv4 interfaces:
 
 ```sh
-couchview --repo /absolute/path/to/project --port 4173
+couchview --repo /absolute/path/to/project --host 0.0.0.0 --port 4173
 ```
 
 Startup prints every copyable address with LAN URLs first, for example:
@@ -63,6 +63,154 @@ Repository: /absolute/path/to/project
 Copy the `192.168...` address into the phone browser. If it does not connect, confirm both devices are on the same Wi-Fi and allow incoming Bun connections in the computer firewall. The interface list is captured at startup, so restart Couchview after changing networks. A specific interface address can be used instead of `0.0.0.0`, and `COUCHVIEW_HOST` provides the same setting through the environment.
 
 LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
+
+### Remote HTTPS access through Cloudflare
+
+Couchview can be published through
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)
+and protected by
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/self-hosted-public-app/).
+The origin must stay bound to loopback, and Access must be configured before the
+tunnel hostname is published. A tunnel alone provides encrypted connectivity but
+does not authenticate Couchview users.
+
+Use the following account-agnostic process to configure a deployment:
+
+1. Add the domain to Cloudflare and create a Zero Trust organization if one does
+   not already exist.
+2. In **Zero Trust > Integrations > Identity providers**, configure the team's
+   identity provider. Email one-time PIN is sufficient for a small private
+   deployment.
+3. In **Zero Trust > Access controls > Applications**, create a **Self-hosted**
+   application for the complete hostname, such as `couchview.example.com`.
+   Create an **Allow** policy containing only the exact email addresses or
+   identity-provider groups that should have access. Do not use **Everyone** or
+   an unrestricted **One-time PIN** login-method rule. Select only the intended
+   identity provider, use a suitably short session such as 24 hours, and enable
+   the binding and HttpOnly cookie options.
+4. In **Networking > Tunnels**, create a remotely managed tunnel and install the
+   displayed `cloudflared` command on the same computer as Couchview. Treat the
+   tunnel token in that command as a secret and never place it in the repository.
+5. Add a **Published application** route from the same hostname to
+   `http://localhost:4173`. The dashboard creates the proxied tunnel DNS record;
+   confirm that the route ends with a catch-all HTTP 404 rule.
+
+Then choose how to run the Couchview origin. Both options keep it bound to
+loopback; `cloudflared` is a separate process and may remain connected while
+Couchview is stopped.
+
+#### Foreground terminal
+
+This is recommended for occasional use because the logs remain visible and
+`Ctrl-C` stops the server:
+
+```sh
+COUCHVIEW_ALLOWED_ORIGINS=https://couchview.example.com \
+  couchview \
+  --host 127.0.0.1 \
+  --port 4173 \
+  --repo /absolute/path/to/project
+```
+
+Multiple exact origins may be comma-separated. Do not use wildcards.
+
+#### macOS LaunchAgent
+
+For an unattended server that starts after the macOS user logs in, create
+`~/Library/LaunchAgents/dev.couchview.server.plist`. Replace every example
+username and absolute path before loading it:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.couchview.server</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/you/.bun/bin/bun</string>
+    <string>run</string>
+    <string>/absolute/path/to/couchview/src/server/cli.ts</string>
+    <string>--repo</string>
+    <string>/absolute/path/to/project</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>4173</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/absolute/path/to/couchview</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>COUCHVIEW_ALLOWED_ORIGINS</key>
+    <string>https://couchview.example.com</string>
+    <key>PATH</key>
+    <string>/Users/you/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/couchview.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/couchview.err.log</string>
+</dict>
+</plist>
+```
+
+Validate and load the agent:
+
+```sh
+plutil -lint "$HOME/Library/LaunchAgents/dev.couchview.server.plist"
+launchctl bootstrap \
+  "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/dev.couchview.server.plist"
+launchctl print "gui/$(id -u)/dev.couchview.server"
+```
+
+It has no attached terminal. Follow its logs with:
+
+```sh
+tail -f \
+  "$HOME/Library/Logs/couchview.out.log" \
+  "$HOME/Library/Logs/couchview.err.log"
+```
+
+Stop it and prevent automatic restarts with:
+
+```sh
+launchctl bootout \
+  "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/dev.couchview.server.plist"
+```
+
+Use a real property-list file for this mode rather than `launchctl submit`.
+The agent runs as the logged-in user and starts after login, not at the macOS
+login screen. Keep the Cloudflare tunnel token out of this file and the
+repository.
+
+After starting either option, visit the external URL in a private browser
+window. Cloudflare should request authentication before any Couchview response
+is visible. After authenticating, verify that a diff loads and that a write such
+as marking a file reviewed succeeds. Stop Couchview when remote review is not
+needed; the tunnel may remain connected and will return an unavailable-origin
+response.
+
+No inbound router port or firewall rule is required because `cloudflared` opens
+outbound connections to Cloudflare. If the token is disclosed, refresh it in the
+tunnel's **Overview** page and reinstall the connector service with the replacement
+token.
 
 To run without linking the command:
 
@@ -84,7 +232,7 @@ For application development, run the Bun API and Vite UI together:
 bun run dev -- --repo /absolute/path/to/project
 ```
 
-Development also binds both processes to `0.0.0.0` by default and prints the phone-accessible frontend URLs. The UI proxies `/api`, including server-sent events, to the loopback API endpoint at `http://127.0.0.1:3001`. Pass `--host 127.0.0.1` to keep both processes local. `PORT` can change the development API port and `COUCHVIEW_WEB_PORT` can change the Vite port.
+Development also binds both processes to `127.0.0.1` by default. The UI proxies `/api`, including server-sent events, to the loopback API endpoint at `http://127.0.0.1:3001`. Pass `--host 0.0.0.0` to opt into phone access and print the phone-accessible frontend URLs. `PORT` can change the development API port and `COUCHVIEW_WEB_PORT` can change the Vite port.
 
 ## Review workflow
 
@@ -112,7 +260,7 @@ The UI shell is available when disconnected, but repository data is intentionall
 
 ## Local state and security
 
-The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. LAN binding is the default, so run Couchview only on a trusted network or pass `--host 127.0.0.1`; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, and send staged change context to Codex.
+The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, and send staged change context to Codex.
 
 Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
@@ -122,7 +270,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 
 Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. If a database already exists at the pre-rename `couch-review` path and the new path does not exist, Couchview continues using it so saved reviews and comments remain available. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
 
-Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo` and `--port` take precedence. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
+Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo` and `--port` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 

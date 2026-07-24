@@ -1012,6 +1012,20 @@ describe("Couchview HTTP security and routes", () => {
     expect(await metadata.json()).toMatchObject({ version: "9.9.9-test", port: 4173 });
   });
 
+  test("defaults the application host to loopback", async () => {
+    const root = await repositoryFixture("loopback-default.ts");
+    const stateDirectory = await mkdtemp(path.join(tmpdir(), "couchview-server-state-"));
+    temporaryDirectories.push(stateDirectory);
+    const app = await createCouchviewApp({
+      root,
+      stateDatabasePath: path.join(stateDirectory, "state.sqlite"),
+    });
+    applications.push(app);
+
+    expect(app.bindHost).toBe("127.0.0.1");
+    expect(app.accessOrigins).toEqual(["http://127.0.0.1:4173"]);
+  });
+
   test("derives copyable exact origins from wildcard network interfaces", () => {
     expect(
       accessOriginsForHost("0.0.0.0", 4173, ["192.168.50.4", "10.0.0.8", "2001:db8::1"]),

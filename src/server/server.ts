@@ -366,7 +366,7 @@ function decodeSegment(value: string): string {
 export async function createCouchviewApp(
   options: CouchviewAppOptions,
 ): Promise<CouchviewApp> {
-  const host = normalizeBindHost(options.host ?? "0.0.0.0");
+  const host = normalizeBindHost(options.host ?? "127.0.0.1");
   const port = options.port ?? 4173;
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");

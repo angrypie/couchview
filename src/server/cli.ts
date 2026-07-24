@@ -101,7 +101,7 @@ export async function replaceStaticBuild(
 
 export function parseCli(argv: string[]): CliOptions {
   let root = Bun.env.COUCHVIEW_ROOT ?? Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
-  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "0.0.0.0";
+  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
   let port = Number(Bun.env.PORT ?? 4173);
   let explicitRoot = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -348,7 +348,12 @@ export async function startServer(
   const staticDirectory = path.resolve(Bun.env.STATIC_DIR ?? defaultStaticDirectory);
   const appRoot = fileURLToPath(new URL("../../", import.meta.url));
   const cliPath = fileURLToPath(import.meta.url);
-  const allowedOrigins = (Bun.env.ALLOWED_ORIGINS ?? "")
+  const allowedOrigins = [
+    Bun.env.COUCHVIEW_ALLOWED_ORIGINS,
+    Bun.env.ALLOWED_ORIGINS,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(",")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);

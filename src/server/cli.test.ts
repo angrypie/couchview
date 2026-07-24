@@ -17,6 +17,8 @@ const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
 const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
+const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
+const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
 const initialDisableReuse = Bun.env.COUCHVIEW_DISABLE_REUSE;
 const initialLegacyDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 
@@ -39,6 +41,18 @@ function restoreEnvironment() {
   if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
   else Bun.env.XDG_DATA_HOME = initialDataHome;
 
+  if (initialAllowedOrigins === undefined) {
+    delete Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
+  } else {
+    Bun.env.COUCHVIEW_ALLOWED_ORIGINS = initialAllowedOrigins;
+  }
+
+  if (initialInternalAllowedOrigins === undefined) {
+    delete Bun.env.ALLOWED_ORIGINS;
+  } else {
+    Bun.env.ALLOWED_ORIGINS = initialInternalAllowedOrigins;
+  }
+
   if (initialDisableReuse === undefined) delete Bun.env.COUCHVIEW_DISABLE_REUSE;
   else Bun.env.COUCHVIEW_DISABLE_REUSE = initialDisableReuse;
 
@@ -60,10 +74,10 @@ describe("parseCli", () => {
 
   afterEach(restoreEnvironment);
 
-  test("defaults to the launch directory, all interfaces, and production port", () => {
+  test("defaults to the launch directory, loopback, and production port", () => {
     expect(parseCli([])).toEqual({
       root: path.resolve(process.cwd()),
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 4173,
     });
   });
@@ -71,7 +85,7 @@ describe("parseCli", () => {
   test("accepts a positional repository path", () => {
     expect(parseCli(["fixtures/example"])).toEqual({
       root: path.resolve("fixtures/example"),
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 4173,
     });
   });
@@ -79,12 +93,12 @@ describe("parseCli", () => {
   test("accepts --repo and --port in either order", () => {
     expect(parseCli(["--repo", "../project", "--port", "5199"])).toEqual({
       root: path.resolve("../project"),
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 5199,
     });
     expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
       root: path.resolve("/tmp/project"),
-      host: "0.0.0.0",
+      host: "127.0.0.1",
       port: 6001,
     });
   });
@@ -300,6 +314,8 @@ describe("multi-project CLI startup", () => {
     delete Bun.env.COUCHVIEW_ROOT;
     delete Bun.env.COUCHVIEW_HOST;
     delete Bun.env.PORT;
+    delete Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
+    delete Bun.env.ALLOWED_ORIGINS;
     delete Bun.env.COUCHVIEW_DISABLE_REUSE;
     delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
     const dataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-data-"));
@@ -338,6 +354,39 @@ describe("multi-project CLI startup", () => {
       result.stop();
     } finally {
       console.log = originalLog;
+    }
+  });
+
+  test("accepts exact public and internal reverse-proxy origins", async () => {
+    const root = await repositoryFixture("public-origin");
+    const port = freePort();
+    Bun.env.COUCHVIEW_ALLOWED_ORIGINS = "https://review.example.com";
+    Bun.env.ALLOWED_ORIGINS = "https://internal-proxy.example.com";
+
+    const result = await startServer(
+      ["--repo", root, "--host", "127.0.0.1", "--port", String(port)],
+      runtime,
+    );
+    if (!result.app || !result.stop) {
+      throw new Error("CLI unexpectedly attached to another server");
+    }
+    try {
+      for (const origin of [
+        "https://review.example.com",
+        "https://internal-proxy.example.com",
+      ]) {
+        const response = await result.app.fetch(
+          new Request(`${origin}/api/instance`, {
+            headers: {
+              host: new URL(origin).host,
+              origin,
+            },
+          }),
+        );
+        expect(response.status).toBe(200);
+      }
+    } finally {
+      result.stop();
     }
   });
 

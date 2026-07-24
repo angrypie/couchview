@@ -16,7 +16,7 @@ function readArguments(args: string[]): { root: string; host: string } {
   let host =
     process.env.COUCHVIEW_HOST ||
     process.env.COUCH_REVIEW_HOST ||
-    "0.0.0.0";
+    "127.0.0.1";
   let explicitRoot = false;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];

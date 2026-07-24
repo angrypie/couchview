@@ -168,6 +168,44 @@ describe("CodexCommitMessageService", () => {
     });
   });
 
+  test("drains large stderr prompt echoes and retains failure details from the tail", async () => {
+    const promptEcho = `user\n<stdin>\n${"staged context\n".repeat(8_000)}`;
+    let killed = false;
+    const successful = new CodexCommitMessageService({
+      executable: "codex",
+      spawn: () => ({
+        ...completedProcess(
+          JSON.stringify({
+            message: "chore: add generated TypeScript data",
+          }),
+          `${promptEcho}\ntokens used\n1234\n`,
+        ),
+        kill() {
+          killed = true;
+        },
+      }),
+    });
+
+    await expect(successful.generate("context")).resolves.toBe(
+      "chore: add generated TypeScript data",
+    );
+    expect(killed).toBe(false);
+
+    const loggedOut = new CodexCommitMessageService({
+      executable: "codex",
+      spawn: () =>
+        completedProcess(
+          "",
+          `${promptEcho}\nNot logged in. Run codex login.\n`,
+          1,
+        ),
+    });
+    await expect(loggedOut.generate("context")).rejects.toMatchObject({
+      status: 503,
+      code: "codex_login_required",
+    });
+  });
+
   test("limits concurrent generation and stops an aborted subprocess", async () => {
     const pending = pendingProcess();
     let spawned = false;
