@@ -102,6 +102,12 @@ test.describe("desktop tmux terminal", () => {
     expect(bounds).not.toBeNull();
     expect(bounds!.width).toBeGreaterThanOrEqual(1270);
     expect(bounds!.height).toBeGreaterThanOrEqual(790);
+    const toolbarBounds = await workspace.locator(".terminal-toolbar").boundingBox();
+    expect(toolbarBounds).not.toBeNull();
+    expect(toolbarBounds!.height).toBeLessThanOrEqual(32);
+    const reviewBounds = await workspace.getByRole("button", { name: "Review" }).boundingBox();
+    expect(reviewBounds).not.toBeNull();
+    expect(reviewBounds!.height).toBeGreaterThanOrEqual(24);
 
     const terminalSurface = page.locator(".terminal-surface");
     const canvas = terminalSurface.locator("canvas");

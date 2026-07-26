@@ -387,34 +387,37 @@ textarea:focus-visible,
 
 .terminal-toolbar {
   min-width: 0;
-  min-height: calc(48px + env(safe-area-inset-top));
-  padding: calc(4px + env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) 4px
-    max(6px, env(safe-area-inset-left));
+  min-height: calc(30px + env(safe-area-inset-top));
+  padding: calc(2px + env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) 2px
+    max(4px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 4px;
   background: rgb(19 24 32 / 98%);
 }
 
 .terminal-toolbar-button {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  min-height: 24px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   color: #cbd5e1;
-  background: #161c24;
+  background: transparent;
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 750;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .terminal-toolbar-button:hover {
+  border-color: var(--line);
   background: var(--panel-hover);
 }
 
@@ -432,10 +435,16 @@ textarea:focus-visible,
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 5px;
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 750;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.terminal-toolbar svg {
+  width: 13px;
+  height: 13px;
 }
 
 .terminal-heading > span:first-of-type {
@@ -446,12 +455,13 @@ textarea:focus-visible,
 
 .terminal-connection {
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: 1px 5px;
   border-radius: 999px;
   color: var(--muted);
   background: #252d37;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
+  line-height: 1.25;
 }
 
 .terminal-connection.connected {
@@ -464,6 +474,17 @@ textarea:focus-visible,
 .terminal-connection.in-use {
   color: var(--yellow);
   background: var(--yellow-bg);
+}
+
+@media (pointer: coarse) {
+  .terminal-toolbar {
+    min-height: calc(40px + env(safe-area-inset-top));
+  }
+
+  .terminal-toolbar-button {
+    min-height: 36px;
+    padding-inline: 8px;
+  }
 }
 
 .terminal-stage {
