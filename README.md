@@ -71,7 +71,9 @@ Couchview provides one persistent tmux terminal per repository, rendered by
 on `PATH`. A new session starts immediately in the repository with tmux's configured
 default shell. Couchview loads the host user's normal XDG or `~/.tmux.conf` first,
 then enforces persistence, mouse, focus, and true-color settings required by the
-browser terminal.
+browser terminal. Review hides the mounted terminal without ending it; reconnects,
+reloads, and Couchview restarts reattach to the same tmux session. **End session**
+kills that session and every program running in it.
 
 The browser renderer uses the supported appearance settings from the host's resolved
 Ghostty configuration when Ghostty is installed, or reads its local config directly.
@@ -81,6 +83,11 @@ unpatched Hack regular, bold, italic, and bold-italic faces are bundled for text
 A Catppuccin Mocha color fallback is also bundled, so remote browsers do not need
 the font installed. Font, terminal renderer, and WASM assets load only after the
 terminal is opened and are not part of the PWA precache.
+
+With the terminal focused, `Cmd++`/`Cmd+-` on Apple devices or `Ctrl++`/`Ctrl+-`
+on Windows and Linux change only its font size; `Cmd+0` or `Ctrl+0` restores the
+Ghostty-configured size. Couchview prevents browser zoom, re-fits tmux, and keeps
+the temporary size across reconnects and Review handoffs. Reloading resets it.
 
 Terminal access is enabled automatically only when the bind address and every
 allowed origin are loopback. Disable it explicitly when desired:

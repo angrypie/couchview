@@ -2,6 +2,7 @@ import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import type { TerminalRendererConfig } from "../shared/contracts.ts";
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
+import { installTerminalFontShortcuts } from "./terminalFontShortcuts.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 
 export interface BrowserTerminalRenderer {
@@ -89,15 +90,20 @@ export async function createBrowserTerminal(
   terminal.loadAddon(fitAddon);
   terminal.open(options.container);
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
-  const renderer = terminal.renderer;
-  if (renderer) {
-    const adjustedMetrics = adjustedTerminalCellMetrics(renderer.getMetrics(), config);
+  const applyAdjustedMetrics = () => {
+    const renderer = terminal.renderer;
+    if (!renderer) return;
+    const adjustedMetrics = adjustedTerminalCellMetrics(
+      renderer.getMetrics(),
+      config,
+    );
     // ghostty-web 0.4 has no public cell-metric adjustment API. Its TypeScript
     // private field is a normal runtime property, so keep this adaptation small
     // and guarded until upstream exposes line-height and letter-spacing options.
     (renderer as unknown as { metrics: typeof adjustedMetrics }).metrics = adjustedMetrics;
     renderer.resize(terminal.cols, terminal.rows);
-  }
+  };
+  applyAdjustedMetrics();
   const dataSubscription = terminal.onData((data) => {
     options.onData(encoder.encode(data));
   });
@@ -106,6 +112,15 @@ export async function createBrowserTerminal(
   });
   fitAddon.observeResize();
   fitAddon.fit();
+  const disposeFontShortcuts = installTerminalFontShortcuts(options.container, {
+    initialFontSize: config.fontSize,
+    onFontSizeChange(fontSize) {
+      terminal.options.fontSize = fontSize;
+      applyAdjustedMetrics();
+      fitAddon.fit();
+      terminal.focus();
+    },
+  });
 
   return {
     get cols() {
@@ -124,6 +139,7 @@ export async function createBrowserTerminal(
       fitAddon.fit();
     },
     dispose() {
+      disposeFontShortcuts();
       disposeKeyRepeat();
       dataSubscription.dispose();
       resizeSubscription.dispose();

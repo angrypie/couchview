@@ -104,7 +104,40 @@ test.describe("desktop tmux terminal", () => {
     expect(bounds!.height).toBeGreaterThanOrEqual(790);
 
     const terminalSurface = page.locator(".terminal-surface");
+    const canvas = terminalSurface.locator("canvas");
+    const primaryModifier = await page.evaluate(() => {
+      const userAgentData = (navigator as Navigator & {
+        userAgentData?: { platform?: string };
+      }).userAgentData;
+      const platform = userAgentData?.platform || navigator.platform || navigator.userAgent;
+      return /Mac|iPhone|iPad|iPod/i.test(platform) ? "Meta" : "Control";
+    });
+    const cellHeight = async () => {
+      const latestDimensions = (await state()).resizes.at(-1);
+      if (!latestDimensions) return 0;
+      return canvas.evaluate(
+        (element, rows) => (element as HTMLCanvasElement).height / rows,
+        latestDimensions.rows,
+      );
+    };
     await terminalSurface.click();
+    const initialCellHeight = await cellHeight();
+    const inputBeforeFontChange = (await state()).inputs.join("");
+    const increaseResizeCount = (await state()).resizes.length;
+    await page.keyboard.press(`${primaryModifier}+=`);
+    await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
+      increaseResizeCount,
+    );
+    await expect.poll(cellHeight).toBeGreaterThan(initialCellHeight);
+    expect((await state()).inputs.join("")).toBe(inputBeforeFontChange);
+    const decreaseResizeCount = (await state()).resizes.length;
+    await page.keyboard.press(`${primaryModifier}+-`);
+    await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
+      decreaseResizeCount,
+    );
+    await expect.poll(cellHeight).toBe(initialCellHeight);
+    expect((await state()).inputs.join("")).toBe(inputBeforeFontChange);
+
     await page.keyboard.down("u");
     await expect(terminalSurface).toHaveAttribute("contenteditable", "false");
     await page.keyboard.down("u");
@@ -124,6 +157,13 @@ test.describe("desktop tmux terminal", () => {
       resizeCount,
     );
 
+    const sessionResizeCount = (await state()).resizes.length;
+    await page.keyboard.press(`${primaryModifier}+=`);
+    await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
+      sessionResizeCount,
+    );
+    await expect.poll(cellHeight).toBeGreaterThan(initialCellHeight);
+    const sessionCellHeight = await cellHeight();
     const connectedState = await state();
     await workspace.getByRole("button", { name: "Review" }).click();
     await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
@@ -131,6 +171,7 @@ test.describe("desktop tmux terminal", () => {
     await page.getByRole("button", { name: "Open tmux terminal" }).click();
     await expect(workspace).toBeVisible();
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible();
+    expect(await cellHeight()).toBe(sessionCellHeight);
     expect((await state()).attachmentCount).toBe(connectedState.attachmentCount);
     expect((await state()).socketConnections).toBe(connectedState.socketConnections);
 
