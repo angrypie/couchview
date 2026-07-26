@@ -48,6 +48,10 @@ test.describe("desktop tmux terminal", () => {
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
       timeout: 15_000,
     });
+    await expect(page.locator(".terminal-surface")).toHaveCSS(
+      "caret-color",
+      "rgba(0, 0, 0, 0)",
+    );
     await expect.poll(() => loadedAssets.some(
       (pathname) => /\/assets\/ghostty-web-[^/]+\.js$/.test(pathname),
     )).toBe(true);
@@ -55,12 +59,11 @@ test.describe("desktop tmux terminal", () => {
       (pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname),
     )).toBe(true);
     await expect.poll(() => loadedAssets.some(
-      (pathname) => /\/assets\/HackNerdFontMono-Regular-[^/]+\.ttf$/.test(pathname),
+      (pathname) => /\/assets\/Hack-Regular-[^/]+\.ttf$/.test(pathname),
     )).toBe(true);
     await expect.poll(() => loadedAssets.some(
-      (pathname) => /\/assets\/HackNerdFontMono-Bold-[^/]+\.ttf$/.test(pathname),
+      (pathname) => /\/assets\/Hack-Bold-[^/]+\.ttf$/.test(pathname),
     )).toBe(true);
-
     const state = async () => (await (
       await request.get("/api/e2e/terminal")
     ).json()) as TerminalFixtureState;
@@ -100,7 +103,16 @@ test.describe("desktop tmux terminal", () => {
     expect(bounds!.width).toBeGreaterThanOrEqual(1270);
     expect(bounds!.height).toBeGreaterThanOrEqual(790);
 
-    await page.locator(".terminal-surface").click();
+    const terminalSurface = page.locator(".terminal-surface");
+    await terminalSurface.click();
+    await page.keyboard.down("u");
+    await expect(terminalSurface).toHaveAttribute("contenteditable", "false");
+    await page.keyboard.down("u");
+    await page.keyboard.down("u");
+    await page.keyboard.up("u");
+    await expect(terminalSurface).toHaveAttribute("contenteditable", "true");
+    await expect.poll(async () => (await state()).inputs.join("")).toContain("uuu");
+
     await page.keyboard.type("hello-from-browser");
     await expect.poll(async () => (await state()).inputs.join("")).toContain(
       "hello-from-browser",

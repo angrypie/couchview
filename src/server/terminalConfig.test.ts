@@ -9,7 +9,7 @@ import {
 describe("Ghostty terminal appearance", () => {
   test("maps the supported local settings and ignores native-only options", () => {
     const config = rendererConfigFromGhosttyText(`
-      font-family = "Local Nerd Font"
+      font-family = "Local Font"
       font-size = 17
       cursor-style = underline
       cursor-style-blink = true
@@ -26,7 +26,7 @@ describe("Ghostty terminal appearance", () => {
     `);
 
     expect(config).toMatchObject({
-      fontFamily: "Local Nerd Font",
+      fontFamily: "Local Font",
       fontSize: 17,
       cellHeightAdjustment: 4,
       cellWidthAdjustment: -2,
@@ -55,7 +55,7 @@ describe("Ghostty terminal appearance", () => {
       palette = 3=#123456
     `);
 
-    expect(config.fontFamily).toBe("Hack Nerd Font");
+    expect(config.fontFamily).toBe("Hack");
     expect(config.fontSize).toBe(15);
     expect(config.cellHeightAdjustment).toBe(1);
     expect(config.cellWidthAdjustment).toBe(-1);

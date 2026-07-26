@@ -2,6 +2,7 @@ import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import type { TerminalRendererConfig } from "../shared/contracts.ts";
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
+import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 
 export interface BrowserTerminalRenderer {
   readonly cols: number;
@@ -21,7 +22,13 @@ interface CreateBrowserTerminalOptions {
 
 let initialization: Promise<import("ghostty-web").Ghostty> | null = null;
 const encoder = new TextEncoder();
-const BUNDLED_FONT_FAMILY = "Hack Nerd Font Mono";
+const BUNDLED_TEXT_FONT_FAMILY = "Hack";
+
+function browserFontFamily(configuredFamily: string): string {
+  return /\bnerd\s+font\b/i.test(configuredFamily)
+    ? BUNDLED_TEXT_FONT_FAMILY
+    : configuredFamily;
+}
 
 function quotedFontFamily(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
@@ -37,14 +44,13 @@ export async function createBrowserTerminal(
   });
   const ghosttyInstance = await initialization;
   const { config } = options;
-  await document.fonts?.load(`${config.fontSize}px "${BUNDLED_FONT_FAMILY}"`);
-  const configuredFamily = config.fontFamily.toLowerCase() === "hack nerd font"
-    ? BUNDLED_FONT_FAMILY
-    : config.fontFamily;
+  await document.fonts?.load(`${config.fontSize}px "${BUNDLED_TEXT_FONT_FAMILY}"`);
+  const configuredFamily = browserFontFamily(config.fontFamily);
   const quotedConfiguredFamily = quotedFontFamily(configuredFamily);
-  const fontFamily = configuredFamily.toLowerCase() === BUNDLED_FONT_FAMILY.toLowerCase()
+  const fontFamily = configuredFamily.toLowerCase() === BUNDLED_TEXT_FONT_FAMILY.toLowerCase()
     ? `${quotedConfiguredFamily}, monospace`
-    : `${quotedConfiguredFamily}, "${BUNDLED_FONT_FAMILY}", monospace`;
+    : `${quotedConfiguredFamily}, "${BUNDLED_TEXT_FONT_FAMILY}", ` +
+      "monospace";
   const palette = config.theme.palette;
 
   const terminal = new ghostty.Terminal({
@@ -82,6 +88,7 @@ export async function createBrowserTerminal(
   const fitAddon = new ghostty.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(options.container);
+  const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
   const renderer = terminal.renderer;
   if (renderer) {
     const adjustedMetrics = adjustedTerminalCellMetrics(renderer.getMetrics(), config);
@@ -117,6 +124,7 @@ export async function createBrowserTerminal(
       fitAddon.fit();
     },
     dispose() {
+      disposeKeyRepeat();
       dataSubscription.dispose();
       resizeSubscription.dispose();
       fitAddon.dispose();

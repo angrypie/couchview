@@ -664,7 +664,7 @@ test.describe("production PWA", () => {
       cachePaths.some((pathname) =>
         pathname.includes("ghostty-web") ||
         pathname.endsWith(".wasm") ||
-        pathname.includes("HackNerdFont")
+        pathname.includes("Hack-")
       ),
     ).toBe(false);
     expect(cachePaths.length).toBeLessThan(20);

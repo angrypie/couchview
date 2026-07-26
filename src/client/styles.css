@@ -1,33 +1,33 @@
 @font-face {
-  font-family: "Hack Nerd Font Mono";
+  font-family: "Hack";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("./assets/fonts/HackNerdFontMono-Regular.ttf") format("truetype");
+  src: url("./assets/fonts/Hack-Regular.ttf") format("truetype");
 }
 
 @font-face {
-  font-family: "Hack Nerd Font Mono";
+  font-family: "Hack";
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url("./assets/fonts/HackNerdFontMono-Bold.ttf") format("truetype");
+  src: url("./assets/fonts/Hack-Bold.ttf") format("truetype");
 }
 
 @font-face {
-  font-family: "Hack Nerd Font Mono";
+  font-family: "Hack";
   font-style: italic;
   font-weight: 400;
   font-display: swap;
-  src: url("./assets/fonts/HackNerdFontMono-Italic.ttf") format("truetype");
+  src: url("./assets/fonts/Hack-Italic.ttf") format("truetype");
 }
 
 @font-face {
-  font-family: "Hack Nerd Font Mono";
+  font-family: "Hack";
   font-style: italic;
   font-weight: 700;
   font-display: swap;
-  src: url("./assets/fonts/HackNerdFontMono-BoldItalic.ttf") format("truetype");
+  src: url("./assets/fonts/Hack-BoldItalic.ttf") format("truetype");
 }
 
 :root {
@@ -482,6 +482,7 @@ textarea:focus-visible,
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  caret-color: transparent;
 }
 
 .terminal-surface > div,
