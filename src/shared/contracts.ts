@@ -9,6 +9,7 @@ export const API_ROUTES = {
   restart: "/api/restart",
   repositories: "/api/repositories",
   controlRepositories: "/api/control/repositories",
+  controlRestart: "/api/control/restart",
   repository: repositoryApiPath,
   files: repositoryFilesApiPath,
   fileDiff: (repositoryId: string, fileId: string) =>

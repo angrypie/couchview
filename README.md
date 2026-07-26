@@ -280,9 +280,11 @@ bun run start -- --repo /absolute/path/to/project --port 4173
 After changing Couchview itself, open the repository picker and choose **Rebuild & restart
 Couchview**. The running production server executes `bun run build` in its own Couchview
 checkout, builds into a temporary directory so a failed build cannot replace the current
-UI, then relaunches on the same host and port and reloads the current review. This action
-is intentionally unavailable in development mode, where Vite already reloads client
-changes, and when `STATIC_DIR` points at a custom build.
+UI, then replaces its server worker on the same host and port and reloads the current
+review. The foreground supervisor remains attached to the launching terminal, including
+across repeated restarts. `couchview restart` triggers the same action from another shell.
+This action is intentionally unavailable in development mode, where Vite already reloads
+client changes, and when `STATIC_DIR` points at a custom build.
 
 For application development, run the Bun API and Vite UI together:
 

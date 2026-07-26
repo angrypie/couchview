@@ -15,6 +15,10 @@
 
 Use Bun 1.3 or newer. Before submitting, run type checking, unit tests, and a production build. Run Playwright for behavior or layout changes.
 
+## Running Couchview Process
+
+Treat a responding Couchview server as user-owned: do not stop it or start a competing instance. After verified changes, use `couchview restart` (with matching `--host`/`--port` when needed) and report failures instead of falling back to kill-and-relaunch.
+
 ## Coding Style & Naming Conventions
 
 Write strict TypeScript and React function components. Follow existing style: two-space indentation, double quotes, semicolons, and trailing commas in multiline constructs. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `commentExport.ts`. Keep client/server boundaries explicit through shared contracts. No formatter or linter is configured; preserve nearby formatting.

@@ -7,7 +7,10 @@ import {
   parseCli,
   replaceStaticBuild,
   restartCapability,
+  restartRunningServer,
+  SUPERVISOR_RESTART_EXIT_CODE,
   startServer,
+  superviseServer,
 } from "./cli.ts";
 import { createCouchviewApp, type CouchviewApp } from "./server.ts";
 
@@ -236,6 +239,83 @@ describe("restartCapability", () => {
   });
 });
 
+describe("server supervisor", () => {
+  test("keeps the foreground owner alive while replacing a restarted worker", async () => {
+    const exitCodes = [SUPERVISOR_RESTART_EXIT_CODE, 0];
+    const commands: string[][] = [];
+    const environments: NodeJS.ProcessEnv[] = [];
+    const listeners = new Map<string, () => void>();
+
+    const exitCode = await superviseServer(
+      ["--repo", "/tmp/project", "--port", "4999"],
+      {
+        spawn(command, options) {
+          commands.push(command);
+          environments.push(options.env);
+          return {
+            exited: Promise.resolve(exitCodes.shift() ?? 1),
+            kill() {},
+          };
+        },
+        onSignal(signal, listener) {
+          listeners.set(signal, listener);
+        },
+        offSignal(signal, listener) {
+          if (listeners.get(signal) === listener) listeners.delete(signal);
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(commands).toHaveLength(2);
+    expect(commands[0]?.slice(-4)).toEqual([
+      "--repo",
+      "/tmp/project",
+      "--port",
+      "4999",
+    ]);
+    expect(environments[0]?.COUCHVIEW_SUPERVISED_WORKER).toBe("1");
+    expect(environments[1]?.COUCHVIEW_SUPERVISED_WORKER).toBe("1");
+    expect(environments[1]?.COUCHVIEW_DISABLE_REUSE).toBe("1");
+    expect(listeners.size).toBe(0);
+  });
+
+  test("forwards termination to the active worker without respawning it", async () => {
+    const listeners = new Map<string, () => void>();
+    const killed: NodeJS.Signals[] = [];
+    let finishWorker!: (exitCode: number) => void;
+    const workerExited = new Promise<number>((resolve) => {
+      finishWorker = resolve;
+    });
+    let spawnCount = 0;
+    const supervised = superviseServer([], {
+      spawn() {
+        spawnCount += 1;
+        return {
+          exited: workerExited,
+          kill(signal) {
+            killed.push(signal);
+            finishWorker(0);
+          },
+        };
+      },
+      onSignal(signal, listener) {
+        listeners.set(signal, listener);
+      },
+      offSignal(signal, listener) {
+        if (listeners.get(signal) === listener) listeners.delete(signal);
+      },
+    });
+
+    listeners.get("SIGTERM")?.();
+
+    expect(await supervised).toBe(0);
+    expect(killed).toEqual(["SIGTERM"]);
+    expect(spawnCount).toBe(1);
+    expect(listeners.size).toBe(0);
+  });
+});
+
 describe("replaceStaticBuild", () => {
   test("atomically promotes a successful build and removes the previous one", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "couchview-build-swap-"));
@@ -384,6 +464,111 @@ describe("multi-project CLI startup", () => {
     } finally {
       console.log = originalLog;
     }
+  });
+
+  test("asks the owning server to rebuild and waits for its replacement", async () => {
+    const root = await repositoryFixture("restart-owner");
+    const port = freePort();
+    let restartRequests = 0;
+    let replacementReady = false;
+    const app = await createCouchviewApp({
+      root,
+      host: "127.0.0.1",
+      port,
+      restart: {
+        available: true,
+        reason: null,
+        request: async () => {
+          restartRequests += 1;
+          replacementReady = true;
+        },
+      },
+    });
+    app.registerServerInstance();
+    applications.push(app);
+    const replacementId = "replacement-instance";
+    endpoints.set(port, async (request) => {
+      if (
+        replacementReady &&
+        request.method === "GET" &&
+        new URL(request.url).pathname === "/api/instance"
+      ) {
+        return Response.json({
+          service: "couchview",
+          protocolVersion: app.protocolVersion,
+          version: app.version,
+          instanceId: replacementId,
+          bindHost: app.bindHost,
+          port: app.port,
+          accessOrigins: app.accessOrigins,
+          terminalEnabled: app.terminalSessions.enabled,
+        });
+      }
+      return app.fetch(request);
+    });
+
+    const result = await restartRunningServer(
+      ["--port", String(port)],
+      { fetch: runtimeFetch, wait: async () => undefined },
+    );
+
+    expect(restartRequests).toBe(1);
+    expect(result.previous.instanceId).toBe(app.instanceId);
+    expect(result.replacement.instanceId).toBe(replacementId);
+  });
+
+  test("falls back to browser restart authentication for a pre-control server", async () => {
+    const root = await repositoryFixture("restart-legacy");
+    const port = freePort();
+    let replacementReady = false;
+    const app = await createCouchviewApp({
+      root,
+      host: "127.0.0.1",
+      port,
+      restart: {
+        available: true,
+        reason: null,
+        request: async () => {
+          replacementReady = true;
+        },
+      },
+    });
+    app.registerServerInstance();
+    applications.push(app);
+    endpoints.set(port, (request) => {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === "/api/control/restart") {
+        return Response.json(
+          {
+            error: {
+              code: "origin_required",
+              message: "A same-origin browser request is required",
+            },
+          },
+          { status: 403 },
+        );
+      }
+      if (replacementReady && pathname === "/api/instance") {
+        return Response.json({
+          service: "couchview",
+          protocolVersion: app.protocolVersion,
+          version: app.version,
+          instanceId: "legacy-replacement",
+          bindHost: app.bindHost,
+          port: app.port,
+          accessOrigins: app.accessOrigins,
+          terminalEnabled: app.terminalSessions.enabled,
+        });
+      }
+      return app.fetch(request);
+    });
+
+    const result = await restartRunningServer(
+      ["--port", String(port)],
+      { fetch: runtimeFetch, wait: async () => undefined },
+    );
+
+    expect(result.replacement.instanceId).toBe("legacy-replacement");
   });
 
   test("accepts exact public and internal reverse-proxy origins", async () => {

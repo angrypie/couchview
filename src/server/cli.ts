@@ -7,10 +7,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   API_ROUTES,
+  CSRF_HEADER,
   type ApiErrorBody,
+  type BootstrapResponse,
   type InstanceResponse,
   type RegisterRepositoryResponse,
   type RestartCapability,
+  type RestartResponse,
 } from "../shared/contracts.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
@@ -41,7 +44,98 @@ interface StartServerRuntime {
   serve: typeof Bun.serve;
 }
 
+interface RestartCliOptions {
+  host: string;
+  port: number;
+}
+
+interface RestartCliRuntime {
+  fetch: typeof globalThis.fetch;
+  now(): number;
+  wait(milliseconds: number): Promise<void>;
+}
+
+interface SupervisedChild {
+  exited: Promise<number>;
+  kill(signal: NodeJS.Signals): void;
+}
+
+interface SupervisorSpawnOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  stdin: "inherit";
+  stdout: "inherit";
+  stderr: "inherit";
+}
+
+interface SupervisorRuntime {
+  spawn(command: string[], options: SupervisorSpawnOptions): SupervisedChild;
+  onSignal(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+  offSignal(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+}
+
 const restartDelayMs = 250;
+const supervisedWorkerEnvironment = "COUCHVIEW_SUPERVISED_WORKER";
+export const SUPERVISOR_RESTART_EXIT_CODE = 75;
+
+export async function superviseServer(
+  argv: string[] = [],
+  runtimeOverrides: Partial<SupervisorRuntime> = {},
+): Promise<number> {
+  const runtime: SupervisorRuntime = {
+    spawn: runtimeOverrides.spawn ?? ((command, options) =>
+      Bun.spawn(command, options) as SupervisedChild),
+    onSignal: runtimeOverrides.onSignal ?? ((signal, listener) =>
+      process.on(signal, listener)),
+    offSignal: runtimeOverrides.offSignal ?? ((signal, listener) =>
+      process.off(signal, listener)),
+  };
+  const cliPath = fileURLToPath(import.meta.url);
+  let child: SupervisedChild | null = null;
+  let stopping = false;
+  let restarting = false;
+  const forward = (signal: "SIGINT" | "SIGTERM") => {
+    stopping = true;
+    try {
+      child?.kill(signal);
+    } catch {
+      // The worker may already have exited after the signal reached its process group.
+    }
+  };
+  const interrupt = () => forward("SIGINT");
+  const terminate = () => forward("SIGTERM");
+  runtime.onSignal("SIGINT", interrupt);
+  runtime.onSignal("SIGTERM", terminate);
+  try {
+    while (!stopping) {
+      child = runtime.spawn(
+        [process.execPath, "run", cliPath, ...argv],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            [supervisedWorkerEnvironment]: "1",
+            ...(restarting ? { COUCHVIEW_DISABLE_REUSE: "1" } : {}),
+          },
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        },
+      );
+      const exitCode = await child.exited;
+      child = null;
+      if (stopping || exitCode !== SUPERVISOR_RESTART_EXIT_CODE) {
+        return exitCode;
+      }
+      restarting = true;
+      console.log("Restarting Couchview server worker...");
+    }
+    return 0;
+  } finally {
+    runtime.offSignal("SIGINT", interrupt);
+    runtime.offSignal("SIGTERM", terminate);
+  }
+}
 
 export function restartCapability(
   environment: NodeJS.ProcessEnv = process.env,
@@ -161,13 +255,41 @@ export function parseCli(argv: string[]): CliOptions {
   };
 }
 
+function parseRestartCli(argv: string[]): RestartCliOptions {
+  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
+  let port = Number(Bun.env.PORT ?? 4173);
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--port") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("Port must be between 1 and 65535");
+      port = Number(value);
+      index += 1;
+    } else if (argument === "--host") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) throw new Error("Host is required");
+      host = value;
+      index += 1;
+    } else {
+      throw new Error(`Unknown restart option: ${argument}`);
+    }
+  }
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Port must be between 1 and 65535");
+  }
+  return {
+    host: normalizeBindHost(host),
+    port,
+  };
+}
+
 function probeHost(host: string): string {
   if (host === "0.0.0.0") return "127.0.0.1";
   if (host === "::") return "::1";
   return host;
 }
 
-function probeOrigin(options: CliOptions): string {
+function probeOrigin(options: Pick<CliOptions, "host" | "port">): string {
   return `http://${hostForUrl(probeHost(options.host))}:${options.port}`;
 }
 
@@ -184,9 +306,10 @@ async function fetchWithTimeout(
   url: string,
   fetchImplementation: typeof globalThis.fetch,
   init?: RequestInit,
+  timeoutMs = 500,
 ): Promise<Response | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 500);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchImplementation(url, { ...init, signal: controller.signal });
   } catch {
@@ -217,6 +340,160 @@ async function responseError(response: Response): Promise<string> {
   } catch {
     return `HTTP ${response.status}`;
   }
+}
+
+async function responseErrorDetails(
+  response: Response,
+): Promise<{ code: string | null; message: string }> {
+  try {
+    const body = (await response.json()) as ApiErrorBody;
+    return {
+      code: body.error.code,
+      message: body.error.message,
+    };
+  } catch {
+    return { code: null, message: `HTTP ${response.status}` };
+  }
+}
+
+function isRestartResponse(value: unknown): value is RestartResponse {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<RestartResponse>;
+  return candidate.status === "restarting" &&
+    typeof candidate.previousInstanceId === "string";
+}
+
+async function requestRunningRestart(
+  origin: string,
+  controlToken: string,
+  fetchImplementation: typeof globalThis.fetch,
+): Promise<RestartResponse> {
+  const requestTimeoutMs = 5 * 60_000 + 10_000;
+  let response = await fetchWithTimeout(
+    `${origin}${API_ROUTES.controlRestart}`,
+    fetchImplementation,
+    {
+      method: "POST",
+      headers: { authorization: `Bearer ${controlToken}` },
+    },
+    requestTimeoutMs,
+  );
+  if (!response) throw new Error("The running Couchview server stopped responding");
+
+  if (!response.ok) {
+    const error = await responseErrorDetails(response);
+    const legacyControlRoute = response.status === 404 ||
+      error.code === "route_not_found" ||
+      error.code === "origin_required";
+    if (!legacyControlRoute) throw new Error(error.message);
+
+    const bootstrapResponse = await fetchWithTimeout(
+      `${origin}${API_ROUTES.bootstrap}`,
+      fetchImplementation,
+    );
+    if (!bootstrapResponse?.ok) {
+      throw new Error("The running Couchview server stopped responding");
+    }
+    const bootstrap = (await bootstrapResponse.json().catch(() => null)) as
+      | Partial<BootstrapResponse>
+      | null;
+    if (!bootstrap || typeof bootstrap.csrfToken !== "string") {
+      throw new Error("The running Couchview server returned invalid control data");
+    }
+    response = await fetchWithTimeout(
+      `${origin}${API_ROUTES.restart}`,
+      fetchImplementation,
+      {
+        method: "POST",
+        headers: {
+          origin,
+          [CSRF_HEADER]: bootstrap.csrfToken,
+        },
+      },
+      requestTimeoutMs,
+    );
+    if (!response) throw new Error("The running Couchview server stopped responding");
+  }
+
+  if (!response.ok) throw new Error(await responseError(response));
+  const result: unknown = await response.json().catch(() => null);
+  if (!isRestartResponse(result)) {
+    throw new Error("The running Couchview server returned an invalid restart response");
+  }
+  return result;
+}
+
+export async function restartRunningServer(
+  argv: string[] = [],
+  runtimeOverrides: Partial<RestartCliRuntime> = {},
+): Promise<{ previous: InstanceResponse; replacement: InstanceResponse }> {
+  const runtime: RestartCliRuntime = {
+    fetch: runtimeOverrides.fetch ?? globalThis.fetch,
+    now: runtimeOverrides.now ?? Date.now,
+    wait: runtimeOverrides.wait ??
+      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
+  };
+  const options = parseRestartCli(argv);
+  const origin = probeOrigin(options);
+  const instanceResponse = await fetchWithTimeout(
+    `${origin}${API_ROUTES.instance}`,
+    runtime.fetch,
+  );
+  if (!instanceResponse) throw new Error(`No Couchview server is running at ${origin}`);
+  if (!instanceResponse.ok) {
+    throw new Error(`The service at ${origin} is not a compatible Couchview server`);
+  }
+  const rawInstance: unknown = await instanceResponse.json().catch(() => null);
+  if (!isInstanceResponse(rawInstance)) {
+    throw new Error(`The service at ${origin} is not a compatible Couchview server`);
+  }
+  if (rawInstance.protocolVersion !== INSTANCE_PROTOCOL_VERSION) {
+    throw new Error(
+      `Couchview ${rawInstance.version} uses control protocol ${rawInstance.protocolVersion}; update the CLI or server before restarting`,
+    );
+  }
+
+  const database = await StateDatabase.open(resolveStateDatabasePath());
+  let controlToken: string;
+  try {
+    const stored = database.serverInstance(rawInstance.instanceId);
+    if (!stored) {
+      throw new Error(
+        "The running Couchview server uses a different XDG data directory; use the matching XDG_DATA_HOME",
+      );
+    }
+    controlToken = stored.controlToken;
+  } finally {
+    database.close();
+  }
+
+  console.log(`Requesting rebuild and restart from Couchview at ${origin}...`);
+  const restart = await requestRunningRestart(origin, controlToken, runtime.fetch);
+  if (restart.previousInstanceId !== rawInstance.instanceId) {
+    throw new Error("The Couchview server changed before the restart request completed");
+  }
+
+  const deadline = runtime.now() + 60_000;
+  while (runtime.now() < deadline) {
+    await runtime.wait(250);
+    const candidateResponse = await fetchWithTimeout(
+      `${origin}${API_ROUTES.instance}`,
+      runtime.fetch,
+    );
+    if (!candidateResponse?.ok) continue;
+    const candidate: unknown = await candidateResponse.json().catch(() => null);
+    if (
+      isInstanceResponse(candidate) &&
+      candidate.protocolVersion === INSTANCE_PROTOCOL_VERSION &&
+      candidate.instanceId !== rawInstance.instanceId
+    ) {
+      console.log(`Couchview restarted successfully at ${origin}.`);
+      return { previous: rawInstance, replacement: candidate };
+    }
+  }
+  throw new Error(
+    "Couchview did not come back within 60 seconds. Check the owner process logs.",
+  );
 }
 
 async function registerWithRunningServer(
@@ -557,6 +834,9 @@ export async function startServer(
     process.off("SIGTERM", stop);
     app.close();
     server.stop(true);
+    if (Bun.env[supervisedWorkerEnvironment] === "1") {
+      process.exit(SUPERVISOR_RESTART_EXIT_CODE);
+    }
     try {
       const replacement = Bun.spawn(
         [
@@ -598,8 +878,19 @@ export async function startServer(
 }
 
 if (import.meta.main) {
-  startServer().catch((error) => {
-    console.error(`Couchview could not start: ${(error as Error).message}`);
+  const argv = process.argv.slice(2);
+  const restarting = argv[0] === "restart";
+  const command = restarting
+    ? restartRunningServer(argv.slice(1))
+    : Bun.env[supervisedWorkerEnvironment] === "1"
+      ? startServer(argv)
+      : superviseServer(argv).then((exitCode) => {
+          process.exitCode = exitCode;
+        });
+  command.catch((error) => {
+    console.error(
+      `Couchview could not ${restarting ? "restart" : "start"}: ${(error as Error).message}`,
+    );
     process.exitCode = 1;
   });
 }

@@ -731,6 +731,28 @@ describe("Couchview HTTP security and routes", () => {
     expect(rejected.status).toBe(403);
     expect(restartRequests).toBe(0);
 
+    const rejectedControl = await app.fetch(
+      request(API_ROUTES.controlRestart, { method: "POST" }),
+    );
+    expect(rejectedControl.status).toBe(403);
+    expect((await rejectedControl.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "control_token_failed" },
+    });
+    expect(restartRequests).toBe(0);
+
+    const acceptedControl = await app.fetch(
+      request(API_ROUTES.controlRestart, {
+        method: "POST",
+        headers: { authorization: `Bearer ${app.controlToken}` },
+      }),
+    );
+    expect(acceptedControl.status).toBe(202);
+    expect(await acceptedControl.json()).toEqual({
+      status: "restarting",
+      previousInstanceId: app.instanceId,
+    });
+    expect(restartRequests).toBe(1);
+
     const accepted = await app.fetch(
       request(API_ROUTES.restart, {
         method: "POST",
@@ -745,7 +767,7 @@ describe("Couchview HTTP security and routes", () => {
       status: "restarting",
       previousInstanceId: app.instanceId,
     });
-    expect(restartRequests).toBe(1);
+    expect(restartRequests).toBe(2);
   });
 
   test("bulk stages an exact validated set of files", async () => {

@@ -588,9 +588,11 @@ export async function createCouchviewApp(
   const handleApi = async (request: Request, url: URL): Promise<Response> => {
     const controlRegistration =
       url.pathname === API_ROUTES.controlRepositories && request.method === "POST";
-    if (controlRegistration) {
+    const controlRestart =
+      url.pathname === API_ROUTES.controlRestart && request.method === "POST";
+    if (controlRegistration || controlRestart) {
       if (!tokenMatches(bearerToken(request), controlToken)) {
-        throw new HttpError(403, "control_token_failed", "CLI registration is not authorized");
+        throw new HttpError(403, "control_token_failed", "CLI control request is not authorized");
       }
     } else if (isMutation(request.method)) {
       if (!request.headers.get("origin")) {
@@ -630,7 +632,10 @@ export async function createCouchviewApp(
       };
       return json(response);
     }
-    if (url.pathname === API_ROUTES.restart && request.method === "POST") {
+    if (
+      (url.pathname === API_ROUTES.restart || controlRestart) &&
+      request.method === "POST"
+    ) {
       if (!restart.available || !restart.request) {
         throw new HttpError(
           409,
