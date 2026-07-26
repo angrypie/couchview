@@ -4,6 +4,11 @@ import {
   type ApiErrorBody,
   type ApiErrorDiagnostic,
   type BootstrapResponse,
+  // Contracts for the "Send comments to Codex" thread and approval flow.
+  type CodexApprovalRequest,
+  type CodexThreadResponse,
+  type CodexThreadsResponse,
+  type CodexTurnResponse,
   type ChangesResponse,
   type CommitRequest,
   type CommitResponse,
@@ -151,6 +156,71 @@ export const api = {
     return request<PackageScriptsResponse>(
       API_ROUTES.packageScripts(repositoryId),
       { signal },
+    );
+  },
+
+  codexThreads(
+    repositoryId: string,
+    cursor?: string | null,
+    signal?: AbortSignal,
+  ) {
+    return request<CodexThreadsResponse>(
+      withQuery(API_ROUTES.codexThreads(repositoryId), { cursor, limit: 40 }),
+      { signal },
+    );
+  },
+
+  createCodexThread(
+    repositoryId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<CodexThreadResponse>(
+      API_ROUTES.codexThreads(repositoryId),
+      { method: "POST", body: JSON.stringify({}), signal },
+      csrfToken,
+    );
+  },
+
+  sendCodexComments(
+    repositoryId: string,
+    threadId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<CodexTurnResponse>(
+      API_ROUTES.codexThreadTurns(repositoryId, threadId),
+      { method: "POST", body: JSON.stringify({}), signal },
+      csrfToken,
+    );
+  },
+
+  interruptCodexTurn(
+    repositoryId: string,
+    threadId: string,
+    turnId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<{ status: "interrupting" }>(
+      API_ROUTES.codexThreadTurnInterrupt(repositoryId, threadId, turnId),
+      { method: "POST", body: JSON.stringify({}), signal },
+      csrfToken,
+    );
+  },
+
+  respondCodexApproval(
+    repositoryId: string,
+    threadId: string,
+    approvalId: string,
+    body: CodexApprovalRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<{ status: "submitted" }>(
+      API_ROUTES.codexApproval(repositoryId, threadId, approvalId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
     );
   },
 

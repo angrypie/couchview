@@ -64,6 +64,16 @@ describe("Codex comment export", () => {
     expect(output).not.toContain("Handle the empty case.");
   });
 
+  test("tells Codex to answer informational questions without editing", () => {
+    const output = exportCommentsForCodex([
+      comment({ body: "What does this message do?" }),
+    ]);
+
+    expect(output).toContain("Informational questions");
+    expect(output).toContain("Intent: informational question — answer only; do not edit files.");
+    expect(output).toContain("leave the workspace unchanged");
+  });
+
   test("quotes unusual paths and keeps multiline Markdown inside JSON", () => {
     const output = exportCommentsForCodex([
       comment({

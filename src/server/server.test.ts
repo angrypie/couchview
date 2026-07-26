@@ -23,6 +23,7 @@ import {
   type StageFilesResponse,
 } from "../shared/contracts.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
+import type { CodexAppServerService } from "./codexAppServer.ts";
 import {
   accessOriginsForHost,
   createCouchviewApp,
@@ -45,6 +46,7 @@ async function fixture(
   revisionPollIntervalMs?: number,
   restart?: CouchviewAppOptions["restart"],
   commitMessages?: CommitMessageGenerator,
+  codex?: CodexAppServerService,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-"));
   temporaryDirectories.push(directory);
@@ -62,6 +64,7 @@ async function fixture(
     revisionPollIntervalMs,
     restart,
     commitMessages,
+    codex,
   });
   applications.push(app);
   return app;
@@ -126,6 +129,132 @@ async function nextPackageRunEvent(
 }
 
 describe("Couchview HTTP security and routes", () => {
+  test("exposes project-scoped Codex threads and sends only current comments", async () => {
+    let activeRoot = "";
+    let prompt = "";
+    const capability = { available: true, reason: null };
+    const summary = (id: string, cwd: string, status: "idle" | "active" = "idle") => ({
+      id,
+      preview: id,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+      recencyAt: "2026-01-01T00:01:00.000Z",
+      modelProvider: "fake",
+      status,
+      cwd,
+    });
+    const codex = {
+      capability,
+      capabilityFor() {
+        return capability;
+      },
+      async listThreads(root: string) {
+        activeRoot = root;
+        return { threads: [summary("project-thread", root)], nextCursor: "older" };
+      },
+      async startThread(root: string) {
+        return summary("new-thread", root);
+      },
+      async readThread(threadId: string) {
+        if (threadId === "active-thread") return summary(threadId, activeRoot, "active");
+        return summary(threadId, threadId === "cross-project" ? "/another/project" : activeRoot);
+      },
+      async resumeThread(threadId: string) {
+        return summary(threadId, activeRoot);
+      },
+      async startTurn(threadId: string, value: string) {
+        prompt = value;
+        return { threadId, turnId: "turn-1", status: "started" as const };
+      },
+      async interruptTurn() {},
+      events() {
+        return { events: [], unsubscribe() {} };
+      },
+      async respondApproval() {},
+      close() {},
+    } as unknown as CouchviewAppOptions["codex"];
+    const app = await fixture(undefined, undefined, undefined, codex);
+
+    const bootstrap = await (await app.fetch(request(API_ROUTES.bootstrap))).json() as BootstrapResponse;
+    expect(bootstrap.codex).toEqual({ available: true, reason: null });
+    const threadsResponse = await app.fetch(request(API_ROUTES.codexThreads(app.repository.id)));
+    expect(threadsResponse.status).toBe(200);
+    expect(await threadsResponse.json()).toMatchObject({
+      threads: [{ id: "project-thread" }],
+      nextCursor: "older",
+    });
+
+    const createWithoutCsrf = await app.fetch(request(API_ROUTES.codexThreads(app.repository.id), {
+      method: "POST",
+      headers: { origin: "http://127.0.0.1:3001", "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(createWithoutCsrf.status).toBe(403);
+    const created = await app.fetch(request(API_ROUTES.codexThreads(app.repository.id), {
+      method: "POST",
+      headers: {
+        origin: "http://127.0.0.1:3001",
+        "content-type": "application/json",
+        [CSRF_HEADER]: app.csrfToken,
+      },
+      body: "{}",
+    }));
+    expect(created.status).toBe(201);
+
+    const crossProject = await app.fetch(request(API_ROUTES.codexThread(app.repository.id, "cross-project")));
+    expect(crossProject.status).toBe(404);
+    const activeSend = await app.fetch(request(API_ROUTES.codexThreadTurns(app.repository.id, "active-thread"), {
+      method: "POST",
+      headers: { origin: "http://127.0.0.1:3001", [CSRF_HEADER]: app.csrfToken, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(activeSend.status).toBe(409);
+    expect((await activeSend.json()) as ApiErrorBody).toMatchObject({ error: { code: "codex_thread_in_use" } });
+    const emptySend = await app.fetch(request(API_ROUTES.codexThreadTurns(app.repository.id, "project-thread"), {
+      method: "POST",
+      headers: { origin: "http://127.0.0.1:3001", [CSRF_HEADER]: app.csrfToken, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(emptySend.status).toBe(409);
+    expect((await emptySend.json()) as ApiErrorBody).toMatchObject({ error: { code: "codex_no_comments" } });
+
+    const firstChanges = await app.repository.changes();
+    const firstFile = firstChanges.files[0]!;
+    const firstDiff = await app.repository.diff(firstFile.id);
+    await app.repository.createComment({
+      fileId: firstFile.id,
+      contentRevision: firstFile.contentRevision,
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      hunkHeader: firstDiff.diff.hunks[0]?.header ?? "",
+      excerpt: ["stale"],
+      body: "stale comment",
+    });
+    await writeFile(path.join(app.repository.root, "sample.ts"), "const sample = false;\n", "utf8");
+    const secondChanges = await app.repository.changes();
+    const secondFile = secondChanges.files[0]!;
+    const secondDiff = await app.repository.diff(secondFile.id);
+    await app.repository.createComment({
+      fileId: secondFile.id,
+      contentRevision: secondFile.contentRevision,
+      side: "new",
+      startLine: 1,
+      endLine: 1,
+      hunkHeader: secondDiff.diff.hunks[0]?.header ?? "",
+      excerpt: ["current"],
+      body: "current comment",
+    });
+    const sent = await app.fetch(request(API_ROUTES.codexThreadTurns(app.repository.id, "project-thread"), {
+      method: "POST",
+      headers: { origin: "http://127.0.0.1:3001", [CSRF_HEADER]: app.csrfToken, "content-type": "application/json" },
+      body: "{}",
+    }));
+    expect(sent.status).toBe(202);
+    expect(prompt).toContain("current comment");
+    expect(prompt).not.toContain("stale comment");
+  });
+
   test("discovers and runs package scripts through protected repository routes", async () => {
     const app = await fixture();
     await writeFile(

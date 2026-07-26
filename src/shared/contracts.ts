@@ -45,6 +45,20 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/events`,
   events: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/events`,
+  codexThreads: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads`,
+  codexThread: (repositoryId: string, threadId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}`,
+  codexThreadTurns: (repositoryId: string, threadId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns`,
+  codexThreadTurn: (repositoryId: string, threadId: string, turnId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`,
+  codexThreadTurnInterrupt: (repositoryId: string, threadId: string, turnId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/interrupt`,
+  codexThreadEvents: (repositoryId: string, threadId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/events`,
+  codexApproval: (repositoryId: string, threadId: string, approvalId: string) =>
+    `${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(approvalId)}`,
 } as const;
 
 export const CSRF_HEADER = "x-couchview-csrf";
@@ -109,6 +123,7 @@ export interface BootstrapResponse {
   catalogRevision: number;
   restart: RestartCapability;
   commitMessage: CommitMessageCapability;
+  codex: CodexCapability;
 }
 
 export interface InstanceResponse {
@@ -134,6 +149,85 @@ export interface RestartResponse {
 export interface CommitMessageCapability {
   available: boolean;
   reason: string | null;
+}
+
+export interface CodexCapability {
+  available: boolean;
+  reason: string | null;
+}
+
+export type CodexThreadStatus =
+  | "notLoaded"
+  | "idle"
+  | "active"
+  | "systemError";
+
+export interface CodexThreadSummary {
+  id: string;
+  preview: string;
+  createdAt: string;
+  updatedAt: string;
+  recencyAt: string | null;
+  modelProvider: string;
+  status: CodexThreadStatus;
+}
+
+/** Paginated threads available for sending the repository's review comments. */
+export interface CodexThreadsResponse {
+  threads: CodexThreadSummary[];
+  nextCursor: string | null;
+}
+
+/** A thread returned after it is created or loaded. */
+export interface CodexThreadResponse {
+  thread: CodexThreadSummary;
+}
+
+/** Identifies the turn started to send the current review comments to Codex. */
+export interface CodexTurnResponse {
+  threadId: string;
+  turnId: string;
+  status: "started";
+}
+
+export type CodexEventType =
+  | "notification"
+  | "approval"
+  | "completed"
+  | "error";
+
+export interface CodexEvent {
+  sequence: number;
+  type: CodexEventType;
+  threadId: string;
+  turnId: string | null;
+  method?: string;
+  data?: unknown;
+  approvalId?: string;
+  approvalMethod?: string;
+}
+
+export type CodexApprovalDecision =
+  | "accept"
+  | "acceptForSession"
+  | "decline"
+  | "cancel"
+  | { acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] } }
+  | {
+      applyNetworkPolicyAmendment: {
+        network_policy_amendment: { action: "allow" | "deny"; host: string };
+      };
+    };
+
+/** The user's answer to an approval prompt raised while Codex handles comments. */
+export interface CodexApprovalRequest {
+  decision:
+    | CodexApprovalDecision
+    | {
+        permissions: unknown;
+        scope?: "turn" | "session";
+        strictAutoReview?: boolean;
+      };
 }
 
 export interface RegisterRepositoryRequest {

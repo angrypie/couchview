@@ -1746,6 +1746,20 @@ describe("Couchview app", () => {
     expect(copyField.value).toContain("Use the safe loader.");
   });
 
+  test("replaces the review comments tray when opening Send to Codex", async () => {
+    comments = [fixtureComment("comment-1", "Send this to Codex")];
+    files[0]!.commentCount = 1;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
+    expect(await screen.findByRole("dialog", { name: "Review comments" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Send to Codex" }));
+
+    expect(await screen.findByRole("dialog", { name: "Send comments to Codex" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Review comments" })).toBeNull();
+  });
+
   test("opens an inline comment chip and focuses its tray card", async () => {
     comments = [fixtureComment("comment-1", "Inline correction")];
     files[0]!.commentCount = 1;

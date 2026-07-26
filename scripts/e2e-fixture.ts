@@ -446,6 +446,10 @@ const server = Bun.serve({
 					available: true,
 					reason: null,
 				},
+				codex: {
+					available: false,
+					reason: "Codex is not available in the browser test fixture.",
+				},
 			} satisfies BootstrapResponse);
 		}
 

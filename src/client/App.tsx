@@ -34,6 +34,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Send,
   Sparkles,
   Square,
   SquareTerminal,
@@ -68,6 +69,7 @@ import {
   type SourcePreviewResponse,
 } from "../shared/contracts.ts";
 import { ApiError, api } from "./api.ts";
+import { CodexCommentsPanel } from "./CodexCommentsPanel.tsx";
 import {
   exportCommentsForCodex,
   formatCommentReference,
@@ -615,6 +617,7 @@ export function App() {
   const [selection, setSelection] = useState<LineSelection | null>(null);
   const [commentComposerOpen, setCommentComposerOpen] = useState(false);
   const [commentTrayOpen, setCommentTrayOpen] = useState(false);
+  const [codexPanelOpen, setCodexPanelOpen] = useState(false);
   const [commentBody, setCommentBody] = useState("");
   const [editingComment, setEditingComment] = useState<ReviewComment | null>(null);
   const [commentBusy, setCommentBusy] = useState(false);
@@ -721,6 +724,10 @@ export function App() {
   const commitMessageCapability = bootstrap?.commitMessage ?? {
     available: false,
     reason: "Commit message generation is unavailable from this Couchview server.",
+  };
+  const codexCapability = bootstrap?.codex ?? {
+    available: false,
+    reason: "Codex integration is unavailable from this Couchview server.",
   };
   const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
   const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
@@ -1117,6 +1124,7 @@ export function App() {
       setCommentBody("");
       setEditingComment(null);
       setCommentTrayOpen(false);
+      setCodexPanelOpen(false);
       setFocusedCommentId(null);
       setPendingCommentJump(null);
       setCopyFallbackText("");
@@ -1260,6 +1268,7 @@ export function App() {
     setCommentBody("");
     setEditingComment(null);
     setCommentTrayOpen(false);
+    setCodexPanelOpen(false);
     setFocusedCommentId(null);
     setPendingCommentJump(null);
     setCommitComposerOpen(false);
@@ -4293,9 +4302,32 @@ export function App() {
               >
                 <Copy size={16} /> Copy {currentCommentCount || "current"} for Codex
               </button>
+              <button
+                className="action-button secondary"
+                onClick={() => {
+                  setCommentTrayOpen(false);
+                  setCodexPanelOpen(true);
+                }}
+                title={codexCapability.reason ?? undefined}
+                style={{ width: "100%" }}
+                type="button"
+              >
+                <Send size={16} /> Send to Codex
+              </button>
             </footer>
           </section>
         </>
+      )}
+
+      {codexPanelOpen && repositoryId && bootstrap && (
+        <CodexCommentsPanel
+          capability={codexCapability}
+          csrfToken={bootstrap.csrfToken}
+          currentCommentCount={currentCommentCount}
+          onClose={() => setCodexPanelOpen(false)}
+          repositoryId={repositoryId}
+          showToast={showToast}
+        />
       )}
 
       {failureDetailsOpen && failure && (
