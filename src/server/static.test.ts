@@ -35,6 +35,10 @@ async function fixture() {
     path.join(staticRoot, "assets", "ghostty-vt-12345678.wasm"),
     new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
   );
+  await writeFile(
+    path.join(staticRoot, "assets", "HackNerdFont-Regular-12345678.ttf"),
+    new Uint8Array([0x00, 0x01, 0x00, 0x00]),
+  );
   const secret = path.join(directory, "secret.js");
   await writeFile(secret, "do not serve me\n", "utf8");
   await symlink(secret, path.join(staticRoot, "leak.js"));
@@ -83,6 +87,13 @@ describe("production static serving", () => {
     expect(wasm.status).toBe(200);
     expect(wasm.headers.get("content-type")).toContain("application/wasm");
     expect(wasm.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+
+    const font = await app.fetch(localRequest("/assets/HackNerdFont-Regular-12345678.ttf"));
+    expect(font.status).toBe(200);
+    expect(font.headers.get("content-type")).toContain("font/ttf");
+    expect(font.headers.get("cache-control")).toBe(
       "public, max-age=31536000, immutable",
     );
   });

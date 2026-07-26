@@ -7,16 +7,11 @@ interface TerminalFixtureState {
   running: boolean;
   attachmentCount: number;
   socketConnections: number;
-  target: {
-    fileId: string;
-    contentRevision: string;
-    line: number;
-  } | null;
   inputs: string[];
   resizes: Array<{ cols: number; rows: number }>;
 }
 
-test.describe("desktop Neovim workspace", () => {
+test.describe("desktop tmux terminal", () => {
   test.skip(!localFixture, "The deterministic terminal uses the bundled e2e fixture.");
 
   test.beforeEach(async ({ request }) => {
@@ -46,11 +41,9 @@ test.describe("desktop Neovim workspace", () => {
       ),
     ).toBe(false);
 
-    await page.getByRole("button", { name: "Show line numbers" }).click();
-    await page.getByRole("button", { name: "Select new line 14" }).click();
-    await page.getByRole("button", { name: "Edit current file in Neovim" }).click();
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
 
-    const workspace = page.getByRole("region", { name: "Neovim workspace" });
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
     await expect(workspace).toBeVisible();
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
       timeout: 15_000,
@@ -61,16 +54,46 @@ test.describe("desktop Neovim workspace", () => {
     await expect.poll(() => loadedAssets.some(
       (pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname),
     )).toBe(true);
+    await expect.poll(() => loadedAssets.some(
+      (pathname) => /\/assets\/HackNerdFontMono-Regular-[^/]+\.ttf$/.test(pathname),
+    )).toBe(true);
+    await expect.poll(() => loadedAssets.some(
+      (pathname) => /\/assets\/HackNerdFontMono-Bold-[^/]+\.ttf$/.test(pathname),
+    )).toBe(true);
 
     const state = async () => (await (
       await request.get("/api/e2e/terminal")
     ).json()) as TerminalFixtureState;
-    await expect.poll(async () => (await state()).target).toEqual({
-      fileId: "fixture-review-ts",
-      contentRevision: "fixture-review-v1",
-      line: 14,
-    });
     await expect.poll(async () => (await state()).socketConnections).toBe(1);
+
+    const initialDimensions = (await state()).resizes.at(-1);
+    expect(initialDimensions).toBeDefined();
+    const previousRowContamination = await page.locator(".terminal-surface canvas").evaluate(
+      (canvas, rows) => {
+        const context = (canvas as HTMLCanvasElement).getContext("2d");
+        if (!context) return -1;
+        const rowHeight = (canvas as HTMLCanvasElement).height / rows;
+        const pixels = context.getImageData(
+          0,
+          0,
+          Math.min(240, (canvas as HTMLCanvasElement).width),
+          Math.floor(rowHeight),
+        ).data;
+        let contaminated = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            pixels[index] !== 30 ||
+            pixels[index + 1] !== 30 ||
+            pixels[index + 2] !== 46
+          ) {
+            contaminated += 1;
+          }
+        }
+        return contaminated;
+      },
+      initialDimensions!.rows,
+    );
+    expect(previousRowContamination).toBe(0);
 
     const bounds = await workspace.boundingBox();
     expect(bounds).not.toBeNull();
@@ -78,9 +101,9 @@ test.describe("desktop Neovim workspace", () => {
     expect(bounds!.height).toBeGreaterThanOrEqual(790);
 
     await page.locator(".terminal-surface").click();
-    await page.keyboard.type("ihello-from-browser");
+    await page.keyboard.type("hello-from-browser");
     await expect.poll(async () => (await state()).inputs.join("")).toContain(
-      "ihello-from-browser",
+      "hello-from-browser",
     );
 
     const resizeCount = (await state()).resizes.length;
@@ -93,7 +116,7 @@ test.describe("desktop Neovim workspace", () => {
     await workspace.getByRole("button", { name: "Review" }).click();
     await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
     await expect(workspace).toBeHidden();
-    await page.getByRole("button", { name: "Open Neovim workspace" }).click();
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
     await expect(workspace).toBeVisible();
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible();
     expect((await state()).attachmentCount).toBe(connectedState.attachmentCount);

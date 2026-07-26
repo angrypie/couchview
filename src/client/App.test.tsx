@@ -6,6 +6,7 @@ import type {
   PackageRunSummary,
   ReviewComment,
 } from "../shared/contracts.ts";
+import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import {
   FakeTerminalWebSocket,
   rendererState,
@@ -423,8 +424,6 @@ describe("Couchview app", () => {
   let releaseCommitMessageResponse: (() => void) | null = null;
   let commitMessageAvailable = true;
   let terminalAvailable = false;
-  let forgetUnsavedOnce = false;
-  let forgetAttempts = 0;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
@@ -449,8 +448,6 @@ describe("Couchview app", () => {
     releaseCommitMessageResponse = null;
     commitMessageAvailable = true;
     terminalAvailable = false;
-    forgetUnsavedOnce = false;
-    forgetAttempts = 0;
     resetRendererState();
     resetFakeTerminalWebSockets();
     EventSourceStub.instances.length = 0;
@@ -532,14 +529,15 @@ describe("Couchview app", () => {
           },
           terminal: {
             available: terminalAvailable,
-            reason: terminalAvailable ? null : "Neovim is unavailable in this test.",
+            reason: terminalAvailable ? null : "tmux is unavailable in this test.",
             persistence: "tmux",
             profiles: [{
-              id: "nvim",
-              label: "Neovim",
+              id: "tmux",
+              label: "tmux",
               available: terminalAvailable,
-              reason: terminalAvailable ? null : "Neovim is unavailable in this test.",
+              reason: terminalAvailable ? null : "tmux is unavailable in this test.",
             }],
+            renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
           },
         });
       }
@@ -555,7 +553,7 @@ describe("Couchview app", () => {
       if (url.pathname === "/api/instance" && method === "GET") {
         return Response.json({
           service: "couchview",
-          protocolVersion: 2,
+          protocolVersion: 3,
           version: "0.1.0",
           instanceId: "fixture-instance",
           bindHost: "127.0.0.1",
@@ -568,15 +566,6 @@ describe("Couchview app", () => {
         return Response.json({ repositories: catalog, catalogRevision: 1 });
       }
       if (repositoryRoute && !nestedPath && method === "DELETE") {
-        forgetAttempts += 1;
-        if (forgetUnsavedOnce && forgetAttempts === 1) {
-          return Response.json({
-            error: {
-              code: "terminal_unsaved_buffers",
-              message: "Neovim has 1 modified buffer",
-            },
-          }, { status: 409 });
-        }
         catalog = catalog.filter((entry) => entry.id !== requestedRepositoryId);
         return Response.json({ deletedId: requestedRepositoryId });
       }
@@ -589,14 +578,11 @@ describe("Couchview app", () => {
           expiresAt: "2026-07-26T12:00:30.000Z",
           protocol: "couchview-terminal-v1",
           session: {
-            profileId: "nvim",
+            profileId: "tmux",
             running: true,
             controllerConnected: false,
           },
         }, { status: 201 });
-      }
-      if (nestedPath === "terminal/open" && method === "POST") {
-        return Response.json({ status: "opened" });
       }
       if (nestedPath === "package-scripts" && method === "GET") {
         return Response.json(packageScriptsFixture);
@@ -908,15 +894,13 @@ describe("Couchview app", () => {
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
   });
 
-  test("hands the selected working-tree line to a persistent Neovim workspace", async () => {
+  test("opens one persistent tmux terminal and preserves it across Review handoffs", async () => {
     terminalAvailable = true;
     render(<App />);
 
     await screen.findByText("src/first.ts");
     fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
-    fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Select old line 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit current file in Neovim" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
 
     await waitFor(() => expect(rendererState.calls).toBe(1));
     await waitFor(() => expect(requests.some(
@@ -928,11 +912,7 @@ describe("Couchview app", () => {
       (request) => request.path === "/api/repositories/repo/terminal/attachments",
     )).toMatchObject({
       body: {
-        target: {
-          fileId: "first",
-          contentRevision: "first-v1",
-          line: 1,
-        },
+        profileId: "tmux",
       },
     });
     await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
@@ -952,23 +932,11 @@ describe("Couchview app", () => {
     expect(FakeTerminalWebSocket.instances).toHaveLength(1);
     expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Neovim workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
     expect(rendererState.calls).toBe(1);
     expect(
-      screen.getByRole("region", { name: "Neovim workspace" }).getAttribute("aria-hidden"),
+      screen.getByRole("region", { name: "tmux terminal" }).getAttribute("aria-hidden"),
     ).toBe("false");
-  });
-
-  test("disables Neovim handoff for deleted working-tree files", async () => {
-    terminalAvailable = true;
-    files[0] = { ...files[0]!, kind: "deleted" };
-    render(<App />);
-
-    await screen.findByText("src/first.ts");
-    expect(
-      (screen.getByRole("button", { name: "Edit current file in Neovim" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
   });
 
   test("migrates pre-rename display preferences", async () => {
@@ -1378,9 +1346,8 @@ describe("Couchview app", () => {
     });
   });
 
-  test("requires a second confirmation before forgetting a repository with unsaved Neovim buffers", async () => {
+  test("warns once before forgetting a repository and terminating its tmux work", async () => {
     catalog[1] = { ...catalog[1]!, available: false };
-    forgetUnsavedOnce = true;
     const confirmations: string[] = [];
     Object.defineProperty(window, "confirm", {
       configurable: true,
@@ -1400,14 +1367,9 @@ describe("Couchview app", () => {
       requests.filter(
         (entry) => entry.path === "/api/repositories/repo-two" && entry.method === "DELETE",
       ),
-    ).toHaveLength(2));
-    expect(requests).toContainEqual({
-      path: "/api/repositories/repo-two/terminal/end",
-      method: "POST",
-      body: { force: true },
-    });
-    expect(confirmations).toHaveLength(2);
-    expect(confirmations[1]).toContain("discard unsaved buffers");
+    ).toHaveLength(1));
+    expect(confirmations).toHaveLength(1);
+    expect(confirmations[0]).toContain("running programs and unsaved work");
   });
 
   test("aborts an in-flight repository load when another project is selected", async () => {

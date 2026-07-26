@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import {
@@ -8,9 +10,11 @@ import {
   type TerminalAttachmentResponse,
   type TerminalCapability,
   type TerminalEndResponse,
+  type TerminalRendererConfig,
   type TerminalSessionStatus,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
+import { defaultTerminalRendererConfig } from "./terminalConfig.ts";
 
 export const TERMINAL_PROTOCOL = "couchview-terminal-v1";
 export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
@@ -18,28 +22,21 @@ export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
 const TICKET_LIFETIME_MS = 30_000;
 const MAX_TICKETS = 256;
 const COMMAND_TIMEOUT_MS = 5_000;
-const QUIT_TIMEOUT_MS = 2_000;
 
 export interface TerminalSocketData {
   kind: "terminal";
   repositoryId: string;
   repositoryRoot: string;
   clientId: string;
-  profileId: "nvim";
+  profileId: "tmux";
   cols: number;
   rows: number;
   takeover: boolean;
 }
 
-export interface ResolvedTerminalTarget {
-  absolutePath: string;
-  line: number;
-}
-
 export interface TerminalDependencies {
   terminalAvailable: boolean;
   tmuxPath: string | null;
-  nvimPath: string | null;
   tmux256Color: boolean;
 }
 
@@ -76,6 +73,8 @@ export interface TerminalSessionServiceOptions {
   now?: () => number;
   tokenFactory?: () => string;
   runtimeDirectory?: string;
+  rendererConfig?: TerminalRendererConfig;
+  userTmuxConfigPath?: string | null;
   terminalFactory?: (options: Bun.TerminalOptions) => Bun.Terminal;
   terminalSpawner?: (
     argv: readonly string[],
@@ -132,7 +131,6 @@ async function runCommand(
 
 function probeDependencies(): TerminalDependencies {
   const tmuxPath = Bun.which("tmux");
-  const nvimPath = Bun.which("nvim");
   const infocmp = Bun.which("infocmp");
   const tmux256Color = Boolean(
     infocmp && Bun.spawnSync([infocmp, "tmux-256color"], {
@@ -143,27 +141,47 @@ function probeDependencies(): TerminalDependencies {
   return {
     terminalAvailable: typeof Bun.Terminal === "function",
     tmuxPath,
-    nvimPath,
     tmux256Color,
   };
+}
+
+export function resolveUserTmuxConfigPath(
+  environment: Record<string, string | undefined> = process.env,
+  homeDirectory = homedir(),
+  exists: (candidate: string) => boolean = existsSync,
+): string | null {
+  const candidates = [
+    ...(environment.XDG_CONFIG_HOME
+      ? [path.join(environment.XDG_CONFIG_HOME, "tmux", "tmux.conf")]
+      : []),
+    path.join(homeDirectory, ".config", "tmux", "tmux.conf"),
+    path.join(homeDirectory, ".tmux.conf"),
+  ];
+  return [...new Set(candidates)].find(exists) ?? null;
+}
+
+function tmuxQuoted(value: string): string {
+  return `"${value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("$", "\\$")}"`;
 }
 
 function capabilityFor(
   enabled: boolean,
   disabledReason: string | undefined,
   dependencies: TerminalDependencies,
+  renderer: TerminalRendererConfig,
 ): TerminalCapability {
   let reason: string | null = null;
   if (!enabled) {
     reason = disabledReason ?? "Browser terminal access is disabled.";
   } else if (process.platform === "win32") {
-    reason = "Browser Neovim currently requires macOS or Linux.";
+    reason = "The browser tmux terminal currently requires macOS or Linux.";
   } else if (!dependencies.terminalAvailable) {
     reason = "This Bun runtime does not provide Bun.Terminal.";
   } else if (!dependencies.tmuxPath) {
-    reason = "Install tmux on the Couchview host to use persistent Neovim sessions.";
-  } else if (!dependencies.nvimPath) {
-    reason = "Install Neovim on the Couchview host and make nvim available on PATH.";
+    reason = "Install tmux on the Couchview host to use persistent terminal sessions.";
   }
   const profileAvailable = reason === null;
   return {
@@ -172,12 +190,13 @@ function capabilityFor(
     persistence: "tmux",
     profiles: [
       {
-        id: "nvim",
-        label: "Neovim",
+        id: "tmux",
+        label: "tmux",
         available: profileAvailable,
         reason,
       },
     ],
+    renderer,
   };
 }
 
@@ -221,11 +240,14 @@ export class TerminalSessionService {
   private readonly tokenFactory: () => string;
   private readonly namespace: string;
   private readonly runtimeDirectory: string;
+  private readonly userTmuxConfigPath: string | null;
   private readonly tickets = new Map<string, StoredTicket>();
   private readonly attachments = new Map<string, TerminalAttachment>();
   private readonly starts = new Map<string, Promise<void>>();
   private readonly terminalFactory: (options: Bun.TerminalOptions) => Bun.Terminal;
   private readonly terminalSpawner: NonNullable<TerminalSessionServiceOptions["terminalSpawner"]>;
+  private serverConfiguration: Promise<void> | null = null;
+  private serverConfigured = false;
   private closed = false;
 
   constructor(options: TerminalSessionServiceOptions) {
@@ -235,6 +257,7 @@ export class TerminalSessionService {
       options.enabled,
       options.disabledReason,
       this.dependencies,
+      options.rendererConfig ?? defaultTerminalRendererConfig(),
     );
     this.commandRunner = options.commandRunner ?? runCommand;
     this.now = options.now ?? Date.now;
@@ -244,6 +267,9 @@ export class TerminalSessionService {
     const uid = typeof process.getuid === "function" ? process.getuid() : "user";
     this.runtimeDirectory = options.runtimeDirectory ??
       path.join("/tmp", `couchview-${uid}-${namespaceHash}`);
+    this.userTmuxConfigPath = options.userTmuxConfigPath === undefined
+      ? resolveUserTmuxConfigPath()
+      : options.userTmuxConfigPath;
     this.terminalFactory = options.terminalFactory ?? ((terminalOptions) =>
       new Bun.Terminal(terminalOptions));
     this.terminalSpawner = options.terminalSpawner ?? ((argv, spawnOptions) =>
@@ -270,7 +296,7 @@ export class TerminalSessionService {
       throw new HttpError(403, "terminal_disabled", this.capability.reason ?? "Terminal access is disabled");
     }
     if (!this.capability.available) {
-      throw new HttpError(503, "terminal_unavailable", this.capability.reason ?? "Neovim is unavailable");
+      throw new HttpError(503, "terminal_unavailable", this.capability.reason ?? "tmux is unavailable");
     }
     if (this.closed) {
       throw new HttpError(503, "terminal_unavailable", "The terminal service is shutting down");
@@ -284,11 +310,8 @@ export class TerminalSessionService {
   }
 
   private sessionName(repositoryId: string): string {
+    // Preserve the original internal name so upgrades keep existing sessions reachable.
     return `nvim-${hash(repositoryId).slice(0, 16)}`;
-  }
-
-  private socketPath(repositoryId: string): string {
-    return path.join(this.runtimeDirectory, `${hash(repositoryId).slice(0, 20)}.sock`);
   }
 
   private tmuxConfigPath(): string {
@@ -307,6 +330,9 @@ export class TerminalSessionService {
     await chmod(this.runtimeDirectory, 0o700);
     const terminalName = this.dependencies.tmux256Color ? "tmux-256color" : "screen-256color";
     const configuration = [
+      ...(this.userTmuxConfigPath
+        ? [`source-file ${tmuxQuoted(this.userTmuxConfigPath)}`]
+        : []),
       "set-option -s escape-time 0",
       "set-option -g focus-events on",
       "set-option -g mouse on",
@@ -334,9 +360,18 @@ export class TerminalSessionService {
     return result.exitCode === 0;
   }
 
+  private async hasTmuxServer(): Promise<boolean> {
+    if (!this.dependencies.tmuxPath) return false;
+    const result = await this.commandRunner(
+      this.tmuxArgs("list-sessions"),
+      { timeoutMs: COMMAND_TIMEOUT_MS },
+    );
+    return result.exitCode === 0;
+  }
+
   async status(repositoryId: string): Promise<TerminalSessionStatus> {
     return {
-      profileId: "nvim",
+      profileId: "tmux",
       running: await this.hasSession(repositoryId),
       controllerConnected: this.attachments.has(repositoryId),
     };
@@ -364,21 +399,34 @@ export class TerminalSessionService {
     }
   }
 
+  private async configureExistingTmuxServer(): Promise<void> {
+    if (this.serverConfigured) return;
+    if (this.serverConfiguration) return this.serverConfiguration;
+    const configuration = (async () => {
+      if (this.userTmuxConfigPath) {
+        const result = await this.commandRunner(
+          this.tmuxArgs("source-file", this.userTmuxConfigPath),
+          { timeoutMs: COMMAND_TIMEOUT_MS },
+        );
+        if (result.exitCode !== 0) {
+          throw new HttpError(
+            503,
+            "terminal_config_failed",
+            `The host tmux config could not load: ${cleanCommandError(result.stderr)}`,
+          );
+        }
+      }
+      await this.configureTmux();
+      this.serverConfigured = true;
+    })().finally(() => {
+      if (this.serverConfiguration === configuration) this.serverConfiguration = null;
+    });
+    this.serverConfiguration = configuration;
+    return configuration;
+  }
+
   private async startSession(repositoryId: string, repositoryRoot: string): Promise<void> {
     await this.ensureRuntimeDirectory();
-    const rpcSocket = this.socketPath(repositoryId);
-    await rm(rpcSocket, { force: true });
-    const nvimPath = this.dependencies.nvimPath;
-    if (!nvimPath) throw new HttpError(503, "terminal_unavailable", "Neovim is unavailable");
-    await this.commandRunner(
-      this.tmuxArgs(
-        "set-option",
-        "-g",
-        "default-terminal",
-        this.dependencies.tmux256Color ? "tmux-256color" : "screen-256color",
-      ),
-      { timeoutMs: COMMAND_TIMEOUT_MS },
-    );
     const result = await this.commandRunner(
       this.tmuxArgs(
         "new-session",
@@ -387,9 +435,6 @@ export class TerminalSessionService {
         this.sessionName(repositoryId),
         "-c",
         repositoryRoot,
-        nvimPath,
-        "--listen",
-        rpcSocket,
       ),
       { cwd: repositoryRoot, timeoutMs: COMMAND_TIMEOUT_MS },
     );
@@ -397,30 +442,20 @@ export class TerminalSessionService {
       throw new HttpError(
         503,
         "terminal_start_failed",
-        `Neovim could not start: ${cleanCommandError(result.stderr)}`,
+        `The tmux session could not start: ${cleanCommandError(result.stderr)}`,
       );
     }
     await this.configureTmux();
-    const deadline = this.now() + COMMAND_TIMEOUT_MS;
-    while (this.now() < deadline) {
-      const ready = await this.commandRunner(
-        [nvimPath, "--server", rpcSocket, "--remote-expr", "1"],
-        { cwd: repositoryRoot, timeoutMs: 500 },
-      );
-      if (ready.exitCode === 0) return;
-      if (!(await this.hasSession(repositoryId))) break;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    await this.commandRunner(
-      this.tmuxArgs("kill-session", "-t", this.sessionName(repositoryId)),
-      { timeoutMs: COMMAND_TIMEOUT_MS },
-    );
-    throw new HttpError(503, "terminal_start_failed", "Neovim did not become ready in time");
+    this.serverConfigured = true;
   }
 
   private async ensureSession(repositoryId: string, repositoryRoot: string): Promise<void> {
     this.assertAvailable();
-    if (await this.hasSession(repositoryId)) return;
+    const sessionRunning = await this.hasSession(repositoryId);
+    if (sessionRunning || await this.hasTmuxServer()) {
+      await this.configureExistingTmuxServer();
+    }
+    if (sessionRunning) return;
     const existing = this.starts.get(repositoryId);
     if (existing) return existing;
     const start = this.startSession(repositoryId, repositoryRoot).finally(() => {
@@ -428,45 +463,6 @@ export class TerminalSessionService {
     });
     this.starts.set(repositoryId, start);
     await start;
-  }
-
-  async openFile(
-    repositoryId: string,
-    repositoryRoot: string,
-    target: ResolvedTerminalTarget,
-  ): Promise<void> {
-    await this.ensureSession(repositoryId, repositoryRoot);
-    const nvimPath = this.dependencies.nvimPath;
-    if (!nvimPath) throw new HttpError(503, "terminal_unavailable", "Neovim is unavailable");
-    const rpcSocket = this.socketPath(repositoryId);
-    const opened = await this.commandRunner(
-      [nvimPath, "--server", rpcSocket, "--remote", target.absolutePath],
-      { cwd: repositoryRoot, timeoutMs: COMMAND_TIMEOUT_MS },
-    );
-    if (opened.exitCode !== 0) {
-      throw new HttpError(
-        409,
-        "terminal_open_failed",
-        `Neovim did not open the file: ${cleanCommandError(opened.stderr)}`,
-      );
-    }
-    const positioned = await this.commandRunner(
-      [
-        nvimPath,
-        "--server",
-        rpcSocket,
-        "--remote-expr",
-        `cursor(${target.line},1)`,
-      ],
-      { cwd: repositoryRoot, timeoutMs: COMMAND_TIMEOUT_MS },
-    );
-    if (positioned.exitCode !== 0) {
-      throw new HttpError(
-        409,
-        "terminal_position_failed",
-        `Neovim opened the file but could not move to the requested line: ${cleanCommandError(positioned.stderr)}`,
-      );
-    }
   }
 
   private cleanExpiredTickets(): void {
@@ -492,10 +488,9 @@ export class TerminalSessionService {
     repositoryRoot: string,
     request: TerminalAttachmentRequest,
     binding: { host: string; origin: string },
-    target?: ResolvedTerminalTarget,
   ): Promise<TerminalAttachmentResponse> {
     this.assertAvailable();
-    if (request.profileId !== "nvim") {
+    if (request.profileId !== "tmux") {
       throw new HttpError(400, "terminal_profile_invalid", "The requested terminal profile is unavailable");
     }
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(request.clientId)) {
@@ -509,10 +504,9 @@ export class TerminalSessionService {
     }
     const current = this.attachments.get(repositoryId);
     if (current && current.clientId !== request.clientId && !request.takeover) {
-      throw new HttpError(409, "terminal_in_use", "Neovim is controlled by another browser tab");
+      throw new HttpError(409, "terminal_in_use", "The tmux terminal is controlled by another browser tab");
     }
     await this.ensureSession(repositoryId, repositoryRoot);
-    if (target) await this.openFile(repositoryId, repositoryRoot, target);
     this.cleanExpiredTickets();
     for (const [ticketHash, ticket] of this.tickets) {
       if (ticket.repositoryId === repositoryId && ticket.clientId === request.clientId) {
@@ -526,7 +520,7 @@ export class TerminalSessionService {
       repositoryId,
       repositoryRoot,
       clientId: request.clientId,
-      profileId: "nvim",
+      profileId: "tmux",
       cols: request.cols,
       rows: request.rows,
       takeover: request.takeover,
@@ -588,7 +582,7 @@ export class TerminalSessionService {
       this.sendJson(socket, {
         type: "error",
         code: "terminal_in_use",
-        message: "Neovim is controlled by another browser tab",
+        message: "The tmux terminal is controlled by another browser tab",
         retryable: false,
       });
       socket.close(4003, "terminal_in_use");
@@ -748,68 +742,27 @@ export class TerminalSessionService {
     }
   }
 
-  async end(repositoryId: string, force: boolean): Promise<TerminalEndResponse> {
+  async end(repositoryId: string): Promise<TerminalEndResponse> {
     if (this.closed) {
       throw new HttpError(503, "terminal_unavailable", "The terminal service is shutting down");
     }
     this.clearTickets(repositoryId);
     if (!(await this.hasSession(repositoryId))) {
       this.closeAttachment(repositoryId, TERMINAL_ENDED_CLOSE_CODE, "terminal_ended");
-      await rm(this.socketPath(repositoryId), { force: true });
       return { status: "ended" };
     }
-    if (!force) {
-      const nvimPath = this.dependencies.nvimPath;
-      if (!nvimPath) throw new HttpError(503, "terminal_unavailable", "Neovim is unavailable");
-      const rpcSocket = this.socketPath(repositoryId);
-      const modified = await this.commandRunner(
-        [
-          nvimPath,
-          "--server",
-          rpcSocket,
-          "--remote-expr",
-          "len(getbufinfo({'bufmodified':1}))",
-        ],
-        { timeoutMs: COMMAND_TIMEOUT_MS },
+    const killed = await this.commandRunner(
+      this.tmuxArgs("kill-session", "-t", this.sessionName(repositoryId)),
+      { timeoutMs: COMMAND_TIMEOUT_MS },
+    );
+    if (killed.exitCode !== 0 && await this.hasSession(repositoryId)) {
+      throw new HttpError(
+        503,
+        "terminal_end_failed",
+        `The terminal session could not be ended: ${cleanCommandError(killed.stderr)}`,
       );
-      const modifiedCount = Number(modified.stdout.trim());
-      if (modified.exitCode !== 0 || !Number.isFinite(modifiedCount)) {
-        throw new HttpError(409, "terminal_quit_failed", "Neovim did not respond; the session was left running");
-      }
-      if (modifiedCount > 0) {
-        throw new HttpError(
-          409,
-          "terminal_unsaved_buffers",
-          `Neovim has ${modifiedCount} modified buffer${modifiedCount === 1 ? "" : "s"}; save or discard them before ending the session`,
-        );
-      }
-      await this.commandRunner(
-        [nvimPath, "--server", rpcSocket, "--remote-expr", "execute('qa')"],
-        { timeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      const deadline = this.now() + QUIT_TIMEOUT_MS;
-      while (this.now() < deadline) {
-        if (!(await this.hasSession(repositoryId))) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      if (await this.hasSession(repositoryId)) {
-        throw new HttpError(409, "terminal_quit_failed", "Neovim refused to quit; the session was left running");
-      }
-    } else {
-      const killed = await this.commandRunner(
-        this.tmuxArgs("kill-session", "-t", this.sessionName(repositoryId)),
-        { timeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      if (killed.exitCode !== 0 && await this.hasSession(repositoryId)) {
-        throw new HttpError(
-          503,
-          "terminal_end_failed",
-          `The terminal session could not be ended: ${cleanCommandError(killed.stderr)}`,
-        );
-      }
     }
     this.closeAttachment(repositoryId, TERMINAL_ENDED_CLOSE_CODE, "terminal_ended");
-    await rm(this.socketPath(repositoryId), { force: true });
     return { status: "ended" };
   }
 

@@ -49,8 +49,6 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/terminal`,
   terminalAttachments: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/terminal/attachments`,
-  terminalOpen: (repositoryId: string) =>
-    `${repositoryApiPath(repositoryId)}/terminal/open`,
   terminalEnd: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/terminal/end`,
   terminalSocket: (repositoryId: string) =>
@@ -176,32 +174,45 @@ export interface TerminalProfileSummary {
   reason: string | null;
 }
 
+export interface TerminalRendererTheme {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+  selectionForeground: string;
+  palette: string[];
+}
+
+export interface TerminalRendererConfig {
+  fontFamily: string;
+  fontSize: number;
+  cellHeightAdjustment?: number;
+  cellWidthAdjustment?: number;
+  cursorStyle: "block" | "underline" | "bar";
+  cursorBlink: boolean;
+  theme: TerminalRendererTheme;
+}
+
 export interface TerminalCapability {
   available: boolean;
   reason: string | null;
   persistence: "tmux";
   profiles: TerminalProfileSummary[];
+  renderer: TerminalRendererConfig;
 }
 
 export interface TerminalSessionStatus {
-  profileId: "nvim";
+  profileId: "tmux";
   running: boolean;
   controllerConnected: boolean;
 }
 
-export interface TerminalFileTarget {
-  fileId: string;
-  contentRevision: string;
-  line: number;
-}
-
 export interface TerminalAttachmentRequest {
   clientId: string;
-  profileId: "nvim";
+  profileId: "tmux";
   cols: number;
   rows: number;
   takeover: boolean;
-  target?: TerminalFileTarget;
 }
 
 export interface TerminalAttachmentResponse {
@@ -209,18 +220,6 @@ export interface TerminalAttachmentResponse {
   expiresAt: string;
   protocol: "couchview-terminal-v1";
   session: TerminalSessionStatus;
-}
-
-export interface TerminalOpenRequest {
-  target: TerminalFileTarget;
-}
-
-export interface TerminalOpenResponse {
-  status: "opened";
-}
-
-export interface TerminalEndRequest {
-  force: boolean;
 }
 
 export interface TerminalEndResponse {

@@ -23,9 +23,8 @@ import {
 	type StageFilesRequest,
 	type TerminalAttachmentRequest,
 	TERMINAL_ENDED_CLOSE_CODE,
-	type TerminalFileTarget,
-	type TerminalOpenRequest,
 } from "../src/shared/contracts.ts";
+import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../src/shared/terminalDefaults.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
 const port = Number(process.env.E2E_PORT || 4174);
@@ -37,7 +36,6 @@ let terminalRunning = false;
 let terminalAttachmentCount = 0;
 let terminalSocketConnections = 0;
 let terminalTicketCounter = 0;
-let terminalTarget: TerminalFileTarget | null = null;
 const terminalInputs: string[] = [];
 const terminalResizes: Array<{ cols: number; rows: number }> = [];
 
@@ -428,31 +426,6 @@ async function serveStatic(
 	return new Response("Not found", { status: 404, headers: securityHeaders });
 }
 
-function validateTerminalTarget(target: TerminalFileTarget | undefined): Response | null {
-	if (!target) return null;
-	const file = files.find((candidate) => candidate.id === target.fileId);
-	if (!file) {
-		return json(
-			{ error: { code: "file_not_found", message: "Fixture file not found" } },
-			404,
-		);
-	}
-	if (file.contentRevision !== target.contentRevision) {
-		return json(
-			{ error: { code: "stale_file", message: "The fixture file changed" } },
-			409,
-		);
-	}
-	if (file.kind === "deleted" || !Number.isSafeInteger(target.line) || target.line < 1) {
-		return json(
-			{ error: { code: "terminal_target_invalid", message: "Invalid fixture terminal target" } },
-			409,
-		);
-	}
-	terminalTarget = structuredClone(target);
-	return null;
-}
-
 const server = Bun.serve<FixtureTerminalSocketData>({
 	hostname: host,
 	port,
@@ -467,12 +440,12 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			terminalSocketConnections += 1;
 			socket.send(JSON.stringify({
 				type: "ready",
-				profileId: "nvim",
+				profileId: "tmux",
 				cols: socket.data.cols,
 				rows: socket.data.rows,
 			}));
 			socket.send(new TextEncoder().encode(
-				"\u001b[2J\u001b[H\u001b[32mCouchview fake Neovim ready\u001b[0m\r\n",
+				"\u001b[2J\u001b[H\r\n\u001b[1;32m Couchview fake tmux ready\u001b[0m\r\n",
 			));
 		},
 		message(socket, message) {
@@ -581,12 +554,13 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 						persistence: "tmux",
 						profiles: [
 							{
-								id: "nvim",
-								label: "Neovim",
+								id: "tmux",
+								label: "tmux",
 								available: true,
 								reason: null,
 							},
 						],
+						renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
 					},
 				} satisfies BootstrapResponse);
 		}
@@ -600,7 +574,6 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 				running: terminalRunning,
 				attachmentCount: terminalAttachmentCount,
 				socketConnections: terminalSocketConnections,
-				target: terminalTarget,
 				inputs: terminalInputs,
 				resizes: terminalResizes,
 			});
@@ -623,7 +596,7 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 
 		if (nestedPath === "terminal" && request.method === "GET") {
 			return json({
-				profileId: "nvim",
+				profileId: "tmux",
 				running: terminalRunning,
 				controllerConnected: terminalController !== null,
 			});
@@ -780,7 +753,6 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			terminalAttachmentCount = 0;
 			terminalSocketConnections = 0;
 			terminalTicketCounter = 0;
-			terminalTarget = null;
 			terminalInputs.splice(0);
 			terminalResizes.splice(0);
 			terminalTickets.clear();
@@ -789,10 +761,8 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 
 		if (nestedPath === "terminal/attachments" && request.method === "POST") {
 			const body = (await request.json()) as TerminalAttachmentRequest;
-			const targetError = validateTerminalTarget(body.target);
-			if (targetError) return targetError;
 			if (
-				body.profileId !== "nvim" ||
+				body.profileId !== "tmux" ||
 				typeof body.clientId !== "string" ||
 				!Number.isSafeInteger(body.cols) ||
 				!Number.isSafeInteger(body.rows)
@@ -804,6 +774,7 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			}
 			terminalRunning = true;
 			terminalAttachmentCount += 1;
+			terminalResizes.push({ cols: body.cols, rows: body.rows });
 			const ticket = `fixture-ticket-${++terminalTicketCounter}`;
 			terminalTickets.set(ticket, {
 				repositoryId: repositoryId!,
@@ -816,19 +787,11 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 				expiresAt: new Date(Date.now() + 30_000).toISOString(),
 				protocol: "couchview-terminal-v1",
 				session: {
-					profileId: "nvim",
+					profileId: "tmux",
 					running: true,
 					controllerConnected: terminalController !== null,
 				},
 			}, 201);
-		}
-
-		if (nestedPath === "terminal/open" && request.method === "POST") {
-			const body = (await request.json()) as TerminalOpenRequest;
-			const targetError = validateTerminalTarget(body.target);
-			if (targetError) return targetError;
-			terminalRunning = true;
-			return json({ status: "opened" });
 		}
 
 		if (nestedPath === "terminal/end" && request.method === "POST") {

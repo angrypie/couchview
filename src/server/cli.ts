@@ -536,7 +536,7 @@ export async function startServer(
   );
   if (terminalEnabled && !terminalLoopbackOnly) {
     console.warn(
-      "Browser terminal access is enabled beyond loopback. Neovim runs with your OS-user permissions; protect every exposed origin with trusted access control.",
+      "Browser terminal access is enabled beyond loopback. tmux and its programs run with your OS-user permissions; protect every exposed origin with trusted access control.",
     );
   }
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { TERMINAL_ENDED_CLOSE_CODE } from "../shared/contracts.ts";
+import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import {
   FakeTerminalWebSocket,
   rendererState,
@@ -32,8 +33,9 @@ const capability = {
   reason: null,
   persistence: "tmux" as const,
   profiles: [
-    { id: "nvim" as const, label: "Neovim", available: true, reason: null },
+    { id: "tmux" as const, label: "tmux", available: true, reason: null },
   ],
+  renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
 };
 
 interface FetchRecord {
@@ -62,11 +64,8 @@ function terminalFetch(input: string | URL | Request, init?: RequestInit): Promi
       ticket: "ticket-1",
       expiresAt: "2026-07-26T12:00:30.000Z",
       protocol: "couchview-terminal-v1",
-      session: { profileId: "nvim", running: true, controllerConnected: false },
+      session: { profileId: "tmux", running: true, controllerConnected: false },
     }, 201));
-  }
-  if (url.pathname.endsWith("/terminal/open")) {
-    return Promise.resolve(jsonResponse({ status: "opened" }));
   }
   if (url.pathname.endsWith("/terminal/end")) {
     return Promise.resolve(endResponses.shift() ?? jsonResponse({ status: "ended" }));
@@ -81,11 +80,9 @@ function defaultProps() {
     csrfToken: "csrf-token",
     repositoryId: "repo",
     repositoryName: "fixture",
-    targetRequest: null,
     onBack: mock(() => undefined),
     onEnded: mock(() => undefined),
     onNotice: mock((_message: string) => undefined),
-    onTargetHandled: mock((_requestId: number) => undefined),
   };
 }
 
@@ -133,15 +130,16 @@ describe("TerminalWorkspace", () => {
     expect(fetchRecords[0]).toMatchObject({
       method: "POST",
       path: "/api/repositories/repo/terminal/attachments",
-      body: { cols: 100, rows: 32, takeover: false },
+      body: { profileId: "tmux", cols: 100, rows: 32, takeover: false },
     });
+    expect(rendererState.options?.config).toEqual(FALLBACK_TERMINAL_RENDERER_CONFIG);
     expect(socket.protocols).toEqual([
       "couchview-terminal-v1",
       "couchview-ticket.ticket-1",
     ]);
 
     await act(async () => {
-      socket.emitMessage(JSON.stringify({ type: "ready", profileId: "nvim" }));
+      socket.emitMessage(JSON.stringify({ type: "ready", profileId: "tmux" }));
     });
     expect(screen.getByText("Connected")).toBeTruthy();
     const bytes = new Uint8Array([0x1b, 0x5b, 0x32, 0x4a]);
@@ -171,41 +169,19 @@ describe("TerminalWorkspace", () => {
     expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
   });
 
-  test("opens later Review targets without reconnecting", async () => {
-    const props = defaultProps();
-    const view = render(<TerminalWorkspace {...props} />);
-    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
-    const socket = FakeTerminalWebSocket.instances[0]!;
-    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
-
-    const targetRequest = {
-      id: 9,
-      target: { fileId: "file-1", contentRevision: "revision-1", line: 37 },
-    };
-    view.rerender(<TerminalWorkspace {...props} targetRequest={targetRequest} />);
-    await waitFor(() => expect(fetchRecords.some(
-      (record) => record.path.endsWith("/terminal/open"),
-    )).toBe(true));
-    expect(fetchRecords.find((record) => record.path.endsWith("/terminal/open"))?.body).toEqual({
-      target: targetRequest.target,
-    });
-    expect(props.onTargetHandled).toHaveBeenCalledWith(9);
-    expect(FakeTerminalWebSocket.instances).toHaveLength(1);
-  });
-
   test("asks before taking control from another tab", async () => {
     attachmentResponses.push(
       jsonResponse({
         error: {
           code: "terminal_in_use",
-          message: "Neovim is controlled by another browser tab",
+          message: "The tmux terminal is controlled by another browser tab",
         },
       }, 409),
       jsonResponse({
         ticket: "takeover-ticket",
         expiresAt: "2026-07-26T12:00:30.000Z",
         protocol: "couchview-terminal-v1",
-        session: { profileId: "nvim", running: true, controllerConnected: true },
+        session: { profileId: "tmux", running: true, controllerConnected: true },
       }, 201),
     );
     const confirmations: string[] = [];
@@ -226,16 +202,7 @@ describe("TerminalWorkspace", () => {
     );
   });
 
-  test("requires a second confirmation before discarding modified buffers", async () => {
-    endResponses.push(
-      jsonResponse({
-        error: {
-          code: "terminal_unsaved_buffers",
-          message: "Neovim has 2 modified buffers",
-        },
-      }, 409),
-      jsonResponse({ status: "ended" }),
-    );
+  test("warns once before terminating running programs and unsaved work", async () => {
     const confirmations: string[] = [];
     window.confirm = (message) => {
       confirmations.push(String(message));
@@ -252,9 +219,9 @@ describe("TerminalWorkspace", () => {
     const endBodies = fetchRecords
       .filter((record) => record.path.endsWith("/terminal/end"))
       .map((record) => record.body);
-    expect(endBodies).toEqual([{ force: false }, { force: true }]);
-    expect(confirmations).toHaveLength(2);
-    expect(confirmations[1]).toContain("discard unsaved buffers");
+    expect(endBodies).toEqual([null]);
+    expect(confirmations).toHaveLength(1);
+    expect(confirmations[0]).toContain("Running programs and unsaved work");
     expect(screen.getAllByText("Session ended")).toHaveLength(2);
   });
 
@@ -265,14 +232,14 @@ describe("TerminalWorkspace", () => {
         capability={{
           ...capability,
           available: false,
-          reason: "Install Neovim",
+          reason: "Install tmux",
           profiles: [
-            { id: "nvim", label: "Neovim", available: false, reason: "Install Neovim" },
+            { id: "tmux", label: "tmux", available: false, reason: "Install tmux" },
           ],
         }}
       />,
     );
-    expect(await screen.findByText("Install Neovim")).toBeTruthy();
+    expect(await screen.findByText("Install tmux")).toBeTruthy();
     expect(rendererState.calls).toBe(0);
     expect(fetchRecords).toHaveLength(0);
   });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,7 @@ import {
   type StageFileResponse,
   type StageFilesResponse,
 } from "../shared/contracts.ts";
+import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import {
@@ -31,11 +32,7 @@ import {
   type CouchviewAppOptions,
 } from "./server.ts";
 import { GitCommandError } from "./git.ts";
-import type {
-  ResolvedTerminalTarget,
-  TerminalSessionService,
-  TerminalSocketData,
-} from "./terminalSessions.ts";
+import type { TerminalSessionService, TerminalSocketData } from "./terminalSessions.ts";
 
 const temporaryDirectories: string[] = [];
 const applications: CouchviewApp[] = [];
@@ -136,14 +133,12 @@ async function nextPackageRunEvent(
 }
 
 describe("Couchview HTTP security and routes", () => {
-  test("guards terminal APIs, resolves current files, and upgrades only authenticated sockets", async () => {
+  test("guards tmux APIs and upgrades only authenticated sockets", async () => {
     const attachmentCalls: Array<{
       repositoryId: string;
       repositoryRoot: string;
-      target?: ResolvedTerminalTarget;
     }> = [];
-    const openCalls: ResolvedTerminalTarget[] = [];
-    const endCalls: boolean[] = [];
+    const endCalls: string[] = [];
     let consumedUpgrade = false;
     let closed = false;
     const terminalSessions = {
@@ -152,36 +147,29 @@ describe("Couchview HTTP security and routes", () => {
         available: true,
         reason: null,
         persistence: "tmux",
-        profiles: [{ id: "nvim", label: "Neovim", available: true, reason: null }],
+        profiles: [{ id: "tmux", label: "tmux", available: true, reason: null }],
+        renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
       },
       websocket: {},
       async status() {
-        return { profileId: "nvim", running: true, controllerConnected: false };
+        return { profileId: "tmux", running: true, controllerConnected: false };
       },
       async issueAttachment(
         repositoryId: string,
         repositoryRoot: string,
         _input: unknown,
         _binding: unknown,
-        target?: ResolvedTerminalTarget,
       ) {
-        attachmentCalls.push({ repositoryId, repositoryRoot, target });
+        attachmentCalls.push({ repositoryId, repositoryRoot });
         return {
           ticket: "single-use-ticket",
           expiresAt: "2026-07-26T12:00:30.000Z",
           protocol: "couchview-terminal-v1",
-          session: { profileId: "nvim", running: true, controllerConnected: false },
+          session: { profileId: "tmux", running: true, controllerConnected: false },
         };
       },
-      async openFile(
-        _repositoryId: string,
-        _repositoryRoot: string,
-        target: ResolvedTerminalTarget,
-      ) {
-        openCalls.push(target);
-      },
-      async end(_repositoryId: string, force: boolean) {
-        endCalls.push(force);
+      async end(repositoryId: string) {
+        endCalls.push(repositoryId);
         return { status: "ended" };
       },
       consumeUpgrade(
@@ -195,7 +183,7 @@ describe("Couchview HTTP security and routes", () => {
           repositoryId,
           repositoryRoot: "/project",
           clientId: "client_12345678",
-          profileId: "nvim",
+          profileId: "tmux",
           cols: 100,
           rows: 32,
           takeover: false,
@@ -215,20 +203,12 @@ describe("Couchview HTTP security and routes", () => {
     const bootstrap = await (await app.fetch(request(API_ROUTES.bootstrap))).json() as BootstrapResponse;
     expect(bootstrap.terminal).toMatchObject({ available: true, persistence: "tmux" });
 
-    const changes = await app.repository.changes();
-    const file = changes.files.find((candidate) => candidate.path === "sample.ts");
-    if (!file) throw new Error("terminal fixture file missing");
     const attachmentBody = JSON.stringify({
       clientId: "client_12345678",
-      profileId: "nvim",
+      profileId: "tmux",
       cols: 100,
       rows: 32,
       takeover: false,
-      target: {
-        fileId: file.id,
-        contentRevision: file.contentRevision,
-        line: 12,
-      },
     });
     const mutationHeaders = {
       "content-type": "application/json",
@@ -254,78 +234,17 @@ describe("Couchview HTTP security and routes", () => {
     expect(attachmentCalls).toEqual([{
       repositoryId: app.repository.id,
       repositoryRoot: app.repository.root,
-      target: { absolutePath: path.join(app.repository.root, "sample.ts"), line: 12 },
     }]);
-
-    const stale = await app.fetch(request(
-      API_ROUTES.terminalOpen(app.repository.id),
-      {
-        method: "POST",
-        headers: mutationHeaders,
-        body: JSON.stringify({
-          target: { fileId: file.id, contentRevision: "stale", line: 1 },
-        }),
-      },
-    ));
-    expect(stale.status).toBe(409);
-    expect((await stale.json()) as ApiErrorBody).toMatchObject({ error: { code: "stale_file" } });
-
-    const opened = await app.fetch(request(
-      API_ROUTES.terminalOpen(app.repository.id),
-      {
-        method: "POST",
-        headers: mutationHeaders,
-        body: JSON.stringify({
-          target: {
-            fileId: file.id,
-            contentRevision: file.contentRevision,
-            line: 7,
-          },
-        }),
-      },
-    ));
-    expect(opened.status).toBe(200);
-    expect(openCalls).toEqual([{
-      absolutePath: path.join(app.repository.root, "sample.ts"),
-      line: 7,
-    }]);
-
-    const external = path.join(path.dirname(app.repository.root), "outside-terminal.ts");
-    await writeFile(external, "export const outside = true;\n");
-    await symlink(external, path.join(app.repository.root, "escape-terminal.ts"));
-    const symlinkFile = (await app.repository.changes()).files.find(
-      (candidate) => candidate.path === "escape-terminal.ts",
-    );
-    if (!symlinkFile) throw new Error("terminal symlink fixture missing");
-    const escaped = await app.fetch(request(
-      API_ROUTES.terminalOpen(app.repository.id),
-      {
-        method: "POST",
-        headers: mutationHeaders,
-        body: JSON.stringify({
-          target: {
-            fileId: symlinkFile.id,
-            contentRevision: symlinkFile.contentRevision,
-            line: 1,
-          },
-        }),
-      },
-    ));
-    expect(escaped.status).toBe(400);
-    expect((await escaped.json()) as ApiErrorBody).toMatchObject({
-      error: { code: "terminal_target_invalid" },
-    });
 
     const ended = await app.fetch(request(
       API_ROUTES.terminalEnd(app.repository.id),
       {
         method: "POST",
         headers: mutationHeaders,
-        body: JSON.stringify({ force: true }),
       },
     ));
     expect(ended.status).toBe(200);
-    expect(endCalls).toEqual([true]);
+    expect(endCalls).toEqual([app.repository.id]);
 
     let upgradedData: TerminalSocketData | null = null;
     let selectedProtocol: string | null = null;
@@ -1156,7 +1075,7 @@ describe("Couchview HTTP security and routes", () => {
     expect(instance.status).toBe(200);
     expect(await instance.json()).toMatchObject({
       service: "couchview",
-      protocolVersion: 2,
+      protocolVersion: 3,
       instanceId: app.instanceId,
       bindHost: "127.0.0.1",
       port: 3001,

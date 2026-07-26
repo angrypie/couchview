@@ -1,5 +1,8 @@
+import type { TerminalRendererConfig } from "../shared/contracts.ts";
+
 interface RendererOptions {
   container: HTMLElement;
+  config: TerminalRendererConfig;
   onData(data: Uint8Array<ArrayBuffer>): void;
   onResize(cols: number, rows: number): void;
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -28,15 +28,15 @@ afterEach(async () => {
 
 interface CommandHarness {
   commands: string[][];
-  modifiedBuffers: number;
   runner: TerminalCommandRunner;
+  serverRunning: boolean;
   sessionRunning: boolean;
 }
 
-function commandHarness(initialSession = false): CommandHarness {
+function commandHarness(initialSession = false, initialServer = initialSession): CommandHarness {
   const harness: CommandHarness = {
     commands: [],
-    modifiedBuffers: 0,
+    serverRunning: initialServer,
     sessionRunning: initialSession,
     async runner(argv) {
       const command = [...argv];
@@ -44,26 +44,20 @@ function commandHarness(initialSession = false): CommandHarness {
       if (command.includes("has-session")) {
         return { exitCode: harness.sessionRunning ? 0 : 1, stdout: "", stderr: "" };
       }
+      if (command.includes("list-sessions")) {
+        return { exitCode: harness.serverRunning ? 0 : 1, stdout: "", stderr: "" };
+      }
       if (command.includes("new-session")) {
+        harness.serverRunning = true;
         harness.sessionRunning = true;
         return { exitCode: 0, stdout: "", stderr: "" };
       }
       if (command.includes("kill-session")) {
+        harness.serverRunning = false;
         harness.sessionRunning = false;
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      const expression = command.at(-1);
-      if (expression === "len(getbufinfo({'bufmodified':1}))") {
-        return {
-          exitCode: 0,
-          stdout: `${harness.modifiedBuffers}\n`,
-          stderr: "",
-        };
-      }
-      if (expression === "execute('qa')") {
-        harness.sessionRunning = false;
-      }
-      return { exitCode: 0, stdout: expression === "1" ? "1\n" : "", stderr: "" };
+      return { exitCode: 0, stdout: "", stderr: "" };
     },
   };
   return harness;
@@ -75,11 +69,16 @@ async function serviceFixture(
     enabled?: boolean;
     now?: () => number;
     tokenFactory?: () => string;
+    userTmuxConfig?: string;
     withPty?: boolean;
   } = {},
 ) {
   const runtimeDirectory = await mkdtemp(path.join(tmpdir(), "couchview-terminal-"));
   temporaryDirectories.push(runtimeDirectory);
+  const userTmuxConfigPath = options.userTmuxConfig
+    ? path.join(runtimeDirectory, "user-tmux.conf")
+    : null;
+  if (userTmuxConfigPath) await writeFile(userTmuxConfigPath, options.userTmuxConfig!, "utf8");
   let terminalClosed = 0;
   let processKilled = 0;
   const terminal = {
@@ -103,12 +102,12 @@ async function serviceFixture(
     dependencies: {
       terminalAvailable: true,
       tmuxPath: "/fake/tmux",
-      nvimPath: "/fake/nvim",
       tmux256Color: true,
     },
     commandRunner: harness.runner,
     now: options.now,
     tokenFactory: options.tokenFactory,
+    userTmuxConfigPath,
     ...(options.withPty
       ? {
           terminalFactory: () => terminal,
@@ -127,7 +126,7 @@ async function serviceFixture(
 function attachmentRequest(clientId = "client_12345678") {
   return {
     clientId,
-    profileId: "nvim" as const,
+    profileId: "tmux" as const,
     cols: 100,
     rows: 32,
     takeover: false,
@@ -199,7 +198,6 @@ describe("terminal network policy", () => {
       dependencies: {
         terminalAvailable: true,
         tmuxPath: null,
-        nvimPath: "/fake/nvim",
         tmux256Color: false,
       },
     });
@@ -208,8 +206,8 @@ describe("terminal network policy", () => {
   });
 });
 
-describe("persistent Neovim sessions", () => {
-  test("rejects malformed takeover requests before starting Neovim", async () => {
+describe("persistent tmux sessions", () => {
+  test("rejects malformed takeover requests before starting tmux", async () => {
     const harness = commandHarness();
     const { service } = await serviceFixture(harness);
     await expect(service.issueAttachment(
@@ -228,11 +226,12 @@ describe("persistent Neovim sessions", () => {
     service.close();
   });
 
-  test("starts one tmux session and opens an authoritative file and line through RPC", async () => {
+  test("starts one raw tmux session and sources the local config before required overrides", async () => {
     const harness = commandHarness();
     let token = 0;
     const { runtimeDirectory, service } = await serviceFixture(harness, {
       tokenFactory: () => `ticket-${++token}`,
+      userTmuxConfig: "set -g default-shell /opt/homebrew/bin/fish\nset -g mouse off\n",
     });
 
     await service.issueAttachment(
@@ -240,7 +239,6 @@ describe("persistent Neovim sessions", () => {
       "/project",
       attachmentRequest(),
       { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" },
-      { absolutePath: "/project/src/app.ts", line: 42 },
     );
     await service.issueAttachment(
       "repo",
@@ -250,7 +248,8 @@ describe("persistent Neovim sessions", () => {
     );
 
     expect(harness.commands.filter((command) => command.includes("new-session"))).toHaveLength(1);
-    expect(harness.commands.find((command) => command.includes("new-session"))).toEqual(
+    const newSession = harness.commands.find((command) => command.includes("new-session"));
+    expect(newSession).toEqual(
       expect.arrayContaining([
         "/fake/tmux",
         "-f",
@@ -258,35 +257,69 @@ describe("persistent Neovim sessions", () => {
         "-L",
       ]),
     );
+    expect(newSession?.slice(-6)).toEqual([
+      "new-session",
+      "-d",
+      "-s",
+      expect.stringMatching(/^nvim-/),
+      "-c",
+      "/project",
+    ]);
     const tmuxConfiguration = await readFile(
       path.join(runtimeDirectory, "tmux.conf"),
       "utf8",
     );
+    expect(tmuxConfiguration.indexOf("source-file")).toBeLessThan(
+      tmuxConfiguration.indexOf("mouse on"),
+    );
+    expect(tmuxConfiguration).toContain("user-tmux.conf");
     expect(tmuxConfiguration).toContain("escape-time 0");
     expect(tmuxConfiguration).toContain("focus-events on");
     expect(tmuxConfiguration).toContain("mouse on");
     expect(tmuxConfiguration).toContain("default-terminal tmux-256color");
     expect(tmuxConfiguration).toContain("xterm-256color:RGB");
     expect((await stat(path.join(runtimeDirectory, "tmux.conf"))).mode & 0o777).toBe(0o600);
-    expect(harness.commands).toContainEqual([
-      "/fake/nvim",
-      "--server",
-      expect.stringContaining(".sock"),
-      "--remote",
-      "/project/src/app.ts",
-    ]);
-    expect(harness.commands).toContainEqual([
-      "/fake/nvim",
-      "--server",
-      expect.stringContaining(".sock"),
-      "--remote-expr",
-      "cursor(42,1)",
-    ]);
+    expect(harness.commands.flat()).not.toContain("/fake/nvim");
     expect(await service.status("repo")).toEqual({
-      profileId: "nvim",
+      profileId: "tmux",
       running: true,
       controllerConnected: false,
     });
+    service.close();
+    expect(harness.sessionRunning).toBe(true);
+  });
+
+  test("loads the host config into a preserved tmux server before applying overrides", async () => {
+    const harness = commandHarness(true);
+    const { runtimeDirectory, service } = await serviceFixture(harness, {
+      userTmuxConfig: "set -g status-style bg=blue\n",
+    });
+
+    await service.issueAttachment(
+      "repo",
+      "/project",
+      attachmentRequest(),
+      { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" },
+    );
+    await service.issueAttachment(
+      "repo",
+      "/project",
+      attachmentRequest(),
+      { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" },
+    );
+
+    expect(harness.commands.some((command) => command.includes("new-session"))).toBe(false);
+    const sourceIndexes = harness.commands.flatMap((command, index) =>
+      command.includes("source-file") ? [index] : []
+    );
+    expect(sourceIndexes).toHaveLength(1);
+    expect(harness.commands[sourceIndexes[0]!]?.at(-1)).toBe(
+      path.join(runtimeDirectory, "user-tmux.conf"),
+    );
+    const mouseOverrideIndex = harness.commands.findIndex((command) =>
+      command.includes("set-option") && command.includes("mouse") && command.includes("on")
+    );
+    expect(sourceIndexes[0]!).toBeLessThan(mouseOverrideIndex);
     service.close();
     expect(harness.sessionRunning).toBe(true);
   });
@@ -390,30 +423,18 @@ describe("persistent Neovim sessions", () => {
     expect(harness.sessionRunning).toBe(true);
   });
 
-  test("protects modified buffers, supports safe quit, and permits force cleanup after policy changes", async () => {
+  test("ends running sessions directly even when terminal access is now disabled", async () => {
     const harness = commandHarness(true);
-    harness.modifiedBuffers = 2;
     const enabled = await serviceFixture(harness);
-    await expect(enabled.service.end("repo", false)).rejects.toMatchObject({
-      status: 409,
-      code: "terminal_unsaved_buffers",
-    });
-    expect(harness.sessionRunning).toBe(true);
-    await enabled.service.end("repo", true);
+    expect(await enabled.service.end("repo")).toEqual({ status: "ended" });
     expect(harness.sessionRunning).toBe(false);
+    expect(harness.commands.some((command) => command.includes("kill-session"))).toBe(true);
     enabled.service.close();
-
-    const safeHarness = commandHarness(true);
-    const safe = await serviceFixture(safeHarness);
-    expect(await safe.service.end("repo", false)).toEqual({ status: "ended" });
-    expect(safeHarness.commands.some((command) => command.at(-1) === "execute('qa')")).toBe(true);
-    expect(safeHarness.sessionRunning).toBe(false);
-    safe.service.close();
 
     const disabledHarness = commandHarness(true);
     const disabled = await serviceFixture(disabledHarness, { enabled: false });
     expect(await disabled.service.status("repo")).toMatchObject({ running: true });
-    expect(await disabled.service.end("repo", true)).toEqual({ status: "ended" });
+    expect(await disabled.service.end("repo")).toEqual({ status: "ended" });
     expect(disabledHarness.sessionRunning).toBe(false);
     disabled.service.close();
   });
@@ -443,7 +464,7 @@ describe("persistent Neovim sessions", () => {
       binding,
     );
 
-    await fixture.service.end("repo", true);
+    await fixture.service.end("repo");
 
     expect(socket.closes).toContainEqual({
       code: TERMINAL_ENDED_CLOSE_CODE,

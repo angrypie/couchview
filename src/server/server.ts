@@ -38,9 +38,6 @@ import {
   type StageFileRequest,
   type StageFilesRequest,
   type TerminalAttachmentRequest,
-  type TerminalEndRequest,
-  type TerminalOpenRequest,
-  type TerminalOpenResponse,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import {
@@ -55,7 +52,6 @@ import { PackageCommandService } from "./packageCommands.ts";
 import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
 import {
-  type ResolvedTerminalTarget,
   TerminalSessionService,
   type TerminalSocketData,
   TERMINAL_PROTOCOL,
@@ -64,7 +60,7 @@ import {
 
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
-export const INSTANCE_PROTOCOL_VERSION = 2;
+export const INSTANCE_PROTOCOL_VERSION = 3;
 export const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
@@ -589,60 +585,6 @@ export async function createCouchviewApp(
     return { repository: registered.repository, added: registered.added };
   };
 
-  const resolveTerminalTarget = async (
-    repository: GitRepository,
-    target: TerminalAttachmentRequest["target"],
-  ): Promise<ResolvedTerminalTarget | undefined> => {
-    if (target === undefined) return undefined;
-    if (
-      !target ||
-      typeof target !== "object" ||
-      typeof target.fileId !== "string" ||
-      typeof target.contentRevision !== "string" ||
-      !Number.isSafeInteger(target.line) ||
-      target.line < 1 ||
-      target.line > 10_000_000
-    ) {
-      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target is invalid");
-    }
-    const snapshot = await repository.changes();
-    const file = snapshot.files.find((candidate) => candidate.id === target.fileId);
-    if (!file) {
-      throw new HttpError(404, "file_not_found", "Changed file not found");
-    }
-    if (file.contentRevision !== target.contentRevision) {
-      throw new HttpError(
-        409,
-        "stale_file",
-        "The file changed; refresh the diff before opening it in Neovim",
-      );
-    }
-    if (file.kind === "deleted") {
-      throw new HttpError(
-        409,
-        "file_deleted",
-        "Deleted files do not have a working-tree file to open",
-      );
-    }
-    const absolutePath = path.resolve(repository.root, file.path);
-    const repositoryPrefix = `${repository.root}${path.sep}`;
-    if (absolutePath !== repository.root && !absolutePath.startsWith(repositoryPrefix)) {
-      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target escapes the repository");
-    }
-    const resolvedPath = await realpath(absolutePath).catch(() => null);
-    if (!resolvedPath) {
-      throw new HttpError(409, "file_unavailable", "The working-tree file is no longer available");
-    }
-    if (resolvedPath !== repository.root && !resolvedPath.startsWith(repositoryPrefix)) {
-      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target leaves the repository through a symbolic link");
-    }
-    const metadata = await stat(resolvedPath);
-    if (!metadata.isFile()) {
-      throw new HttpError(409, "file_unavailable", "The working-tree target is not a regular file");
-    }
-    return { absolutePath, line: target.line };
-  };
-
   const handleApi = async (request: Request, url: URL): Promise<Response> => {
     const controlRegistration =
       url.pathname === API_ROUTES.controlRepositories && request.method === "POST";
@@ -724,7 +666,7 @@ export async function createCouchviewApp(
 
     if (!nestedPath && request.method === "DELETE") {
       const terminalStatus = await terminalSessions.status(repositoryId);
-      if (terminalStatus.running) await terminalSessions.end(repositoryId, false);
+      if (terminalStatus.running) await terminalSessions.end(repositoryId);
       packageCommands.stopRepository(repositoryId);
       repositories.forget(repositoryId);
       if (defaultRepositoryId === repositoryId) {
@@ -757,7 +699,6 @@ export async function createCouchviewApp(
       if (!origin) {
         throw new HttpError(403, "origin_required", "A same-origin browser request is required");
       }
-      const target = await resolveTerminalTarget(repository, input.target);
       return json(
         await terminalSessions.issueAttachment(
           repositoryId,
@@ -767,26 +708,12 @@ export async function createCouchviewApp(
             host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
             origin: normalizeOrigin(origin),
           },
-          target,
         ),
         { status: 201 },
       );
     }
-    if (nestedPath === "terminal/open" && request.method === "POST") {
-      const input = await readJsonObject<TerminalOpenRequest>(request);
-      const target = await resolveTerminalTarget(repository, input.target);
-      if (!target) {
-        throw new HttpError(400, "terminal_target_invalid", "The Neovim file target is required");
-      }
-      await terminalSessions.openFile(repositoryId, repository.root, target);
-      return json({ status: "opened" } satisfies TerminalOpenResponse);
-    }
     if (nestedPath === "terminal/end" && request.method === "POST") {
-      const input = await readJsonObject<TerminalEndRequest>(request);
-      if (typeof input.force !== "boolean") {
-        throw new HttpError(400, "terminal_end_invalid", "The terminal end mode is invalid");
-      }
-      return json(await terminalSessions.end(repositoryId, input.force));
+      return json(await terminalSessions.end(repositoryId));
     }
     if (fileRoute?.[2] === "diff" && request.method === "GET") {
       return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));

@@ -1,0 +1,35 @@
+import type { TerminalRendererConfig } from "./contracts.ts";
+
+export const FALLBACK_TERMINAL_RENDERER_CONFIG: TerminalRendererConfig = {
+  fontFamily: "Hack Nerd Font",
+  fontSize: 15,
+  cellHeightAdjustment: 1,
+  cellWidthAdjustment: -1,
+  cursorStyle: "block",
+  cursorBlink: false,
+  theme: {
+    background: "#1e1e2e",
+    foreground: "#cdd6f4",
+    cursor: "#ced5f1",
+    selectionBackground: "#353749",
+    selectionForeground: "#cdd6f4",
+    palette: [
+      "#45475a",
+      "#f38ba8",
+      "#a6e3a1",
+      "#f9e2af",
+      "#89b4fa",
+      "#f5c2e7",
+      "#94e2d5",
+      "#bac2de",
+      "#585b70",
+      "#f38ba8",
+      "#a6e3a1",
+      "#f9e2af",
+      "#89b4fa",
+      "#f5c2e7",
+      "#94e2d5",
+      "#a6adc8",
+    ],
+  },
+};

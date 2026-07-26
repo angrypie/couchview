@@ -64,13 +64,23 @@ Copy the `192.168...` address into the phone browser. If it does not connect, co
 
 LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
 
-### Browser Neovim
+### Browser tmux terminal
 
-Couchview can open the current working-tree file and selected line in a persistent
-Neovim workspace rendered by `ghostty-web`. Install Neovim and tmux on the machine
-running Couchview and make both `nvim` and `tmux` available on its `PATH`. The
-terminal renderer and its WASM runtime load only after the workspace is opened and
-are not part of the PWA precache.
+Couchview provides one persistent tmux terminal per repository, rendered by
+`ghostty-web`. Install tmux on the machine running Couchview and make it available
+on `PATH`. A new session starts immediately in the repository with tmux's configured
+default shell. Couchview loads the host user's normal XDG or `~/.tmux.conf` first,
+then enforces persistence, mouse, focus, and true-color settings required by the
+browser terminal.
+
+The browser renderer uses the supported appearance settings from the host's resolved
+Ghostty configuration when Ghostty is installed, or reads its local config directly.
+Font family, size, pixel-based cell height and width adjustments, cursor, palette,
+and selection colors are supported; other native-only settings are ignored. The
+strictly monospaced Hack Nerd Font Mono regular, bold, italic, and bold-italic faces
+plus a Catppuccin Mocha fallback are bundled, so remote browsers do not need the
+font installed. Font, terminal renderer, and WASM assets load only after the
+terminal is opened and are not part of the PWA precache.
 
 Terminal access is enabled automatically only when the bind address and every
 allowed origin are loopback. Disable it explicitly when desired:
@@ -89,24 +99,21 @@ couchview --host 0.0.0.0 --enable-terminal
 COUCHVIEW_TERMINAL=1 couchview --host 0.0.0.0
 ```
 
-This opt-in is security-sensitive: browser keystrokes control Neovim with the same
-operating-system permissions as Couchview. Use it only on trusted networks or
+This opt-in is security-sensitive: browser keystrokes control tmux and its programs
+with the same operating-system permissions as Couchview. Use it only on trusted networks or
 behind strong authentication such as Cloudflare Access. Couchview's origin and
 CSRF checks are not remote-user authentication.
 
-Each repository gets one tmux-backed Neovim session and one controlling browser
-tab. Another tab must confirm before taking control. Switching back to Review,
-closing the page, or restarting Couchview detaches the browser while tmux keeps
-Neovim alive. **End session** first refuses to quit modified buffers and requires a
-second confirmation before force-ending them. Forgetting a repository follows the
-same safety rule.
+Each repository gets one tmux session and one controlling browser tab. Another tab
+must confirm before taking control. Switching back to Review, closing the page, or
+restarting Couchview detaches the browser while tmux keeps running. **End session**
+warns once before terminating every program in the session, including unsaved work.
+Forgetting a repository uses the same warning.
 
-The workspace runs on the Couchview host. If Couchview itself runs on a remote
-machine, Neovim and the repository are remote automatically. Plugins such as
-`remote-ssh.nvim` may still be installed in that host's normal Neovim configuration,
-but Couchview does not need or expose the plugin's SSH credential and transport
-layer; tmux plus the authenticated WebSocket provide browser persistence and
-reconnection.
+The terminal runs on the Couchview host. If Couchview itself runs on a remote
+machine, tmux, its shell, and the repository are remote automatically. The
+authenticated WebSocket provides browser attachment and reconnection without
+exposing a separate terminal transport.
 
 ### Remote HTTPS access through Cloudflare
 
@@ -300,11 +307,11 @@ Binary and metadata-only changes remain reviewable and stageable but do not acce
 
 On desktop Chrome or Edge over localhost, use the install icon in the address bar or the in-app install guidance. On iPhone or iPad, PWA installation requires Couchview to be served through HTTPS; a plain LAN-IP URL can open the review UI but is not a secure context. When HTTPS is available, open Couchview in Safari, tap **Share**, then **Add to Home Screen**. Launching the installed app uses the standalone, edge-to-edge interface.
 
-The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk and WASM runtime also stay out of the precache and load only when Neovim is opened. When a new service worker is ready, Couchview asks before reloading the active review.
+The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk, WASM runtime, and bundled Nerd Font faces also stay out of the precache and load only when the tmux terminal is opened. When a new service worker is ready, Couchview asks before reloading the active review.
 
 ## Local state and security
 
-The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, send staged change context to Codex, and—only with explicit non-loopback terminal opt-in—control Neovim as the Couchview OS user.
+The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, send staged change context to Codex, and—only with explicit non-loopback terminal opt-in—control tmux and its programs as the Couchview OS user.
 
 Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
@@ -345,7 +352,7 @@ bunx playwright install chromium webkit
 bun run test:e2e
 ```
 
-Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy loading, input, resize, Review handoff, and session shutdown.
+Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy renderer and Nerd Font loading, input, resize, Review handoff, and tmux session shutdown.
 
 To point the browser suite at an already running instance instead:
 

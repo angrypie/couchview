@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -12,7 +12,6 @@ import {
   API_ROUTES,
   TERMINAL_ENDED_CLOSE_CODE,
   type TerminalCapability,
-  type TerminalFileTarget,
 } from "../shared/contracts.ts";
 import { ApiError, api } from "./api.ts";
 import {
@@ -30,22 +29,15 @@ type ConnectionState =
   | "ended"
   | "error";
 
-export interface TerminalTargetRequest {
-  id: number;
-  target: TerminalFileTarget;
-}
-
 interface TerminalWorkspaceProps {
   active: boolean;
   capability: TerminalCapability;
   csrfToken: string;
   repositoryId: string;
   repositoryName: string;
-  targetRequest: TerminalTargetRequest | null;
   onBack(): void;
   onEnded(): void;
   onNotice(message: string): void;
-  onTargetHandled(requestId: number): void;
 }
 
 const clientStorageKey = "couchview:terminal-client-id";
@@ -57,14 +49,6 @@ function terminalClientId(): string {
   const created = [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
   window.sessionStorage.setItem(clientStorageKey, created);
   return created;
-}
-
-function canForceEnd(error: unknown): error is ApiError {
-  return error instanceof ApiError && [
-    "terminal_unsaved_buffers",
-    "terminal_quit_failed",
-    "terminal_unavailable",
-  ].includes(error.code);
 }
 
 function terminalWebSocketUrl(repositoryId: string): string {
@@ -100,11 +84,9 @@ export function TerminalWorkspace({
   csrfToken,
   repositoryId,
   repositoryName,
-  targetRequest,
   onBack,
   onEnded,
   onNotice,
-  onTargetHandled,
 }: TerminalWorkspaceProps) {
   const [rendererReady, setRendererReady] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
@@ -119,11 +101,7 @@ export function TerminalWorkspace({
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const expectedCloseRef = useRef(false);
-  const targetRequestRef = useRef(targetRequest);
   const activeRef = useRef(active);
-  const handledTargetRef = useRef<number | null>(null);
-
-  targetRequestRef.current = targetRequest;
   activeRef.current = active;
 
   const requestReconnect = useCallback((immediate = false) => {
@@ -150,6 +128,7 @@ export function TerminalWorkspace({
     setConnectionError(null);
     void createBrowserTerminal({
       container: containerRef.current,
+      config: capability.renderer,
       onData(data) {
         const socket = socketRef.current;
         if (socket?.readyState === WebSocket.OPEN) socket.send(data);
@@ -186,7 +165,7 @@ export function TerminalWorkspace({
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
-  }, [capability.available, capability.reason, rendererRetryNonce, repositoryId]);
+  }, [capability.available, capability.reason, capability.renderer, rendererRetryNonce, repositoryId]);
 
   useEffect(() => {
     if (!rendererReady || !capability.available) return;
@@ -199,27 +178,19 @@ export function TerminalWorkspace({
     const connect = async (takeover: boolean): Promise<void> => {
       const renderer = rendererRef.current;
       if (!renderer || disposed) return;
-      const pendingTarget = targetRequestRef.current;
       try {
         const attachment = await api.createTerminalAttachment(
           repositoryId,
           {
             clientId: terminalClientId(),
-            profileId: "nvim",
+            profileId: "tmux",
             cols: Math.max(2, renderer.cols || 80),
             rows: Math.max(1, renderer.rows || 24),
             takeover,
-            ...(pendingTarget && pendingTarget.id !== handledTargetRef.current
-              ? { target: pendingTarget.target }
-              : {}),
           },
           csrfToken,
         );
         if (disposed) return;
-        if (pendingTarget && pendingTarget.id !== handledTargetRef.current) {
-          handledTargetRef.current = pendingTarget.id;
-          onTargetHandled(pendingTarget.id);
-        }
         socket = new WebSocket(
           terminalWebSocketUrl(repositoryId),
           [attachment.protocol, `couchview-ticket.${attachment.ticket}`],
@@ -267,7 +238,7 @@ export function TerminalWorkspace({
           if (expectedCloseRef.current) return;
           if (event.code === 4001) {
             setConnectionState("taken-over");
-            setConnectionError("Another browser tab took control of this Neovim session.");
+            setConnectionError("Another browser tab took control of this tmux terminal.");
             return;
           }
           reconnectAttemptRef.current += 1;
@@ -282,7 +253,7 @@ export function TerminalWorkspace({
         if (error instanceof ApiError && error.code === "terminal_in_use") {
           setConnectionState("in-use");
           const confirmed = window.confirm(
-            "Neovim is active in another browser tab. Take control here?",
+            "The tmux terminal is active in another browser tab. Take control here?",
           );
           if (confirmed) await connect(true);
           return;
@@ -309,35 +280,11 @@ export function TerminalWorkspace({
   }, [
     capability.available,
     csrfToken,
-    onTargetHandled,
     reconnectNonce,
     rendererReady,
     repositoryId,
     requestReconnect,
   ]);
-
-  useEffect(() => {
-    if (!targetRequest || targetRequest.id === handledTargetRef.current) return;
-    if (connectionState !== "connected") return;
-    let cancelled = false;
-    void api.openTerminalFile(
-      repositoryId,
-      { target: targetRequest.target },
-      csrfToken,
-    ).then(() => {
-      if (cancelled) return;
-      handledTargetRef.current = targetRequest.id;
-      onTargetHandled(targetRequest.id);
-    }).catch((error) => {
-      if (cancelled) return;
-      handledTargetRef.current = targetRequest.id;
-      onTargetHandled(targetRequest.id);
-      onNotice(error instanceof Error ? error.message : "Neovim could not open the selected file.");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [connectionState, csrfToken, onNotice, onTargetHandled, repositoryId, targetRequest]);
 
   useEffect(() => {
     if (!active || !rendererReady) return;
@@ -349,30 +296,16 @@ export function TerminalWorkspace({
   }, [active, rendererReady]);
 
   const endSession = useCallback(async () => {
-    if (!window.confirm("End this persistent Neovim session?")) return;
+    if (!window.confirm(
+      "End this persistent tmux session? Running programs and unsaved work will be terminated.",
+    )) return;
     setEnding(true);
     try {
-      await api.endTerminal(repositoryId, { force: false }, csrfToken);
+      await api.endTerminal(repositoryId, csrfToken);
     } catch (error) {
-      if (!canForceEnd(error)) {
-        onNotice(error instanceof Error ? error.message : "The Neovim session could not be ended.");
-        setEnding(false);
-        return;
-      }
-      const force = window.confirm(
-        `${error.message}\n\nForce end the session? This may discard unsaved buffers.`,
-      );
-      if (!force) {
-        setEnding(false);
-        return;
-      }
-      try {
-        await api.endTerminal(repositoryId, { force: true }, csrfToken);
-      } catch (forceError) {
-        onNotice(forceError instanceof Error ? forceError.message : "The Neovim session could not be ended.");
-        setEnding(false);
-        return;
-      }
+      onNotice(error instanceof Error ? error.message : "The tmux session could not be ended.");
+      setEnding(false);
+      return;
     }
     expectedCloseRef.current = true;
     if (reconnectTimerRef.current !== null) {
@@ -402,9 +335,12 @@ export function TerminalWorkspace({
   return (
     <section
       aria-hidden={!active}
-      aria-label="Neovim workspace"
+      aria-label="tmux terminal"
       className={`terminal-workspace ${active ? "active" : "hidden"}`}
       inert={!active}
+      style={{
+        "--terminal-background": capability.renderer.theme.background,
+      } as CSSProperties}
     >
       <header className="terminal-toolbar">
         <button className="terminal-toolbar-button" onClick={onBack} type="button">
@@ -441,7 +377,7 @@ export function TerminalWorkspace({
             {["in-use", "taken-over", "ended", "error"].includes(connectionState) && capability.available && (
               <button className="action-button secondary" onClick={retry} type="button">
                 <RotateCw size={15} />
-                {connectionState === "ended" ? "Start Neovim" : "Reconnect"}
+                {connectionState === "ended" ? "Start tmux" : "Reconnect"}
               </button>
             )}
           </div>

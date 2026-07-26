@@ -38,10 +38,7 @@ import {
   type StartPackageRunRequest,
   type TerminalAttachmentRequest,
   type TerminalAttachmentResponse,
-  type TerminalEndRequest,
   type TerminalEndResponse,
-  type TerminalOpenRequest,
-  type TerminalOpenResponse,
   type TerminalSessionStatus,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
@@ -183,28 +180,14 @@ export const api = {
     );
   },
 
-  openTerminalFile(
-    repositoryId: string,
-    body: TerminalOpenRequest,
-    csrfToken: string,
-    signal?: AbortSignal,
-  ) {
-    return request<TerminalOpenResponse>(
-      API_ROUTES.terminalOpen(repositoryId),
-      { method: "POST", body: JSON.stringify(body), signal },
-      csrfToken,
-    );
-  },
-
   endTerminal(
     repositoryId: string,
-    body: TerminalEndRequest,
     csrfToken: string,
     signal?: AbortSignal,
   ) {
     return request<TerminalEndResponse>(
       API_ROUTES.terminalEnd(repositoryId),
-      { method: "POST", body: JSON.stringify(body), signal },
+      { method: "POST", signal },
       csrfToken,
     );
   },
