@@ -4,6 +4,21 @@ import { VitePWA } from "vite-plugin-pwa";
 
 const apiPath = /^\/api(?:\/|$)/;
 
+function externalizeGhosttyWasm() {
+  return {
+    name: "externalize-ghostty-wasm",
+    enforce: "pre" as const,
+    transform(code: string, id: string) {
+      if (!id.endsWith("/ghostty-web/dist/ghostty-web.js")) return null;
+      const embeddedWasm = /new URL\(["`]data:application\/wasm;base64,[A-Za-z0-9+/=]+["`], self\.location\)/;
+      if (!embeddedWasm.test(code)) {
+        throw new Error("ghostty-web's embedded WASM shape changed; update the externalization transform");
+      }
+      return code.replace(embeddedWasm, 'new URL("about:blank")');
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiOrigin =
@@ -28,6 +43,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      externalizeGhosttyWasm(),
       react(),
       VitePWA({
         registerType: "prompt",

@@ -8,7 +8,7 @@ import { accessOriginsForHost, normalizeBindHost } from "../src/server/server.ts
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rawArgs = Bun.argv.slice(2).filter((arg) => arg !== "--");
 
-function readArguments(args: string[]): { root: string; host: string } {
+function readArguments(args: string[]): { root: string; host: string; terminal: "1" | "0" | undefined } {
   let root =
     process.env.COUCHVIEW_ROOT ||
     process.env.COUCH_REVIEW_ROOT ||
@@ -18,6 +18,12 @@ function readArguments(args: string[]): { root: string; host: string } {
     process.env.COUCH_REVIEW_HOST ||
     "127.0.0.1";
   let explicitRoot = false;
+  let terminal = process.env.COUCHVIEW_TERMINAL;
+  let terminalFlag: "1" | "0" | undefined;
+  if (terminal !== undefined && terminal !== "1" && terminal !== "0") {
+    console.error("COUCHVIEW_TERMINAL must be 1 or 0.");
+    process.exit(2);
+  }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--repo" || argument === "--root") {
@@ -37,15 +43,22 @@ function readArguments(args: string[]): { root: string; host: string } {
       }
       host = value;
       index += 1;
+    } else if (argument === "--enable-terminal" || argument === "--disable-terminal") {
+      const next = argument === "--enable-terminal" ? "1" : "0";
+      if (terminalFlag !== undefined && terminalFlag !== next) {
+        console.error("--enable-terminal and --disable-terminal cannot be used together.");
+        process.exit(2);
+      }
+      terminalFlag = next;
     } else if (argument && !argument.startsWith("-") && !explicitRoot) {
       root = argument;
       explicitRoot = true;
     } else {
-      console.error("Usage: bun run dev -- [--repo <path>] [--host <address>]");
+      console.error("Usage: bun run dev -- [--repo <path>] [--host <address>] [--enable-terminal|--disable-terminal]");
       process.exit(2);
     }
   }
-  return { root, host: normalizeBindHost(host) };
+  return { root, host: normalizeBindHost(host), terminal: terminalFlag ?? terminal };
 }
 
 const devOptions = readArguments(rawArgs);
@@ -107,6 +120,9 @@ const sharedEnv = {
   COUCHVIEW_WEB_HOST: webHost,
   COUCHVIEW_WEB_PORT: String(webPort),
   COUCHVIEW_DISABLE_REUSE: "1",
+  ...(devOptions.terminal === undefined
+    ? {}
+    : { COUCHVIEW_TERMINAL: devOptions.terminal }),
 };
 
 console.log(`Reviewing ${reviewRoot}`);

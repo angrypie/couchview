@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type {
+  ChangeFile,
   FileDiff,
   PackageRunSummary,
   ReviewComment,
 } from "../shared/contracts.ts";
+import {
+  FakeTerminalWebSocket,
+  rendererState,
+  resetFakeTerminalWebSockets,
+  resetRendererState,
+  terminalRendererFactory,
+} from "./terminalTestFakes.ts";
 
 mock.module("virtual:pwa-register/react", () => ({
   useRegisterSW: () => ({
@@ -14,7 +22,13 @@ mock.module("virtual:pwa-register/react", () => ({
   }),
 }));
 
-GlobalRegistrator.register();
+mock.module("./ghosttyTerminal.ts", () => ({
+  createBrowserTerminal: terminalRendererFactory,
+}));
+
+if (!GlobalRegistrator.isRegistered) {
+  GlobalRegistrator.register({ url: "http://127.0.0.1:4173/" });
+}
 
 const React = await import("react");
 const viewerCommentJumps: string[] = [];
@@ -180,6 +194,7 @@ const { act, cleanup, fireEvent, render, screen, waitFor, within } = await impor
 );
 const { App } = await import("./App.tsx");
 const originalFetch = globalThis.fetch;
+const originalWebSocket = globalThis.WebSocket;
 
 const repository = {
   id: "repo",
@@ -386,7 +401,7 @@ function fixtureComment(
 }
 
 describe("Couchview app", () => {
-  let files = structuredClone(initialFiles);
+  let files: ChangeFile[] = structuredClone(initialFiles);
   let comments: Array<Record<string, unknown>> = [];
   let reviews: Array<Record<string, unknown>> = [];
   let packageRuns: PackageRunSummary[] = [];
@@ -407,6 +422,9 @@ describe("Couchview app", () => {
   let commitMessageRequestAborted = false;
   let releaseCommitMessageResponse: (() => void) | null = null;
   let commitMessageAvailable = true;
+  let terminalAvailable = false;
+  let forgetUnsavedOnce = false;
+  let forgetAttempts = 0;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
@@ -430,11 +448,17 @@ describe("Couchview app", () => {
     commitMessageRequestAborted = false;
     releaseCommitMessageResponse = null;
     commitMessageAvailable = true;
+    terminalAvailable = false;
+    forgetUnsavedOnce = false;
+    forgetAttempts = 0;
+    resetRendererState();
+    resetFakeTerminalWebSockets();
     EventSourceStub.instances.length = 0;
     viewerCommentJumps.length = 0;
     viewerHunkJumps.length = 0;
     viewerVisibleLineChange = null;
     localStorage.clear();
+    sessionStorage.clear();
     window.history.replaceState(null, "", "/");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -452,6 +476,14 @@ describe("Couchview app", () => {
     Object.defineProperty(globalThis, "EventSource", {
       configurable: true,
       value: EventSourceStub,
+    });
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: FakeTerminalWebSocket,
+    });
+    Object.defineProperty(window, "WebSocket", {
+      configurable: true,
+      value: FakeTerminalWebSocket,
     });
     Object.defineProperty(document, "execCommand", {
       configurable: true,
@@ -498,6 +530,17 @@ describe("Couchview app", () => {
               ? null
               : "Codex CLI is unavailable in this test.",
           },
+          terminal: {
+            available: terminalAvailable,
+            reason: terminalAvailable ? null : "Neovim is unavailable in this test.",
+            persistence: "tmux",
+            profiles: [{
+              id: "nvim",
+              label: "Neovim",
+              available: terminalAvailable,
+              reason: terminalAvailable ? null : "Neovim is unavailable in this test.",
+            }],
+          },
         });
       }
       if (url.pathname === "/api/restart" && method === "POST") {
@@ -512,20 +555,48 @@ describe("Couchview app", () => {
       if (url.pathname === "/api/instance" && method === "GET") {
         return Response.json({
           service: "couchview",
-          protocolVersion: 1,
+          protocolVersion: 2,
           version: "0.1.0",
           instanceId: "fixture-instance",
           bindHost: "127.0.0.1",
           port: 4173,
           accessOrigins: ["http://127.0.0.1:4173"],
+          terminalEnabled: terminalAvailable,
         });
       }
       if (url.pathname === "/api/repositories") {
         return Response.json({ repositories: catalog, catalogRevision: 1 });
       }
       if (repositoryRoute && !nestedPath && method === "DELETE") {
+        forgetAttempts += 1;
+        if (forgetUnsavedOnce && forgetAttempts === 1) {
+          return Response.json({
+            error: {
+              code: "terminal_unsaved_buffers",
+              message: "Neovim has 1 modified buffer",
+            },
+          }, { status: 409 });
+        }
         catalog = catalog.filter((entry) => entry.id !== requestedRepositoryId);
         return Response.json({ deletedId: requestedRepositoryId });
+      }
+      if (nestedPath === "terminal/end" && method === "POST") {
+        return Response.json({ status: "ended" });
+      }
+      if (nestedPath === "terminal/attachments" && method === "POST") {
+        return Response.json({
+          ticket: "app-test-ticket",
+          expiresAt: "2026-07-26T12:00:30.000Z",
+          protocol: "couchview-terminal-v1",
+          session: {
+            profileId: "nvim",
+            running: true,
+            controllerConnected: false,
+          },
+        }, { status: 201 });
+      }
+      if (nestedPath === "terminal/open" && method === "POST") {
+        return Response.json({ status: "opened" });
       }
       if (nestedPath === "package-scripts" && method === "GET") {
         return Response.json(packageScriptsFixture);
@@ -809,6 +880,14 @@ describe("Couchview app", () => {
   afterEach(() => {
     cleanup();
     globalThis.fetch = originalFetch;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: originalWebSocket,
+    });
+    Object.defineProperty(window, "WebSocket", {
+      configurable: true,
+      value: originalWebSocket,
+    });
   });
 
   test("resizes, reviews and advances, then navigates back", async () => {
@@ -827,6 +906,69 @@ describe("Couchview app", () => {
     ).toBe(true);
     fireEvent.click(screen.getAllByRole("button", { name: "Previous file" })[0]!);
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
+  });
+
+  test("hands the selected working-tree line to a persistent Neovim workspace", async () => {
+    terminalAvailable = true;
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select old line 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit current file in Neovim" }));
+
+    await waitFor(() => expect(rendererState.calls).toBe(1));
+    await waitFor(() => expect(requests.some(
+      (request) =>
+        request.path === "/api/repositories/repo/terminal/attachments" &&
+        request.method === "POST",
+    )).toBe(true));
+    expect(requests.find(
+      (request) => request.path === "/api/repositories/repo/terminal/attachments",
+    )).toMatchObject({
+      body: {
+        target: {
+          fileId: "first",
+          contentRevision: "first-v1",
+          line: 1,
+        },
+      },
+    });
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    expect(document.querySelector("main.app-shell")?.classList.contains("terminal-active")).toBe(
+      true,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(document.querySelector("main.app-shell")?.classList.contains("terminal-active")).toBe(
+      false,
+    );
+    expect(
+      document.querySelector(".terminal-workspace")?.getAttribute("aria-hidden"),
+    ).toBe("true");
+    expect(screen.getByText("12px")).toBeTruthy();
+    expect(rendererState.calls).toBe(1);
+    expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+    expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Neovim workspace" }));
+    expect(rendererState.calls).toBe(1);
+    expect(
+      screen.getByRole("region", { name: "Neovim workspace" }).getAttribute("aria-hidden"),
+    ).toBe("false");
+  });
+
+  test("disables Neovim handoff for deleted working-tree files", async () => {
+    terminalAvailable = true;
+    files[0] = { ...files[0]!, kind: "deleted" };
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    expect(
+      (screen.getByRole("button", { name: "Edit current file in Neovim" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   test("migrates pre-rename display preferences", async () => {
@@ -1234,6 +1376,38 @@ describe("Couchview app", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  test("requires a second confirmation before forgetting a repository with unsaved Neovim buffers", async () => {
+    catalog[1] = { ...catalog[1]!, available: false };
+    forgetUnsavedOnce = true;
+    const confirmations: string[] = [];
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: (message: string) => {
+        confirmations.push(message);
+        return true;
+      },
+    });
+    render(<App />);
+
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    fireEvent.click(within(picker).getByRole("button", { name: "Forget second-fixture" }));
+
+    await waitFor(() => expect(
+      requests.filter(
+        (entry) => entry.path === "/api/repositories/repo-two" && entry.method === "DELETE",
+      ),
+    ).toHaveLength(2));
+    expect(requests).toContainEqual({
+      path: "/api/repositories/repo-two/terminal/end",
+      method: "POST",
+      body: { force: true },
+    });
+    expect(confirmations).toHaveLength(2);
+    expect(confirmations[1]).toContain("discard unsaved buffers");
   });
 
   test("aborts an in-flight repository load when another project is selected", async () => {

@@ -54,19 +54,28 @@ export default defineConfig({
       },
   projects: [
     {
+      name: "desktop-terminal-chromium",
+      testMatch: /terminal-workspace\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 } },
+    },
+    {
       name: "mobile-320-chromium",
+      testIgnore: /terminal-workspace\.spec\.ts/,
       use: { ...devices["Pixel 7"], viewport: { width: 320, height: 720 } },
     },
     {
       name: "mobile-375-webkit",
+      testIgnore: /terminal-workspace\.spec\.ts/,
       use: { ...devices["iPhone 13"], viewport: { width: 375, height: 812 } },
     },
     {
       name: "mobile-430-chromium",
+      testIgnore: /terminal-workspace\.spec\.ts/,
       use: { ...devices["Pixel 7"], viewport: { width: 430, height: 932 } },
     },
     {
       name: "mobile-landscape-chromium",
+      testIgnore: /terminal-workspace\.spec\.ts/,
       use: { ...devices["Pixel 7"], viewport: { width: 844, height: 390 } },
     },
   ],

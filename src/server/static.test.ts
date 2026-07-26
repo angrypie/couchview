@@ -31,6 +31,10 @@ async function fixture() {
     "utf8",
   );
   await writeFile(path.join(staticRoot, "assets", "app-12345678.js"), "export {};\n", "utf8");
+  await writeFile(
+    path.join(staticRoot, "assets", "ghostty-vt-12345678.wasm"),
+    new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
+  );
   const secret = path.join(directory, "secret.js");
   await writeFile(secret, "do not serve me\n", "utf8");
   await symlink(secret, path.join(staticRoot, "leak.js"));
@@ -62,12 +66,23 @@ describe("production static serving", () => {
     expect(shell.headers.get("cache-control")).toBe("no-cache");
     expect(shell.headers.get("content-security-policy")).toContain("default-src 'self'");
     expect(shell.headers.get("content-security-policy")).toContain("form-action 'none'");
+    expect(shell.headers.get("content-security-policy")).toContain(
+      "script-src 'self' 'wasm-unsafe-eval'",
+    );
+    expect(shell.headers.get("content-security-policy")).not.toContain("'unsafe-eval'");
     expect(shell.headers.get("x-frame-options")).toBe("DENY");
     expect(shell.headers.has("access-control-allow-origin")).toBe(false);
 
     const asset = await app.fetch(localRequest("/assets/app-12345678.js"));
     expect(asset.status).toBe(200);
     expect(asset.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+
+    const wasm = await app.fetch(localRequest("/assets/ghostty-vt-12345678.wasm"));
+    expect(wasm.status).toBe(200);
+    expect(wasm.headers.get("content-type")).toContain("application/wasm");
+    expect(wasm.headers.get("cache-control")).toBe(
       "public, max-age=31536000, immutable",
     );
   });

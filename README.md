@@ -64,6 +64,50 @@ Copy the `192.168...` address into the phone browser. If it does not connect, co
 
 LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
 
+### Browser Neovim
+
+Couchview can open the current working-tree file and selected line in a persistent
+Neovim workspace rendered by `ghostty-web`. Install Neovim and tmux on the machine
+running Couchview and make both `nvim` and `tmux` available on its `PATH`. The
+terminal renderer and its WASM runtime load only after the workspace is opened and
+are not part of the PWA precache.
+
+Terminal access is enabled automatically only when the bind address and every
+allowed origin are loopback. Disable it explicitly when desired:
+
+```sh
+couchview --disable-terminal
+# or
+COUCHVIEW_TERMINAL=0 couchview
+```
+
+LAN, tunnel, and reverse-proxy origins require an explicit opt-in:
+
+```sh
+couchview --host 0.0.0.0 --enable-terminal
+# or
+COUCHVIEW_TERMINAL=1 couchview --host 0.0.0.0
+```
+
+This opt-in is security-sensitive: browser keystrokes control Neovim with the same
+operating-system permissions as Couchview. Use it only on trusted networks or
+behind strong authentication such as Cloudflare Access. Couchview's origin and
+CSRF checks are not remote-user authentication.
+
+Each repository gets one tmux-backed Neovim session and one controlling browser
+tab. Another tab must confirm before taking control. Switching back to Review,
+closing the page, or restarting Couchview detaches the browser while tmux keeps
+Neovim alive. **End session** first refuses to quit modified buffers and requires a
+second confirmation before force-ending them. Forgetting a repository follows the
+same safety rule.
+
+The workspace runs on the Couchview host. If Couchview itself runs on a remote
+machine, Neovim and the repository are remote automatically. Plugins such as
+`remote-ssh.nvim` may still be installed in that host's normal Neovim configuration,
+but Couchview does not need or expose the plugin's SSH credential and transport
+layer; tmux plus the authenticated WebSocket provide browser persistence and
+reconnection.
+
 ### Remote HTTPS access through Cloudflare
 
 Couchview can be published through
@@ -256,11 +300,11 @@ Binary and metadata-only changes remain reviewable and stageable but do not acce
 
 On desktop Chrome or Edge over localhost, use the install icon in the address bar or the in-app install guidance. On iPhone or iPad, PWA installation requires Couchview to be served through HTTPS; a plain LAN-IP URL can open the review UI but is not a secure context. When HTTPS is available, open Couchview in Safari, tap **Share**, then **Add to Home Screen**. Launching the installed app uses the standalone, edge-to-edge interface.
 
-The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. When a new service worker is ready, Couchview asks before reloading the active review.
+The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk and WASM runtime also stay out of the precache and load only when Neovim is opened. When a new service worker is ready, Couchview asks before reloading the active review.
 
 ## Local state and security
 
-The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, and send staged change context to Codex.
+The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, send staged change context to Codex, and—only with explicit non-loopback terminal opt-in—control Neovim as the Couchview OS user.
 
 Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
@@ -270,7 +314,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 
 Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. If a database already exists at the pre-rename `couch-review` path and the new path does not exist, Couchview continues using it so saved reviews and comments remain available. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
 
-Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo` and `--port` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
+Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo`, `--port`, `--enable-terminal`, and `--disable-terminal` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 
@@ -301,7 +345,7 @@ bunx playwright install chromium webkit
 bun run test:e2e
 ```
 
-Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior.
+Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy loading, input, resize, Review handoff, and session shutdown.
 
 To point the browser suite at an already running instance instead:
 

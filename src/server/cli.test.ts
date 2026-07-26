@@ -16,6 +16,7 @@ const initialHost = Bun.env.COUCHVIEW_HOST;
 const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
 const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
+const initialTerminal = Bun.env.COUCHVIEW_TERMINAL;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
@@ -37,6 +38,9 @@ function restoreEnvironment() {
 
   if (initialPort === undefined) delete Bun.env.PORT;
   else Bun.env.PORT = initialPort;
+
+  if (initialTerminal === undefined) delete Bun.env.COUCHVIEW_TERMINAL;
+  else Bun.env.COUCHVIEW_TERMINAL = initialTerminal;
 
   if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
   else Bun.env.XDG_DATA_HOME = initialDataHome;
@@ -70,6 +74,7 @@ describe("parseCli", () => {
     delete Bun.env.COUCH_REVIEW_ROOT;
     delete Bun.env.COUCH_REVIEW_HOST;
     delete Bun.env.PORT;
+    delete Bun.env.COUCHVIEW_TERMINAL;
   });
 
   afterEach(restoreEnvironment);
@@ -79,6 +84,7 @@ describe("parseCli", () => {
       root: path.resolve(process.cwd()),
       host: "127.0.0.1",
       port: 4173,
+      terminalMode: "auto",
     });
   });
 
@@ -87,6 +93,7 @@ describe("parseCli", () => {
       root: path.resolve("fixtures/example"),
       host: "127.0.0.1",
       port: 4173,
+      terminalMode: "auto",
     });
   });
 
@@ -95,11 +102,13 @@ describe("parseCli", () => {
       root: path.resolve("../project"),
       host: "127.0.0.1",
       port: 5199,
+      terminalMode: "auto",
     });
     expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
       root: path.resolve("/tmp/project"),
       host: "127.0.0.1",
       port: 6001,
+      terminalMode: "auto",
     });
   });
 
@@ -112,11 +121,13 @@ describe("parseCli", () => {
       root: path.resolve("environment-project"),
       host: "192.168.1.25",
       port: 4888,
+      terminalMode: "auto",
     });
     expect(parseCli(["--repo", "flag-project", "--host", "0.0.0.0", "--port", "4999"])).toEqual({
       root: path.resolve("flag-project"),
       host: "0.0.0.0",
       port: 4999,
+      terminalMode: "auto",
     });
   });
 
@@ -128,6 +139,7 @@ describe("parseCli", () => {
       root: path.resolve("legacy-environment-project"),
       host: "127.0.0.1",
       port: 4173,
+      terminalMode: "auto",
     });
   });
 
@@ -185,6 +197,22 @@ describe("parseCli", () => {
 
   test.each(["1", "65535"])("accepts boundary port %s", (port) => {
     expect(parseCli(["--port", port]).port).toBe(Number(port));
+  });
+
+  test("parses explicit terminal policy with command-line precedence", () => {
+    Bun.env.COUCHVIEW_TERMINAL = "1";
+    expect(parseCli([]).terminalMode).toBe("enabled");
+    expect(parseCli(["--disable-terminal"]).terminalMode).toBe("disabled");
+
+    Bun.env.COUCHVIEW_TERMINAL = "0";
+    expect(parseCli([]).terminalMode).toBe("disabled");
+    expect(parseCli(["--enable-terminal"]).terminalMode).toBe("enabled");
+    expect(() => parseCli(["--enable-terminal", "--disable-terminal"])).toThrow(
+      "cannot be used together",
+    );
+
+    Bun.env.COUCHVIEW_TERMINAL = "sometimes";
+    expect(() => parseCli([])).toThrow("COUCHVIEW_TERMINAL must be 1 or 0");
   });
 });
 
@@ -316,6 +344,7 @@ describe("multi-project CLI startup", () => {
     delete Bun.env.PORT;
     delete Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
     delete Bun.env.ALLOWED_ORIGINS;
+    delete Bun.env.COUCHVIEW_TERMINAL;
     delete Bun.env.COUCHVIEW_DISABLE_REUSE;
     delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
     const dataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-data-"));
@@ -388,6 +417,67 @@ describe("multi-project CLI startup", () => {
     } finally {
       result.stop();
     }
+  });
+
+  test("enables terminal access automatically only for loopback origins", async () => {
+    const loopbackRoot = await repositoryFixture("terminal-loopback");
+    const loopback = await startServer(
+      ["--repo", loopbackRoot, "--port", String(freePort())],
+      runtime,
+    );
+    if (!loopback.app || !loopback.stop) {
+      throw new Error("CLI unexpectedly attached to another server");
+    }
+    expect(loopback.app.terminalSessions.enabled).toBe(true);
+    loopback.stop();
+
+    const publicRoot = await repositoryFixture("terminal-public");
+    Bun.env.COUCHVIEW_ALLOWED_ORIGINS = "https://review.example.com";
+    const publicServer = await startServer(
+      ["--repo", publicRoot, "--port", String(freePort())],
+      runtime,
+    );
+    if (!publicServer.app || !publicServer.stop) {
+      throw new Error("CLI unexpectedly attached to another server");
+    }
+    expect(publicServer.app.terminalSessions.enabled).toBe(false);
+    publicServer.stop();
+
+    const warningRoot = await repositoryFixture("terminal-explicit-public");
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values.join(" "));
+    try {
+      const explicit = await startServer(
+        [
+          "--repo",
+          warningRoot,
+          "--port",
+          String(freePort()),
+          "--enable-terminal",
+        ],
+        runtime,
+      );
+      if (!explicit.app || !explicit.stop) {
+        throw new Error("CLI unexpectedly attached to another server");
+      }
+      expect(explicit.app.terminalSessions.enabled).toBe(true);
+      expect(warnings.join("\n")).toContain("OS-user permissions");
+      explicit.stop();
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("rejects reuse when explicit terminal policy conflicts", async () => {
+    const firstRoot = await repositoryFixture("terminal-owner");
+    const secondRoot = await repositoryFixture("terminal-client");
+    const port = freePort();
+    await runningApp(firstRoot, port);
+    await expect(startServer(
+      ["--repo", secondRoot, "--port", String(port), "--disable-terminal"],
+      runtime,
+    )).rejects.toThrow("terminal access enabled");
   });
 
   test("adds a second project to a compatible server, then reports duplicates", async () => {

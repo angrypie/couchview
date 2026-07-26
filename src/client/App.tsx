@@ -67,6 +67,7 @@ import {
   type SearchResponse,
   type ServerEvent,
   type SourcePreviewResponse,
+  type TerminalFileTarget,
 } from "../shared/contracts.ts";
 import { ApiError, api } from "./api.ts";
 import { CodexCommentsPanel } from "./CodexCommentsPanel.tsx";
@@ -83,6 +84,10 @@ import {
   preloadFileDiffRendering,
   selectedRangeFromEndpoints,
 } from "./diffAdapter.ts";
+import {
+  TerminalWorkspace,
+  type TerminalTargetRequest,
+} from "./TerminalWorkspace.tsx";
 
 type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
@@ -91,6 +96,7 @@ type SearchScope = "current" | "other";
 type DrawerView = "files" | "commands";
 type BulkStageScope = "all" | "reviewed";
 type RestartPhase = "building" | "restarting" | "loading" | null;
+type WorkspaceMode = "review" | "terminal";
 
 interface HunkRow {
   type: "hunk";
@@ -414,6 +420,38 @@ function navigationAtVisibleLine(
   };
 }
 
+function workingTreeLineAtRow(rows: readonly DisplayRow[], rowIndex: number): number {
+  const target = rows[rowIndex];
+  if (target?.type !== "line") return 1;
+  if (target.line.newLine !== null) return Math.max(1, target.line.newLine);
+  for (let distance = 1; distance < rows.length; distance += 1) {
+    for (const candidateIndex of [rowIndex + distance, rowIndex - distance]) {
+      const candidate = rows[candidateIndex];
+      if (
+        candidate?.type === "line" &&
+        candidate.hunk.id === target.hunk.id &&
+        candidate.line.newLine !== null
+      ) {
+        return Math.max(1, candidate.line.newLine);
+      }
+    }
+  }
+  return Math.max(1, target.hunk.newStart);
+}
+
+function workingTreeLineForPosition(
+  rows: readonly DisplayRow[],
+  position: { lineNumber: number; side: SelectableSide } | null,
+): number {
+  if (!position) return 1;
+  const rowIndex = rows.findIndex(
+    (row) =>
+      row.type === "line" &&
+      sideLine(row.line, position.side) === position.lineNumber,
+  );
+  return rowIndex >= 0 ? workingTreeLineAtRow(rows, rowIndex) : 1;
+}
+
 function lineMatchesComment(line: DiffLine, comment: ReviewComment): boolean {
   if (comment.side === "mixed") {
     const oldMatches =
@@ -653,6 +691,10 @@ export function App() {
   const [pendingCommentJump, setPendingCommentJump] = useState<ReviewComment | null>(null);
   const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("review");
+  const [terminalOpened, setTerminalOpened] = useState(false);
+  const [terminalTargetRequest, setTerminalTargetRequest] =
+    useState<TerminalTargetRequest | null>(null);
 
   const desktop = useMediaQuery("(min-width: 760px) and (min-height: 600px)");
   const landscape = useMediaQuery("(orientation: landscape) and (max-height: 599px)");
@@ -683,6 +725,8 @@ export function App() {
   );
   const commitMessageRequestRef = useRef<AbortController | null>(null);
   const restartRequestRef = useRef<AbortController | null>(null);
+  const visibleLineRef = useRef<{ lineNumber: number; side: SelectableSide } | null>(null);
+  const terminalTargetCounterRef = useRef(0);
   const pwa = usePwaUpdate();
 
   filesRef.current = files;
@@ -728,6 +772,12 @@ export function App() {
   const codexCapability = bootstrap?.codex ?? {
     available: false,
     reason: "Codex integration is unavailable from this Couchview server.",
+  };
+  const terminalCapability = bootstrap?.terminal ?? {
+    available: false,
+    reason: "Browser Neovim is unavailable from this Couchview server.",
+    persistence: "tmux" as const,
+    profiles: [],
   };
   const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
   const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
@@ -1350,6 +1400,9 @@ export function App() {
 
   useEffect(() => {
     repositoryIdRef.current = repositoryId;
+    setWorkspaceMode("review");
+    setTerminalOpened(false);
+    setTerminalTargetRequest(null);
   }, [repositoryId]);
 
   useEffect(() => {
@@ -1566,6 +1619,7 @@ export function App() {
 
   useLayoutEffect(() => {
     setSelection(null);
+    visibleLineRef.current = null;
     setHunkNavigation(navigationBeforeFirstHunk());
     setDiffError("");
     if (!currentFileId) {
@@ -1749,7 +1803,7 @@ export function App() {
         !bootstrap ||
         forgetRepositoryBusy ||
         !window.confirm(
-          `Forget ${entry.name}? Its saved reviews and comments will be deleted.`,
+          `Forget ${entry.name}? Its saved reviews and comments will be deleted, and any running Neovim session will be ended.`,
         )
       ) {
         return;
@@ -1757,7 +1811,25 @@ export function App() {
       setForgetRepositoryBusy(entry.id);
       const signal = repositoryRequestRef.current?.signal;
       try {
-        await api.forgetRepository(entry.id, bootstrap.csrfToken, signal);
+        try {
+          await api.forgetRepository(entry.id, bootstrap.csrfToken, signal);
+        } catch (error) {
+          if (!(error instanceof ApiError) || ![
+            "terminal_unsaved_buffers",
+            "terminal_quit_failed",
+            "terminal_unavailable",
+          ].includes(error.code)) {
+            throw error;
+          }
+          if (!window.confirm(
+            `${error.message}\n\nForce end Neovim and forget ${entry.name}? This may discard unsaved buffers.`,
+          )) {
+            return;
+          }
+          await api.endTerminal(entry.id, { force: true }, bootstrap.csrfToken, signal);
+          if (signal?.aborted) return;
+          await api.forgetRepository(entry.id, bootstrap.csrfToken, signal);
+        }
         if (signal?.aborted) return;
         const catalog = await refreshRepositories();
         if (entry.id === repositoryIdRef.current) {
@@ -1846,12 +1918,53 @@ export function App() {
 
   const handleVisibleLineChange = useCallback(
     (lineNumber: number, side: SelectableSide) => {
+      visibleLineRef.current = { lineNumber, side };
       setHunkNavigation(
         navigationAtVisibleLine(diff?.hunks ?? [], lineNumber, side),
       );
     },
     [diff],
   );
+
+  const openTerminalWorkspace = useCallback(
+    (target?: TerminalFileTarget) => {
+      if (!bootstrap || !repositoryId || !repository) return;
+      if (!terminalCapability.available) {
+        showToast(terminalCapability.reason ?? "Browser Neovim is unavailable.");
+        return;
+      }
+      if (target) {
+        terminalTargetCounterRef.current += 1;
+        setTerminalTargetRequest({
+          id: terminalTargetCounterRef.current,
+          target,
+        });
+      }
+      setTerminalOpened(true);
+      setWorkspaceMode("terminal");
+    },
+    [bootstrap, repository, repositoryId, showToast, terminalCapability],
+  );
+
+  const editActiveFileInTerminal = useCallback(() => {
+    if (!activeFile) return;
+    if (activeFile.kind === "deleted") {
+      showToast("Deleted files do not have a working-tree file to open.");
+      return;
+    }
+    const line = selection
+      ? workingTreeLineAtRow(rows, selection.focusIndex)
+      : workingTreeLineForPosition(rows, visibleLineRef.current);
+    openTerminalWorkspace({
+      fileId: activeFile.id,
+      contentRevision: activeFile.contentRevision,
+      line,
+    });
+  }, [activeFile, openTerminalWorkspace, rows, selection, showToast]);
+
+  const handleTerminalTarget = useCallback((requestId: number) => {
+    setTerminalTargetRequest((current) => current?.id === requestId ? null : current);
+  }, []);
 
   const handleViewerLineNumberClick = useCallback(
     (lineNumber: number, side: SelectableSide) => {
@@ -2827,6 +2940,7 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (workspaceMode === "terminal") return;
       const overlayOpen =
         repositoryPickerOpen ||
         searchOpen ||
@@ -2879,6 +2993,7 @@ export function App() {
     searchOpen,
     selectedPackageRunId,
     setReviewed,
+    workspaceMode,
   ]);
 
   const overlayVisible =
@@ -2978,7 +3093,23 @@ export function App() {
   const activeFileFullyStaged = Boolean(activeFile?.staged && !activeFile.unstaged);
 
   return (
-    <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
+    <main
+      className={`app-shell ${compactLandscape ? "compact-landscape" : ""} ${workspaceMode === "terminal" ? "terminal-active" : ""}`}
+    >
+      {terminalOpened && bootstrap && repositoryId && repository && (
+        <TerminalWorkspace
+          active={workspaceMode === "terminal"}
+          capability={terminalCapability}
+          csrfToken={bootstrap.csrfToken}
+          onBack={() => setWorkspaceMode("review")}
+          onEnded={() => showToast("Neovim session ended")}
+          onNotice={showToast}
+          onTargetHandled={handleTerminalTarget}
+          repositoryId={repositoryId}
+          repositoryName={repository.name}
+          targetRequest={terminalTargetRequest}
+        />
+      )}
       {drawerVisible && (
         <>
           {!desktop && (
@@ -3403,6 +3534,19 @@ export function App() {
             </button>
           </div>
         )}
+        <button
+          aria-label="Open Neovim workspace"
+          aria-pressed={workspaceMode === "terminal"}
+          className="icon-button terminal-launch-button"
+          disabled={!terminalCapability.available || !repositoryId}
+          onClick={() => openTerminalWorkspace()}
+          title={terminalCapability.available
+            ? "Open persistent Neovim workspace"
+            : terminalCapability.reason ?? "Browser Neovim is unavailable"}
+          type="button"
+        >
+          <SquareTerminal size={18} />
+        </button>
         <div className="font-controls" aria-label="Diff display controls">
           <button
             aria-label={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
@@ -3481,6 +3625,24 @@ export function App() {
             </div>
           )}
         </div>
+        <button
+          aria-label="Edit current file in Neovim"
+          className="icon-button edit-neovim-button"
+          disabled={
+            !activeFile ||
+            activeFile.kind === "deleted" ||
+            !terminalCapability.available
+          }
+          onClick={editActiveFileInTerminal}
+          title={activeFile?.kind === "deleted"
+            ? "Deleted files do not have a working-tree file"
+            : terminalCapability.available
+              ? "Edit current file and line in Neovim"
+              : terminalCapability.reason ?? "Browser Neovim is unavailable"}
+          type="button"
+        >
+          <Pencil size={17} />
+        </button>
         <button
           aria-label="Next file"
           className="icon-button"

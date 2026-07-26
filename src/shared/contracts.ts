@@ -45,6 +45,16 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/events`,
   events: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/events`,
+  terminal: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal`,
+  terminalAttachments: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal/attachments`,
+  terminalOpen: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal/open`,
+  terminalEnd: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal/end`,
+  terminalSocket: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal/socket`,
   codexThreads: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/codex/threads`,
   codexThread: (repositoryId: string, threadId: string) =>
@@ -62,6 +72,7 @@ export const API_ROUTES = {
 } as const;
 
 export const CSRF_HEADER = "x-couchview-csrf";
+export const TERMINAL_ENDED_CLOSE_CODE = 4002;
 
 export type ChangeKind =
   | "added"
@@ -124,6 +135,7 @@ export interface BootstrapResponse {
   restart: RestartCapability;
   commitMessage: CommitMessageCapability;
   codex: CodexCapability;
+  terminal: TerminalCapability;
 }
 
 export interface InstanceResponse {
@@ -134,6 +146,7 @@ export interface InstanceResponse {
   bindHost: string;
   port: number;
   accessOrigins: string[];
+  terminalEnabled: boolean;
 }
 
 export interface RestartCapability {
@@ -154,6 +167,64 @@ export interface CommitMessageCapability {
 export interface CodexCapability {
   available: boolean;
   reason: string | null;
+}
+
+export interface TerminalProfileSummary {
+  id: string;
+  label: string;
+  available: boolean;
+  reason: string | null;
+}
+
+export interface TerminalCapability {
+  available: boolean;
+  reason: string | null;
+  persistence: "tmux";
+  profiles: TerminalProfileSummary[];
+}
+
+export interface TerminalSessionStatus {
+  profileId: "nvim";
+  running: boolean;
+  controllerConnected: boolean;
+}
+
+export interface TerminalFileTarget {
+  fileId: string;
+  contentRevision: string;
+  line: number;
+}
+
+export interface TerminalAttachmentRequest {
+  clientId: string;
+  profileId: "nvim";
+  cols: number;
+  rows: number;
+  takeover: boolean;
+  target?: TerminalFileTarget;
+}
+
+export interface TerminalAttachmentResponse {
+  ticket: string;
+  expiresAt: string;
+  protocol: "couchview-terminal-v1";
+  session: TerminalSessionStatus;
+}
+
+export interface TerminalOpenRequest {
+  target: TerminalFileTarget;
+}
+
+export interface TerminalOpenResponse {
+  status: "opened";
+}
+
+export interface TerminalEndRequest {
+  force: boolean;
+}
+
+export interface TerminalEndResponse {
+  status: "ended";
 }
 
 export type CodexThreadStatus =

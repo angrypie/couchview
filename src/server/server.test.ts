@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -31,6 +31,11 @@ import {
   type CouchviewAppOptions,
 } from "./server.ts";
 import { GitCommandError } from "./git.ts";
+import type {
+  ResolvedTerminalTarget,
+  TerminalSessionService,
+  TerminalSocketData,
+} from "./terminalSessions.ts";
 
 const temporaryDirectories: string[] = [];
 const applications: CouchviewApp[] = [];
@@ -47,6 +52,7 @@ async function fixture(
   restart?: CouchviewAppOptions["restart"],
   commitMessages?: CommitMessageGenerator,
   codex?: CodexAppServerService,
+  terminalSessions?: TerminalSessionService,
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-"));
   temporaryDirectories.push(directory);
@@ -65,6 +71,7 @@ async function fixture(
     restart,
     commitMessages,
     codex,
+    terminalSessions,
   });
   applications.push(app);
   return app;
@@ -129,6 +136,235 @@ async function nextPackageRunEvent(
 }
 
 describe("Couchview HTTP security and routes", () => {
+  test("guards terminal APIs, resolves current files, and upgrades only authenticated sockets", async () => {
+    const attachmentCalls: Array<{
+      repositoryId: string;
+      repositoryRoot: string;
+      target?: ResolvedTerminalTarget;
+    }> = [];
+    const openCalls: ResolvedTerminalTarget[] = [];
+    const endCalls: boolean[] = [];
+    let consumedUpgrade = false;
+    let closed = false;
+    const terminalSessions = {
+      enabled: true,
+      capability: {
+        available: true,
+        reason: null,
+        persistence: "tmux",
+        profiles: [{ id: "nvim", label: "Neovim", available: true, reason: null }],
+      },
+      websocket: {},
+      async status() {
+        return { profileId: "nvim", running: true, controllerConnected: false };
+      },
+      async issueAttachment(
+        repositoryId: string,
+        repositoryRoot: string,
+        _input: unknown,
+        _binding: unknown,
+        target?: ResolvedTerminalTarget,
+      ) {
+        attachmentCalls.push({ repositoryId, repositoryRoot, target });
+        return {
+          ticket: "single-use-ticket",
+          expiresAt: "2026-07-26T12:00:30.000Z",
+          protocol: "couchview-terminal-v1",
+          session: { profileId: "nvim", running: true, controllerConnected: false },
+        };
+      },
+      async openFile(
+        _repositoryId: string,
+        _repositoryRoot: string,
+        target: ResolvedTerminalTarget,
+      ) {
+        openCalls.push(target);
+      },
+      async end(_repositoryId: string, force: boolean) {
+        endCalls.push(force);
+        return { status: "ended" };
+      },
+      consumeUpgrade(
+        repositoryId: string,
+        _request: Request,
+        _binding: unknown,
+      ): TerminalSocketData {
+        consumedUpgrade = true;
+        return {
+          kind: "terminal",
+          repositoryId,
+          repositoryRoot: "/project",
+          clientId: "client_12345678",
+          profileId: "nvim",
+          cols: 100,
+          rows: 32,
+          takeover: false,
+        };
+      },
+      close() {
+        closed = true;
+      },
+    } as unknown as TerminalSessionService;
+    const app = await fixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      terminalSessions,
+    );
+    const bootstrap = await (await app.fetch(request(API_ROUTES.bootstrap))).json() as BootstrapResponse;
+    expect(bootstrap.terminal).toMatchObject({ available: true, persistence: "tmux" });
+
+    const changes = await app.repository.changes();
+    const file = changes.files.find((candidate) => candidate.path === "sample.ts");
+    if (!file) throw new Error("terminal fixture file missing");
+    const attachmentBody = JSON.stringify({
+      clientId: "client_12345678",
+      profileId: "nvim",
+      cols: 100,
+      rows: 32,
+      takeover: false,
+      target: {
+        fileId: file.id,
+        contentRevision: file.contentRevision,
+        line: 12,
+      },
+    });
+    const mutationHeaders = {
+      "content-type": "application/json",
+      origin: "http://127.0.0.1:3001",
+      [CSRF_HEADER]: app.csrfToken,
+    };
+
+    const unprotected = await app.fetch(request(
+      API_ROUTES.terminalAttachments(app.repository.id),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://127.0.0.1:3001" },
+        body: attachmentBody,
+      },
+    ));
+    expect(unprotected.status).toBe(403);
+
+    const attached = await app.fetch(request(
+      API_ROUTES.terminalAttachments(app.repository.id),
+      { method: "POST", headers: mutationHeaders, body: attachmentBody },
+    ));
+    expect(attached.status).toBe(201);
+    expect(attachmentCalls).toEqual([{
+      repositoryId: app.repository.id,
+      repositoryRoot: app.repository.root,
+      target: { absolutePath: path.join(app.repository.root, "sample.ts"), line: 12 },
+    }]);
+
+    const stale = await app.fetch(request(
+      API_ROUTES.terminalOpen(app.repository.id),
+      {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          target: { fileId: file.id, contentRevision: "stale", line: 1 },
+        }),
+      },
+    ));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()) as ApiErrorBody).toMatchObject({ error: { code: "stale_file" } });
+
+    const opened = await app.fetch(request(
+      API_ROUTES.terminalOpen(app.repository.id),
+      {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          target: {
+            fileId: file.id,
+            contentRevision: file.contentRevision,
+            line: 7,
+          },
+        }),
+      },
+    ));
+    expect(opened.status).toBe(200);
+    expect(openCalls).toEqual([{
+      absolutePath: path.join(app.repository.root, "sample.ts"),
+      line: 7,
+    }]);
+
+    const external = path.join(path.dirname(app.repository.root), "outside-terminal.ts");
+    await writeFile(external, "export const outside = true;\n");
+    await symlink(external, path.join(app.repository.root, "escape-terminal.ts"));
+    const symlinkFile = (await app.repository.changes()).files.find(
+      (candidate) => candidate.path === "escape-terminal.ts",
+    );
+    if (!symlinkFile) throw new Error("terminal symlink fixture missing");
+    const escaped = await app.fetch(request(
+      API_ROUTES.terminalOpen(app.repository.id),
+      {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          target: {
+            fileId: symlinkFile.id,
+            contentRevision: symlinkFile.contentRevision,
+            line: 1,
+          },
+        }),
+      },
+    ));
+    expect(escaped.status).toBe(400);
+    expect((await escaped.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "terminal_target_invalid" },
+    });
+
+    const ended = await app.fetch(request(
+      API_ROUTES.terminalEnd(app.repository.id),
+      {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({ force: true }),
+      },
+    ));
+    expect(ended.status).toBe(200);
+    expect(endCalls).toEqual([true]);
+
+    let upgradedData: TerminalSocketData | null = null;
+    let selectedProtocol: string | null = null;
+    const fakeServer = {
+      upgrade(_request: Request, options: { data: TerminalSocketData; headers: HeadersInit }) {
+        upgradedData = options.data;
+        selectedProtocol = new Headers(options.headers).get("sec-websocket-protocol");
+        return true;
+      },
+    } as unknown as Bun.Server<TerminalSocketData>;
+    const socketRequest = (origin = "http://127.0.0.1:3001") => request(
+      API_ROUTES.terminalSocket(app.repository.id),
+      {
+        headers: {
+          origin,
+          upgrade: "websocket",
+          connection: "Upgrade",
+          "sec-websocket-protocol": "couchview-terminal-v1, couchview-ticket.single-use-ticket",
+        },
+      },
+    );
+    const missingOrigin = await app.fetchWithServer(
+      request(API_ROUTES.terminalSocket(app.repository.id), {
+        headers: { upgrade: "websocket" },
+      }),
+      fakeServer,
+    );
+    expect(missingOrigin?.status).toBe(403);
+    const upgraded = await app.fetchWithServer(socketRequest(), fakeServer);
+    expect(upgraded).toBeUndefined();
+    expect(consumedUpgrade).toBe(true);
+    expect(upgradedData).toMatchObject({ repositoryId: app.repository.id });
+    expect(String(selectedProtocol)).toBe("couchview-terminal-v1");
+
+    app.close();
+    expect(closed).toBe(true);
+    applications.splice(applications.indexOf(app), 1);
+  });
+
   test("exposes project-scoped Codex threads and sends only current comments", async () => {
     let activeRoot = "";
     let prompt = "";
@@ -920,7 +1156,7 @@ describe("Couchview HTTP security and routes", () => {
     expect(instance.status).toBe(200);
     expect(await instance.json()).toMatchObject({
       service: "couchview",
-      protocolVersion: 1,
+      protocolVersion: 2,
       instanceId: app.instanceId,
       bindHost: "127.0.0.1",
       port: 3001,

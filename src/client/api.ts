@@ -36,6 +36,13 @@ import {
   type StageFilesRequest,
   type StageFilesResponse,
   type StartPackageRunRequest,
+  type TerminalAttachmentRequest,
+  type TerminalAttachmentResponse,
+  type TerminalEndRequest,
+  type TerminalEndResponse,
+  type TerminalOpenRequest,
+  type TerminalOpenResponse,
+  type TerminalSessionStatus,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 
@@ -156,6 +163,49 @@ export const api = {
     return request<PackageScriptsResponse>(
       API_ROUTES.packageScripts(repositoryId),
       { signal },
+    );
+  },
+
+  terminalStatus(repositoryId: string, signal?: AbortSignal) {
+    return request<TerminalSessionStatus>(API_ROUTES.terminal(repositoryId), { signal });
+  },
+
+  createTerminalAttachment(
+    repositoryId: string,
+    body: TerminalAttachmentRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<TerminalAttachmentResponse>(
+      API_ROUTES.terminalAttachments(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  openTerminalFile(
+    repositoryId: string,
+    body: TerminalOpenRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<TerminalOpenResponse>(
+      API_ROUTES.terminalOpen(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  endTerminal(
+    repositoryId: string,
+    body: TerminalEndRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<TerminalEndResponse>(
+      API_ROUTES.terminalEnd(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
     );
   },
 

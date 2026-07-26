@@ -20,11 +20,15 @@ import {
   INSTANCE_PROTOCOL_VERSION,
   normalizeBindHost,
 } from "./server.ts";
+import { terminalAccessIsLoopback } from "./terminalSessions.ts";
+
+export type TerminalMode = "auto" | "enabled" | "disabled";
 
 interface CliOptions {
   root: string;
   host: string;
   port: number;
+  terminalMode: TerminalMode;
 }
 
 interface RunningRegistration {
@@ -103,6 +107,14 @@ export function parseCli(argv: string[]): CliOptions {
   let root = Bun.env.COUCHVIEW_ROOT ?? Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
   let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
   let port = Number(Bun.env.PORT ?? 4173);
+  const terminalEnvironment = Bun.env.COUCHVIEW_TERMINAL;
+  let environmentTerminalMode: TerminalMode = "auto";
+  if (terminalEnvironment !== undefined) {
+    if (terminalEnvironment === "1") environmentTerminalMode = "enabled";
+    else if (terminalEnvironment === "0") environmentTerminalMode = "disabled";
+    else throw new Error("COUCHVIEW_TERMINAL must be 1 or 0");
+  }
+  let terminalFlag: Exclude<TerminalMode, "auto"> | null = null;
   let explicitRoot = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -123,6 +135,12 @@ export function parseCli(argv: string[]): CliOptions {
       if (!value || value.startsWith("--")) throw new Error("Host is required");
       host = value;
       index += 1;
+    } else if (argument === "--enable-terminal" || argument === "--disable-terminal") {
+      const mode = argument === "--enable-terminal" ? "enabled" : "disabled";
+      if (terminalFlag && terminalFlag !== mode) {
+        throw new Error("--enable-terminal and --disable-terminal cannot be used together");
+      }
+      terminalFlag = mode;
     } else if (argument && !argument.startsWith("-")) {
       if (explicitRoot) throw new Error("Repository path may only be provided once");
       root = argument;
@@ -135,7 +153,12 @@ export function parseCli(argv: string[]): CliOptions {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
   }
-  return { root: path.resolve(root), host: normalizeBindHost(host), port };
+  return {
+    root: path.resolve(root),
+    host: normalizeBindHost(host),
+    port,
+    terminalMode: terminalFlag ?? environmentTerminalMode,
+  };
 }
 
 function probeHost(host: string): string {
@@ -183,7 +206,8 @@ function isInstanceResponse(value: unknown): value is InstanceResponse {
     typeof candidate.bindHost === "string" &&
     typeof candidate.port === "number" &&
     Array.isArray(candidate.accessOrigins) &&
-    candidate.accessOrigins.every((origin) => typeof origin === "string");
+    candidate.accessOrigins.every((origin) => typeof origin === "string") &&
+    typeof candidate.terminalEnabled === "boolean";
 }
 
 async function responseError(response: Response): Promise<string> {
@@ -225,6 +249,16 @@ async function registerWithRunningServer(
   if (explicitHost && !requestedHostIsCompatible(options.host, rawInstance.bindHost)) {
     throw new Error(
       `Couchview is already using port ${options.port} on ${rawInstance.bindHost}, which does not satisfy --host ${options.host}`,
+    );
+  }
+  if (options.terminalMode === "enabled" && !rawInstance.terminalEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with terminal access disabled; stop it or choose another port`,
+    );
+  }
+  if (options.terminalMode === "disabled" && rawInstance.terminalEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with terminal access enabled; stop it or choose another port`,
     );
   }
 
@@ -360,6 +394,12 @@ export async function startServer(
   if (Bun.env.NODE_ENV === "development") {
     allowedOrigins.push("http://127.0.0.1:5173", "http://localhost:5173");
   }
+  const terminalLoopbackOnly = terminalAccessIsLoopback(options.host, allowedOrigins);
+  const terminalEnabled = options.terminalMode === "enabled" ||
+    (options.terminalMode === "auto" && terminalLoopbackOnly);
+  const terminalDisabledReason = options.terminalMode === "disabled"
+    ? "Terminal access was disabled by configuration."
+    : "Terminal access on non-loopback hosts requires --enable-terminal or COUCHVIEW_TERMINAL=1.";
   const capability = restartCapability();
   let restartInProgress = false;
   let relaunch: () => void = () => undefined;
@@ -369,6 +409,10 @@ export async function startServer(
     port: options.port,
     staticDirectory,
     allowedOrigins,
+    terminal: {
+      enabled: terminalEnabled,
+      disabledReason: terminalEnabled ? undefined : terminalDisabledReason,
+    },
     restart: {
       ...capability,
       request: capability.available
@@ -452,7 +496,8 @@ export async function startServer(
       // EventSource connections stay open for the review session. The app
       // emits SSE heartbeats, while this avoids Bun's 10-second default.
       idleTimeout: 255,
-      fetch: app.fetch,
+      fetch: (request, bunServer) => app.fetchWithServer(request, bunServer),
+      websocket: app.websocket,
     });
   } catch (error) {
     app.close();
@@ -489,6 +534,11 @@ export async function startServer(
     app.repository.root,
     options.host,
   );
+  if (terminalEnabled && !terminalLoopbackOnly) {
+    console.warn(
+      "Browser terminal access is enabled beyond loopback. Neovim runs with your OS-user permissions; protect every exposed origin with trusted access control.",
+    );
+  }
 
   let stopped = false;
   const stop = () => {
@@ -519,6 +569,11 @@ export async function startServer(
           options.host,
           "--port",
           String(options.port),
+          ...(options.terminalMode === "enabled"
+            ? ["--enable-terminal"]
+            : options.terminalMode === "disabled"
+              ? ["--disable-terminal"]
+              : []),
         ],
         {
           cwd: appRoot,

@@ -660,6 +660,11 @@ test.describe("production PWA", () => {
     expect(cachePaths.some((pathname) => /\/assets\/cpp-[^/]+\.js$/.test(pathname))).toBe(
       false,
     );
+    expect(
+      cachePaths.some((pathname) =>
+        pathname.includes("ghostty-web") || pathname.endsWith(".wasm")
+      ),
+    ).toBe(false);
     expect(cachePaths.length).toBeLessThan(20);
 
     await page.evaluate(() => {

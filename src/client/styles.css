@@ -101,7 +101,7 @@ textarea:focus-visible,
     max(4px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 3px;
 }
@@ -262,7 +262,7 @@ textarea:focus-visible,
   padding-inline: max(2px, env(safe-area-inset-left)) max(2px, env(safe-area-inset-right));
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  grid-template-columns: 42px minmax(0, 1fr) 42px 42px;
   align-items: center;
 }
 
@@ -328,6 +328,170 @@ textarea:focus-visible,
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.terminal-workspace {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  visibility: hidden;
+  pointer-events: none;
+  background: #0b0d10;
+}
+
+.terminal-workspace.active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.app-shell.terminal-active > :not(.terminal-workspace):not(.restart-overlay):not(.toast-stack) {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.terminal-toolbar {
+  min-width: 0;
+  min-height: calc(48px + env(safe-area-inset-top));
+  padding: calc(4px + env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) 4px
+    max(6px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  background: rgb(19 24 32 / 98%);
+}
+
+.terminal-toolbar-button {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #cbd5e1;
+  background: #161c24;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.terminal-toolbar-button:hover {
+  background: var(--panel-hover);
+}
+
+.terminal-toolbar-button.danger {
+  color: #ffb2b6;
+}
+
+.terminal-toolbar-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.terminal-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.terminal-heading > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-connection {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: #252d37;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.terminal-connection.connected {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.terminal-connection.error,
+.terminal-connection.taken-over,
+.terminal-connection.in-use {
+  color: var(--yellow);
+  background: var(--yellow-bg);
+}
+
+.terminal-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 6px max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom))
+    max(6px, env(safe-area-inset-left));
+  background: #0b0d10;
+}
+
+.terminal-surface {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-surface > div,
+.terminal-surface canvas {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.terminal-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--muted);
+  background: rgb(11 13 16 / 88%);
+  text-align: center;
+}
+
+.terminal-overlay strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.terminal-overlay > span {
+  max-width: 560px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.terminal-overlay .action-button {
+  min-height: 40px;
+  margin-top: 4px;
+}
+
+.terminal-launch-button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .diff-viewer-shell {
@@ -1863,7 +2027,7 @@ textarea:focus-visible,
   }
 
   .top-bar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     padding-left: 10px;
   }
 
@@ -1983,12 +2147,13 @@ textarea:focus-visible,
     padding: env(safe-area-inset-top) max(3px, env(safe-area-inset-right)) 0
       max(3px, env(safe-area-inset-left));
     grid-row: 1;
-    grid-template-columns: 36px minmax(0, 1fr) auto auto;
+    grid-template-columns: 36px minmax(0, 1fr) auto auto auto;
     gap: 2px;
   }
 
   .compact-landscape .top-bar > .menu-button,
   .compact-landscape .top-bar .compact-button,
+  .compact-landscape .top-bar .terminal-launch-button,
   .compact-landscape .compact-comments-button {
     width: 34px;
     height: 34px;

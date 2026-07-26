@@ -21,6 +21,10 @@ import {
 	type SetReviewRequest,
 	type StageFileRequest,
 	type StageFilesRequest,
+	type TerminalAttachmentRequest,
+	TERMINAL_ENDED_CLOSE_CODE,
+	type TerminalFileTarget,
+	type TerminalOpenRequest,
 } from "../src/shared/contracts.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
@@ -29,6 +33,23 @@ const distRoot = resolve(import.meta.dir, "..", "dist");
 const csrfToken = "e2e-csrf-token";
 let operationRevision = "fixture-operation-1";
 let packageRuns: PackageRunSummary[] = [];
+let terminalRunning = false;
+let terminalAttachmentCount = 0;
+let terminalSocketConnections = 0;
+let terminalTicketCounter = 0;
+let terminalTarget: TerminalFileTarget | null = null;
+const terminalInputs: string[] = [];
+const terminalResizes: Array<{ cols: number; rows: number }> = [];
+
+interface FixtureTerminalSocketData {
+	repositoryId: string;
+	clientId: string;
+	cols: number;
+	rows: number;
+}
+
+const terminalTickets = new Map<string, FixtureTerminalSocketData>();
+let terminalController: Bun.ServerWebSocket<FixtureTerminalSocketData> | null = null;
 
 const repository = {
 	id: "fixture-repository",
@@ -336,7 +357,7 @@ const securityHeaders = {
 		"base-uri 'none'",
 		"object-src 'none'",
 		"frame-ancestors 'none'",
-		"script-src 'self'",
+		"script-src 'self' 'wasm-unsafe-eval'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self'",
 		"font-src 'self'",
@@ -407,11 +428,81 @@ async function serveStatic(
 	return new Response("Not found", { status: 404, headers: securityHeaders });
 }
 
-const server = Bun.serve({
+function validateTerminalTarget(target: TerminalFileTarget | undefined): Response | null {
+	if (!target) return null;
+	const file = files.find((candidate) => candidate.id === target.fileId);
+	if (!file) {
+		return json(
+			{ error: { code: "file_not_found", message: "Fixture file not found" } },
+			404,
+		);
+	}
+	if (file.contentRevision !== target.contentRevision) {
+		return json(
+			{ error: { code: "stale_file", message: "The fixture file changed" } },
+			409,
+		);
+	}
+	if (file.kind === "deleted" || !Number.isSafeInteger(target.line) || target.line < 1) {
+		return json(
+			{ error: { code: "terminal_target_invalid", message: "Invalid fixture terminal target" } },
+			409,
+		);
+	}
+	terminalTarget = structuredClone(target);
+	return null;
+}
+
+const server = Bun.serve<FixtureTerminalSocketData>({
 	hostname: host,
 	port,
 	idleTimeout: 255,
-	async fetch(request) {
+	websocket: {
+		open(socket) {
+			if (terminalController && terminalController !== socket) {
+				terminalController.close(4001, "taken_over");
+			}
+			terminalController = socket;
+			terminalRunning = true;
+			terminalSocketConnections += 1;
+			socket.send(JSON.stringify({
+				type: "ready",
+				profileId: "nvim",
+				cols: socket.data.cols,
+				rows: socket.data.rows,
+			}));
+			socket.send(new TextEncoder().encode(
+				"\u001b[2J\u001b[H\u001b[32mCouchview fake Neovim ready\u001b[0m\r\n",
+			));
+		},
+		message(socket, message) {
+			if (typeof message === "string") {
+				try {
+					const control = JSON.parse(message) as {
+						type?: string;
+						cols?: number;
+						rows?: number;
+					};
+					if (
+						control.type === "resize" &&
+						Number.isSafeInteger(control.cols) &&
+						Number.isSafeInteger(control.rows)
+					) {
+						terminalResizes.push({ cols: control.cols!, rows: control.rows! });
+					}
+				} catch {
+					// The deterministic fixture ignores malformed control frames.
+				}
+				return;
+			}
+			terminalInputs.push(new TextDecoder().decode(message));
+			socket.send(message);
+		},
+		close(socket) {
+			if (terminalController === socket) terminalController = null;
+		},
+	},
+	async fetch(request, bunServer) {
 		const url = new URL(request.url);
 		const repositoryRoute =
 			/^\/api\/repositories\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
@@ -432,6 +523,40 @@ const server = Bun.serve({
 		const packageRunRoute =
 			/^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath);
 
+		if (nestedPath === "terminal/socket" && request.method === "GET") {
+			const protocols = (request.headers.get("sec-websocket-protocol") || "")
+				.split(",")
+				.map((value) => value.trim());
+			const ticketProtocol = protocols.find((value) =>
+				value.startsWith("couchview-ticket.")
+			);
+			const ticket = ticketProtocol?.slice("couchview-ticket.".length) || "";
+			const data = terminalTickets.get(ticket);
+			if (ticket) terminalTickets.delete(ticket);
+			if (
+				!selectedRepository ||
+				!protocols.includes("couchview-terminal-v1") ||
+				!data ||
+				data.repositoryId !== repositoryId ||
+				!request.headers.get("origin")
+			) {
+				return json(
+					{ error: { code: "terminal_ticket_invalid", message: "Invalid fixture ticket" } },
+					403,
+				);
+			}
+			const upgraded = bunServer.upgrade(request, {
+				data,
+				headers: { "Sec-WebSocket-Protocol": "couchview-terminal-v1" },
+			});
+			return upgraded
+				? undefined
+				: json(
+						{ error: { code: "websocket_upgrade_failed", message: "Fixture upgrade failed" } },
+						400,
+					);
+		}
+
 		if (url.pathname === "/api/bootstrap" && request.method === "GET") {
 			return json({
 				csrfToken,
@@ -446,15 +571,39 @@ const server = Bun.serve({
 					available: true,
 					reason: null,
 				},
-				codex: {
-					available: false,
-					reason: "Codex is not available in the browser test fixture.",
-				},
-			} satisfies BootstrapResponse);
+					codex: {
+						available: false,
+						reason: "Codex is not available in the browser test fixture.",
+					},
+					terminal: {
+						available: true,
+						reason: null,
+						persistence: "tmux",
+						profiles: [
+							{
+								id: "nvim",
+								label: "Neovim",
+								available: true,
+								reason: null,
+							},
+						],
+					},
+				} satisfies BootstrapResponse);
 		}
 
 		if (url.pathname === "/api/repositories" && request.method === "GET") {
 			return json({ repositories: repositoryCatalog, catalogRevision: 1 });
+		}
+
+		if (url.pathname === "/api/e2e/terminal" && request.method === "GET") {
+			return json({
+				running: terminalRunning,
+				attachmentCount: terminalAttachmentCount,
+				socketConnections: terminalSocketConnections,
+				target: terminalTarget,
+				inputs: terminalInputs,
+				resizes: terminalResizes,
+			});
 		}
 
 		if (repositoryRoute && !selectedRepository) {
@@ -470,6 +619,14 @@ const server = Bun.serve({
 				files,
 				operationRevision,
 			} satisfies ChangesResponse);
+		}
+
+		if (nestedPath === "terminal" && request.method === "GET") {
+			return json({
+				profileId: "nvim",
+				running: terminalRunning,
+				controllerConnected: terminalController !== null,
+			});
 		}
 
 		if (fileRoute?.[2] === "diff" && request.method === "GET") {
@@ -617,7 +774,69 @@ const server = Bun.serve({
 			comments.splice(0);
 			packageRuns = [];
 			operationRevision = "fixture-operation-1";
+			terminalController?.close(1000, "fixture_reset");
+			terminalController = null;
+			terminalRunning = false;
+			terminalAttachmentCount = 0;
+			terminalSocketConnections = 0;
+			terminalTicketCounter = 0;
+			terminalTarget = null;
+			terminalInputs.splice(0);
+			terminalResizes.splice(0);
+			terminalTickets.clear();
 			return json({ reset: true });
+		}
+
+		if (nestedPath === "terminal/attachments" && request.method === "POST") {
+			const body = (await request.json()) as TerminalAttachmentRequest;
+			const targetError = validateTerminalTarget(body.target);
+			if (targetError) return targetError;
+			if (
+				body.profileId !== "nvim" ||
+				typeof body.clientId !== "string" ||
+				!Number.isSafeInteger(body.cols) ||
+				!Number.isSafeInteger(body.rows)
+			) {
+				return json(
+					{ error: { code: "terminal_attachment_invalid", message: "Invalid fixture attachment" } },
+					400,
+				);
+			}
+			terminalRunning = true;
+			terminalAttachmentCount += 1;
+			const ticket = `fixture-ticket-${++terminalTicketCounter}`;
+			terminalTickets.set(ticket, {
+				repositoryId: repositoryId!,
+				clientId: body.clientId,
+				cols: body.cols,
+				rows: body.rows,
+			});
+			return json({
+				ticket,
+				expiresAt: new Date(Date.now() + 30_000).toISOString(),
+				protocol: "couchview-terminal-v1",
+				session: {
+					profileId: "nvim",
+					running: true,
+					controllerConnected: terminalController !== null,
+				},
+			}, 201);
+		}
+
+		if (nestedPath === "terminal/open" && request.method === "POST") {
+			const body = (await request.json()) as TerminalOpenRequest;
+			const targetError = validateTerminalTarget(body.target);
+			if (targetError) return targetError;
+			terminalRunning = true;
+			return json({ status: "opened" });
+		}
+
+		if (nestedPath === "terminal/end" && request.method === "POST") {
+			terminalRunning = false;
+			terminalTickets.clear();
+			terminalController?.close(TERMINAL_ENDED_CLOSE_CODE, "terminal_ended");
+			terminalController = null;
+			return json({ status: "ended" });
 		}
 
 		if (nestedPath === "package-runs" && request.method === "POST") {

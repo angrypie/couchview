@@ -37,6 +37,10 @@ import {
   type StartPackageRunRequest,
   type StageFileRequest,
   type StageFilesRequest,
+  type TerminalAttachmentRequest,
+  type TerminalEndRequest,
+  type TerminalOpenRequest,
+  type TerminalOpenResponse,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import {
@@ -44,16 +48,23 @@ import {
   type CommitMessageGenerator,
 } from "./commitMessage.ts";
 import { CodexAppServerService, codexPrompt } from "./codexAppServer.ts";
-import { StateDatabase } from "./database.ts";
+import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git.ts";
 import { PackageCommandService } from "./packageCommands.ts";
 import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
+import {
+  type ResolvedTerminalTarget,
+  TerminalSessionService,
+  type TerminalSocketData,
+  TERMINAL_PROTOCOL,
+  terminalAccessIsLoopback,
+} from "./terminalSessions.ts";
 
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
-export const INSTANCE_PROTOCOL_VERSION = 1;
+export const INSTANCE_PROTOCOL_VERSION = 2;
 export const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
@@ -72,6 +83,12 @@ export interface CouchviewAppOptions {
   };
   commitMessages?: CommitMessageGenerator;
   codex?: CodexAppServerService;
+  terminal?: {
+    enabled: boolean;
+    disabledReason?: string;
+    namespaceSeed?: string;
+  };
+  terminalSessions?: TerminalSessionService;
 }
 
 export interface CouchviewApp {
@@ -80,6 +97,8 @@ export interface CouchviewApp {
   packageCommands: PackageCommandService;
   commitMessages: CommitMessageGenerator;
   codex: CodexAppServerService;
+  terminalSessions: TerminalSessionService;
+  websocket: Bun.WebSocketHandler<TerminalSocketData>;
   database: StateDatabase;
   csrfToken: string;
   controlToken: string;
@@ -91,6 +110,10 @@ export interface CouchviewApp {
   accessOrigins: readonly string[];
   registerServerInstance(): void;
   fetch(request: Request): Promise<Response>;
+  fetchWithServer(
+    request: Request,
+    server: Bun.Server<TerminalSocketData>,
+  ): Promise<Response | undefined>;
   close(): void;
 }
 
@@ -275,7 +298,7 @@ function addSecurityHeaders(response: Response): Response {
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   headers.set(
     "Content-Security-Policy",
-    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",
+    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",
   );
   return new Response(response.body, {
     status: response.status,
@@ -380,7 +403,10 @@ export async function createCouchviewApp(
     throw new Error("Port must be between 1 and 65535");
   }
 
-  const database = await StateDatabase.open(options.stateDatabasePath);
+  const stateDatabasePath = path.resolve(
+    options.stateDatabasePath ?? resolveStateDatabasePath(),
+  );
+  const database = await StateDatabase.open(stateDatabasePath);
   const repositories = new RepositoryManager(database);
   const packageCommands = new PackageCommandService();
   const commitMessages =
@@ -409,6 +435,16 @@ export async function createCouchviewApp(
     [...accessOrigins, ...(options.allowedOrigins ?? [])].map(normalizeOrigin),
   );
   const allowedHosts = new Set([...allowedOrigins].map((origin) => new URL(origin).host));
+  const autoTerminalEnabled = terminalAccessIsLoopback(host, [...allowedOrigins]);
+  const terminalSessions = options.terminalSessions ?? new TerminalSessionService({
+    enabled: options.terminal?.enabled ?? autoTerminalEnabled,
+    disabledReason: options.terminal?.disabledReason ??
+      (autoTerminalEnabled
+        ? undefined
+        : "Terminal access on non-loopback hosts requires --enable-terminal or COUCHVIEW_TERMINAL=1."),
+    namespaceSeed: options.terminal?.namespaceSeed ??
+      `${stateDatabasePath}\0${host}\0${port}`,
+  });
   const streams = new Set<StreamState>();
   const subscriptions = new Map<string, () => void>();
   let defaultRepositoryId: string | null = initial.repository.id;
@@ -553,6 +589,60 @@ export async function createCouchviewApp(
     return { repository: registered.repository, added: registered.added };
   };
 
+  const resolveTerminalTarget = async (
+    repository: GitRepository,
+    target: TerminalAttachmentRequest["target"],
+  ): Promise<ResolvedTerminalTarget | undefined> => {
+    if (target === undefined) return undefined;
+    if (
+      !target ||
+      typeof target !== "object" ||
+      typeof target.fileId !== "string" ||
+      typeof target.contentRevision !== "string" ||
+      !Number.isSafeInteger(target.line) ||
+      target.line < 1 ||
+      target.line > 10_000_000
+    ) {
+      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target is invalid");
+    }
+    const snapshot = await repository.changes();
+    const file = snapshot.files.find((candidate) => candidate.id === target.fileId);
+    if (!file) {
+      throw new HttpError(404, "file_not_found", "Changed file not found");
+    }
+    if (file.contentRevision !== target.contentRevision) {
+      throw new HttpError(
+        409,
+        "stale_file",
+        "The file changed; refresh the diff before opening it in Neovim",
+      );
+    }
+    if (file.kind === "deleted") {
+      throw new HttpError(
+        409,
+        "file_deleted",
+        "Deleted files do not have a working-tree file to open",
+      );
+    }
+    const absolutePath = path.resolve(repository.root, file.path);
+    const repositoryPrefix = `${repository.root}${path.sep}`;
+    if (absolutePath !== repository.root && !absolutePath.startsWith(repositoryPrefix)) {
+      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target escapes the repository");
+    }
+    const resolvedPath = await realpath(absolutePath).catch(() => null);
+    if (!resolvedPath) {
+      throw new HttpError(409, "file_unavailable", "The working-tree file is no longer available");
+    }
+    if (resolvedPath !== repository.root && !resolvedPath.startsWith(repositoryPrefix)) {
+      throw new HttpError(400, "terminal_target_invalid", "The Neovim file target leaves the repository through a symbolic link");
+    }
+    const metadata = await stat(resolvedPath);
+    if (!metadata.isFile()) {
+      throw new HttpError(409, "file_unavailable", "The working-tree target is not a regular file");
+    }
+    return { absolutePath, line: target.line };
+  };
+
   const handleApi = async (request: Request, url: URL): Promise<Response> => {
     const controlRegistration =
       url.pathname === API_ROUTES.controlRepositories && request.method === "POST";
@@ -578,6 +668,7 @@ export async function createCouchviewApp(
         bindHost: host,
         port,
         accessOrigins: [...accessOrigins],
+        terminalEnabled: terminalSessions.enabled,
       };
       return json(response);
     }
@@ -593,6 +684,7 @@ export async function createCouchviewApp(
         },
         commitMessage: commitMessages.capability,
         codex: codex.capabilityFor(),
+        terminal: terminalSessions.capability,
       };
       return json(response);
     }
@@ -631,6 +723,8 @@ export async function createCouchviewApp(
     const nestedPath = repositoryRoute[2] ?? "";
 
     if (!nestedPath && request.method === "DELETE") {
+      const terminalStatus = await terminalSessions.status(repositoryId);
+      if (terminalStatus.running) await terminalSessions.end(repositoryId, false);
       packageCommands.stopRepository(repositoryId);
       repositories.forget(repositoryId);
       if (defaultRepositoryId === repositoryId) {
@@ -653,6 +747,46 @@ export async function createCouchviewApp(
 
     if (nestedPath === "files" && request.method === "GET") {
       return json(await repository.changes());
+    }
+    if (nestedPath === "terminal" && request.method === "GET") {
+      return json(await terminalSessions.status(repositoryId));
+    }
+    if (nestedPath === "terminal/attachments" && request.method === "POST") {
+      const input = await readJsonObject<TerminalAttachmentRequest>(request);
+      const origin = request.headers.get("origin");
+      if (!origin) {
+        throw new HttpError(403, "origin_required", "A same-origin browser request is required");
+      }
+      const target = await resolveTerminalTarget(repository, input.target);
+      return json(
+        await terminalSessions.issueAttachment(
+          repositoryId,
+          repository.root,
+          input,
+          {
+            host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+            origin: normalizeOrigin(origin),
+          },
+          target,
+        ),
+        { status: 201 },
+      );
+    }
+    if (nestedPath === "terminal/open" && request.method === "POST") {
+      const input = await readJsonObject<TerminalOpenRequest>(request);
+      const target = await resolveTerminalTarget(repository, input.target);
+      if (!target) {
+        throw new HttpError(400, "terminal_target_invalid", "The Neovim file target is required");
+      }
+      await terminalSessions.openFile(repositoryId, repository.root, target);
+      return json({ status: "opened" } satisfies TerminalOpenResponse);
+    }
+    if (nestedPath === "terminal/end" && request.method === "POST") {
+      const input = await readJsonObject<TerminalEndRequest>(request);
+      if (typeof input.force !== "boolean") {
+        throw new HttpError(400, "terminal_end_invalid", "The terminal end mode is invalid");
+      }
+      return json(await terminalSessions.end(repositoryId, input.force));
     }
     if (fileRoute?.[2] === "diff" && request.method === "GET") {
       return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));
@@ -1089,12 +1223,82 @@ export async function createCouchviewApp(
     });
   };
 
+  const handleRequest = async (
+    request: Request,
+    server?: Bun.Server<TerminalSocketData>,
+  ): Promise<Response | undefined> => {
+    const url = new URL(request.url);
+    const hostHeader = request.headers.get("host") ?? url.host;
+    const origin = request.headers.get("origin");
+    let response: Response;
+    try {
+      let normalizedHost: string;
+      try {
+        normalizedHost = normalizeRequestHost(hostHeader);
+      } catch {
+        throw new HttpError(403, "host_rejected", "Host is not allowed by the local server");
+      }
+      if (!allowedHosts.has(normalizedHost)) {
+        throw new HttpError(403, "host_rejected", "Host is not allowed by the local server");
+      }
+      let normalizedOrigin: string | null = null;
+      if (origin) {
+        try {
+          normalizedOrigin = normalizeOrigin(origin);
+        } catch {
+          throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
+        }
+        if (!allowedOrigins.has(normalizedOrigin)) {
+          throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
+        }
+      }
+
+      const terminalSocketRoute = /^\/api\/repositories\/([^/]+)\/terminal\/socket$/.exec(
+        url.pathname,
+      );
+      if (terminalSocketRoute && request.method === "GET") {
+        if (!normalizedOrigin) {
+          throw new HttpError(403, "origin_required", "A same-origin browser request is required");
+        }
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+          throw new HttpError(426, "websocket_required", "This terminal route requires a WebSocket upgrade");
+        }
+        if (!server) {
+          throw new HttpError(426, "websocket_required", "The current server cannot upgrade this request");
+        }
+        const repositoryId = decodeSegment(terminalSocketRoute[1] ?? "");
+        await repositories.get(repositoryId);
+        const data = terminalSessions.consumeUpgrade(repositoryId, request, {
+          host: normalizedHost,
+          origin: normalizedOrigin,
+        });
+        const upgraded = server.upgrade(request, {
+          data,
+          headers: { "Sec-WebSocket-Protocol": TERMINAL_PROTOCOL },
+        });
+        if (!upgraded) {
+          throw new HttpError(400, "websocket_upgrade_failed", "The terminal WebSocket upgrade failed");
+        }
+        return undefined;
+      }
+
+      response = url.pathname === "/api" || url.pathname.startsWith("/api/")
+        ? await handleApi(request, url)
+        : await serveStatic(url);
+    } catch (error) {
+      response = errorResponse(error);
+    }
+    return addSecurityHeaders(response);
+  };
+
   const app: CouchviewApp = {
     repository: initialBackend,
     repositories,
     packageCommands,
     commitMessages,
     codex,
+    terminalSessions,
+    websocket: terminalSessions.websocket,
     database,
     csrfToken,
     controlToken,
@@ -1118,38 +1322,16 @@ export async function createCouchviewApp(
       });
     },
     async fetch(request: Request): Promise<Response> {
-      const url = new URL(request.url);
-      const hostHeader = request.headers.get("host") ?? url.host;
-      const origin = request.headers.get("origin");
-      let response: Response;
-      try {
-        let normalizedHost: string;
-        try {
-          normalizedHost = normalizeRequestHost(hostHeader);
-        } catch {
-          throw new HttpError(403, "host_rejected", "Host is not allowed by the local server");
-        }
-        if (!allowedHosts.has(normalizedHost)) {
-          throw new HttpError(403, "host_rejected", "Host is not allowed by the local server");
-        }
-        if (origin) {
-          let normalizedOrigin: string;
-          try {
-            normalizedOrigin = normalizeOrigin(origin);
-          } catch {
-            throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
-          }
-          if (!allowedOrigins.has(normalizedOrigin)) {
-            throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
-          }
-        }
-        response = url.pathname === "/api" || url.pathname.startsWith("/api/")
-          ? await handleApi(request, url)
-          : await serveStatic(url);
-      } catch (error) {
-        response = errorResponse(error);
-      }
-      return addSecurityHeaders(response);
+      const response = await handleRequest(request);
+      return response ?? addSecurityHeaders(errorResponse(
+        new HttpError(426, "websocket_required", "The current server cannot upgrade this request"),
+      ));
+    },
+    fetchWithServer(
+      request: Request,
+      server: Bun.Server<TerminalSocketData>,
+    ): Promise<Response | undefined> {
+      return handleRequest(request, server);
     },
     close(): void {
       if (closed) return;
@@ -1167,6 +1349,7 @@ export async function createCouchviewApp(
       }
       streams.clear();
       database.removeServerInstance(instanceId);
+      terminalSessions.close();
       commitMessages.close();
       codex.close();
       packageCommands.close();
