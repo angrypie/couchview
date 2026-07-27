@@ -5,6 +5,7 @@ const repositoryFilesApiPath = (repositoryId: string) =>
 
 export const API_ROUTES = {
   bootstrap: "/api/bootstrap",
+  accessRefresh: "/api/access/refresh",
   instance: "/api/instance",
   restart: "/api/restart",
   repositories: "/api/repositories",

@@ -26,6 +26,7 @@ import {
   GitPullRequestArrow,
   ListFilter,
   LoaderCircle,
+  LogIn,
   Menu,
   MessageSquareText,
   Minus,
@@ -33,6 +34,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Send,
   Sparkles,
@@ -76,6 +78,7 @@ import {
   formatCommentReference,
 } from "./commentExport.ts";
 import { usePwaUpdate } from "./usePwaUpdate.ts";
+import { clearOfflineAppStorage } from "./offlineApp.ts";
 import {
   DiffViewer,
   type DiffViewerHandle,
@@ -621,6 +624,8 @@ export function App() {
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [loadError, setLoadError] = useState("");
+  const [loadErrorCode, setLoadErrorCode] = useState("");
+  const [offlineResetBusy, setOfflineResetBusy] = useState(false);
   const [diffError, setDiffError] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const [connected, setConnected] = useState(true);
@@ -1340,6 +1345,7 @@ export function App() {
     setCopyFallbackText("");
     setRepositoryPickerOpen(false);
     setLoadError("");
+    setLoadErrorCode("");
     const url = new URL(window.location.href);
     url.searchParams.delete("repo");
     window.history.replaceState(null, "", url);
@@ -1349,6 +1355,7 @@ export function App() {
   const loadApp = useCallback(async () => {
     setPhase("loading");
     setLoadError("");
+    setLoadErrorCode("");
     try {
       const nextBootstrap = await api.bootstrap();
       repositoryCatalogRef.current = nextBootstrap.repositories;
@@ -1370,10 +1377,25 @@ export function App() {
       await loadRepository(selected.id, "replace");
     } catch (error) {
       setLoadError(messageOf(error));
+      setLoadErrorCode(error instanceof ApiError ? error.code : "unknown");
       setConnected(!(error instanceof ApiError && error.status === 0));
       setPhase("error");
     }
   }, [clearRepositorySelection, loadRepository]);
+
+  const resetOfflineApp = useCallback(async () => {
+    if (offlineResetBusy) return;
+    setOfflineResetBusy(true);
+    try {
+      await clearOfflineAppStorage();
+      window.location.reload();
+    } catch {
+      setLoadError(
+        "Couchview could not reset its offline data. Remove its website data in browser settings, then reload.",
+      );
+      setOfflineResetBusy(false);
+    }
+  }, [offlineResetBusy]);
 
   useEffect(() => {
     void loadApp();
@@ -1758,12 +1780,7 @@ export function App() {
       }
       setRestartPhase("loading");
       try {
-        const registration = await navigator.serviceWorker?.getRegistration();
-        await registration?.unregister();
-        if ("caches" in window) {
-          const cacheNames = await window.caches.keys();
-          await Promise.all(cacheNames.map((name) => window.caches.delete(name)));
-        }
+        await clearOfflineAppStorage();
       } catch {
         // A network reload still refreshes non-PWA and restricted browser sessions.
       }
@@ -3018,15 +3035,60 @@ export function App() {
   }
 
   if (phase === "error") {
+    const authenticationRequired = loadErrorCode === "authentication_required";
+    const disconnected = loadErrorCode === "disconnected";
+    const repositoryId = new URL(window.location.href).searchParams.get("repo");
+    const accessRefresh = new URL(API_ROUTES.accessRefresh, window.location.origin);
+    if (repositoryId) accessRefresh.searchParams.set("repo", repositoryId);
     return (
       <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
         <div className="error-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
           <AlertTriangle className="state-icon" size={32} />
-          <h1 className="state-title">Couldn’t open Couchview</h1>
-          <p className="state-copy">{loadError}</p>
-          <button className="action-button" onClick={() => void loadApp()} type="button">
-            <RefreshCw size={16} /> Retry
-          </button>
+          <h1 className="state-title">
+            {authenticationRequired
+              ? "Sign-in expired"
+              : disconnected
+                ? "Couchview is unavailable"
+                : "Couldn’t open Couchview"}
+          </h1>
+          <p className="state-copy">
+            {authenticationRequired
+              ? "Sign in again to continue using Couchview."
+              : loadError}
+          </p>
+          <div className="state-actions">
+            {authenticationRequired ? (
+              <>
+                <a className="action-button" href={`${accessRefresh.pathname}${accessRefresh.search}`}>
+                  <LogIn size={16} /> Sign in again
+                </a>
+                <button className="action-button secondary" onClick={() => void loadApp()} type="button">
+                  <RefreshCw size={16} /> Retry
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="action-button" onClick={() => void loadApp()} type="button">
+                  <RefreshCw size={16} /> Retry
+                </button>
+                {disconnected && (
+                  <button
+                    className="action-button secondary"
+                    disabled={offlineResetBusy}
+                    onClick={() => void resetOfflineApp()}
+                    type="button"
+                  >
+                    {offlineResetBusy ? (
+                      <LoaderCircle className="spinner" size={16} />
+                    ) : (
+                      <RotateCcw size={16} />
+                    )}
+                    Reset offline app
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </main>
     );

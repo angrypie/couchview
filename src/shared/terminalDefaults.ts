@@ -1,7 +1,7 @@
 import type { TerminalRendererConfig } from "./contracts.ts";
 
 export const FALLBACK_TERMINAL_RENDERER_CONFIG: TerminalRendererConfig = {
-  fontFamily: "Hack",
+  fontFamily: "Iosevka",
   fontSize: 15,
   cellHeightAdjustment: 1,
   cellWidthAdjustment: -1,

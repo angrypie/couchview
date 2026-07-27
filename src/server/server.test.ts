@@ -624,6 +624,23 @@ describe("Couchview HTTP security and routes", () => {
     expect((await app.repository.changes()).files).toHaveLength(0);
   });
 
+  test("returns from Access sign-in through an uncached safe redirect", async () => {
+    const app = await fixture();
+    const refresh = await app.fetch(
+      request(`${API_ROUTES.accessRefresh}?repo=${encodeURIComponent(app.repository.id)}`),
+    );
+    expect(refresh.status).toBe(302);
+    expect(refresh.headers.get("location")).toBe(
+      `/?repo=${encodeURIComponent(app.repository.id)}`,
+    );
+    expect(refresh.headers.get("cache-control")).toBe("no-store");
+    expect(refresh.headers.get("content-security-policy")).toContain("default-src 'self'");
+
+    const defaultRefresh = await app.fetch(request(API_ROUTES.accessRefresh));
+    expect(defaultRefresh.status).toBe(302);
+    expect(defaultRefresh.headers.get("location")).toBe("/");
+  });
+
   test("generates a protected staged-only commit message and rejects stale output", async () => {
     const contexts: string[] = [];
     let mutateDuringGeneration = false;

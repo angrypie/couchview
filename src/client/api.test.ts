@@ -27,6 +27,26 @@ describe("API client", () => {
     expect(error).toMatchObject({ status: 0, code: "disconnected" });
   });
 
+  test("requests an AJAX 401 and reports that secure sign-in is required", async () => {
+    let requestHeaders = new Headers();
+    let credentials: RequestCredentials | undefined;
+    globalThis.fetch = ((_input, init) => {
+      requestHeaders = new Headers(init?.headers);
+      credentials = init?.credentials;
+      return Promise.resolve(new Response("Sign in", { status: 401 }));
+    }) as typeof fetch;
+
+    const error = await api.bootstrap().catch((caught) => caught);
+    expect(requestHeaders.get("x-requested-with")).toBe("XMLHttpRequest");
+    expect(credentials).toBe("same-origin");
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      code: "authentication_required",
+      message: "Your secure sign-in session has expired.",
+    });
+  });
+
   test("preserves Git diagnostics returned by the local server", async () => {
     globalThis.fetch = (() => Promise.resolve(Response.json(
       {

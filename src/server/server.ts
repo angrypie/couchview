@@ -603,6 +603,22 @@ export async function createCouchviewApp(
       }
     }
 
+    if (url.pathname === API_ROUTES.accessRefresh && request.method === "GET") {
+      // Keeping this entry point under /api makes every shipped service worker
+      // send the navigation to the network, where Access can show its login UI.
+      const repositoryId = url.searchParams.get("repo");
+      const location = new URL("/", url);
+      if (repositoryId && repositoryId.length <= 512) {
+        location.searchParams.set("repo", repositoryId);
+      }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Cache-Control": "no-store",
+          Location: `${location.pathname}${location.search}`,
+        },
+      });
+    }
     if (url.pathname === API_ROUTES.instance && request.method === "GET") {
       const response: InstanceResponse = {
         service: "couchview",

@@ -45,7 +45,7 @@ const PIERRE_UNSAFE_CSS = `
   --diffs-bg: var(--viewer-bg, #0d1014);
   --diffs-dark-bg: var(--viewer-bg, #0d1014);
   --diffs-dark: var(--viewer-text, #e7edf5);
-  --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --diffs-font-family: var(--code-font-family, "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace);
   --diffs-min-number-column-width: 1ch;
   --diffs-bg-context-override: var(--viewer-context, #131820);
   --diffs-bg-separator-override: var(--viewer-separator, #17243a);
@@ -56,6 +56,8 @@ const PIERRE_UNSAFE_CSS = `
   --diffs-addition-color-override: var(--viewer-green, #52d091);
   --diffs-deletion-color-override: var(--viewer-red, #ff7f85);
   --diffs-modified-color-override: var(--viewer-accent, #7da6ff);
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
 }
 [data-diff]:not([data-disable-line-numbers]) [data-column-number] {
   padding-inline: .45ch !important;

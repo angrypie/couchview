@@ -1,6 +1,7 @@
 import { resolve, sep } from "node:path";
 
 import {
+	API_ROUTES,
 	type BootstrapResponse,
 	type ChangeFile,
 	type ChangesResponse,
@@ -528,6 +529,13 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 						{ error: { code: "websocket_upgrade_failed", message: "Fixture upgrade failed" } },
 						400,
 					);
+		}
+
+		if (url.pathname === API_ROUTES.accessRefresh && request.method === "GET") {
+			const destination = new URL("/", url);
+			const repositoryId = url.searchParams.get("repo");
+			if (repositoryId) destination.searchParams.set("repo", repositoryId);
+			return Response.redirect(destination, 302);
 		}
 
 		if (url.pathname === "/api/bootstrap" && request.method === "GET") {

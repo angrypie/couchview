@@ -79,9 +79,9 @@ The browser renderer uses the supported appearance settings from the host's reso
 Ghostty configuration when Ghostty is installed, or reads its local config directly.
 Font family, size, pixel-based cell height and width adjustments, cursor, palette,
 and selection colors are supported; other native-only settings are ignored. The
-unpatched Hack regular, bold, italic, and bold-italic faces are bundled for text.
-A Catppuccin Mocha color fallback is also bundled, so remote browsers do not need
-the font installed. Font, terminal renderer, and WASM assets load only after the
+Iosevka regular, bold, italic, and bold-italic faces are bundled for text. A
+Catppuccin Mocha color fallback is also bundled, so remote browsers do not need the
+font installed. Font, terminal renderer, and WASM assets load only after the
 terminal is opened and are not part of the PWA precache.
 
 With the terminal focused, `Cmd++`/`Cmd+-` on Apple devices or `Ctrl++`/`Ctrl+-`
@@ -316,7 +316,7 @@ Binary and metadata-only changes remain reviewable and stageable but do not acce
 
 On desktop Chrome or Edge over localhost, use the install icon in the address bar or the in-app install guidance. On iPhone or iPad, PWA installation requires Couchview to be served through HTTPS; a plain LAN-IP URL can open the review UI but is not a secure context. When HTTPS is available, open Couchview in Safari, tap **Share**, then **Add to Home Screen**. Launching the installed app uses the standalone, edge-to-edge interface.
 
-The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk, WASM runtime, and bundled Hack faces also stay out of the precache and load only when the tmux terminal is opened. When a new service worker is ready, Couchview asks before reloading the active review.
+The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk, WASM runtime, and bundled Iosevka faces also stay out of the precache and load only when the tmux terminal is opened. When a new service worker is ready, Couchview asks before reloading the active review.
 
 ## Local state and security
 
@@ -361,7 +361,7 @@ bunx playwright install chromium webkit
 bun run test:e2e
 ```
 
-Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy renderer and Hack loading, input, resize, Review handoff, and tmux session shutdown.
+Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy renderer and Iosevka loading, input, resize, Review handoff, and tmux session shutdown.
 
 To point the browser suite at an already running instance instead:
 

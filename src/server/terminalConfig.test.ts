@@ -55,7 +55,7 @@ describe("Ghostty terminal appearance", () => {
       palette = 3=#123456
     `);
 
-    expect(config.fontFamily).toBe("Hack");
+    expect(config.fontFamily).toBe("Iosevka");
     expect(config.fontSize).toBe(15);
     expect(config.cellHeightAdjustment).toBe(1);
     expect(config.cellWidthAdjustment).toBe(-1);

@@ -23,7 +23,7 @@ interface CreateBrowserTerminalOptions {
 
 let initialization: Promise<import("ghostty-web").Ghostty> | null = null;
 const encoder = new TextEncoder();
-const BUNDLED_TEXT_FONT_FAMILY = "Hack";
+const BUNDLED_TEXT_FONT_FAMILY = "Iosevka";
 
 function browserFontFamily(configuredFamily: string): string {
   return /\bnerd\s+font\b/i.test(configuredFamily)

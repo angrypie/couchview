@@ -59,10 +59,10 @@ test.describe("desktop tmux terminal", () => {
       (pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname),
     )).toBe(true);
     await expect.poll(() => loadedAssets.some(
-      (pathname) => /\/assets\/Hack-Regular-[^/]+\.ttf$/.test(pathname),
+      (pathname) => /\/assets\/Iosevka-Regular-[^/]+\.woff2$/.test(pathname),
     )).toBe(true);
     await expect.poll(() => loadedAssets.some(
-      (pathname) => /\/assets\/Hack-Bold-[^/]+\.ttf$/.test(pathname),
+      (pathname) => /\/assets\/Iosevka-Bold-[^/]+\.woff2$/.test(pathname),
     )).toBe(true);
     const state = async () => (await (
       await request.get("/api/e2e/terminal")
@@ -131,12 +131,14 @@ test.describe("desktop tmux terminal", () => {
     const inputBeforeFontChange = (await state()).inputs.join("");
     const increaseResizeCount = (await state()).resizes.length;
     await page.keyboard.press(`${primaryModifier}+=`);
+    await page.keyboard.press(`${primaryModifier}+=`);
     await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
       increaseResizeCount,
     );
     await expect.poll(cellHeight).toBeGreaterThan(initialCellHeight);
     expect((await state()).inputs.join("")).toBe(inputBeforeFontChange);
     const decreaseResizeCount = (await state()).resizes.length;
+    await page.keyboard.press(`${primaryModifier}+-`);
     await page.keyboard.press(`${primaryModifier}+-`);
     await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
       decreaseResizeCount,
@@ -164,6 +166,7 @@ test.describe("desktop tmux terminal", () => {
     );
 
     const sessionResizeCount = (await state()).resizes.length;
+    await page.keyboard.press(`${primaryModifier}+=`);
     await page.keyboard.press(`${primaryModifier}+=`);
     await expect.poll(async () => (await state()).resizes.length).toBeGreaterThan(
       sessionResizeCount,

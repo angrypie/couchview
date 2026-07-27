@@ -77,6 +77,52 @@ test.describe("mobile fixture review", () => {
       .toBe(1);
   });
 
+  test("keeps review actions at the screen bottom across orientation changes", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The iOS viewport regression only needs one WebKit orientation cycle.",
+    );
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const shell = page.locator(".app-shell");
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    const expectActionsAtBottom = async () => {
+      await expect(actions).toHaveCSS("position", "absolute");
+      await expect
+        .poll(() =>
+          actions.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return Math.round(window.innerHeight - bounds.bottom);
+          }),
+        )
+        .toBeGreaterThanOrEqual(0);
+      await expect
+        .poll(() =>
+          actions.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            return Math.round(window.innerHeight - bounds.bottom);
+          }),
+        )
+        .toBeLessThanOrEqual(40);
+    };
+
+    await expect(shell).not.toHaveClass(/compact-landscape/);
+    await expectActionsAtBottom();
+
+    await page.setViewportSize({ width: 812, height: 375 });
+    await expect(shell).toHaveClass(/compact-landscape/);
+    await expectActionsAtBottom();
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(shell).not.toHaveClass(/compact-landscape/);
+    await expectActionsAtBottom();
+  });
+
   test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
     page,
   }, testInfo) => {
@@ -108,12 +154,15 @@ test.describe("mobile fixture review", () => {
       codeHost.evaluate((host) => {
         const line = host.shadowRoot?.querySelector<HTMLElement>("[data-line]");
         const hostStyle = getComputedStyle(host);
+        const lineStyle = line ? getComputedStyle(line) : null;
         return {
-          fontSize: line ? getComputedStyle(line).fontSize : "",
+          fontSize: lineStyle?.fontSize ?? "",
           hostFontSize: hostStyle.fontSize,
-          lineHeight: line
-            ? Math.round(Number.parseFloat(getComputedStyle(line).lineHeight) * 100) / 100
+          lineHeight: lineStyle
+            ? Math.round(Number.parseFloat(lineStyle.lineHeight) * 100) / 100
             : 0,
+          usesIosevka: lineStyle?.fontFamily.includes("Iosevka") ?? false,
+          ligaturesDisabled: lineStyle?.fontVariantLigatures === "none",
           textInflationDisabled: Array.from(
             host.shadowRoot?.querySelectorAll("style") ?? [],
           ).some((style) =>
@@ -125,6 +174,8 @@ test.describe("mobile fixture review", () => {
       fontSize: "11px",
       hostFontSize: "11px",
       lineHeight: 17.05,
+      usesIosevka: true,
+      ligaturesDisabled: true,
       textInflationDisabled: true,
     });
 
@@ -137,6 +188,8 @@ test.describe("mobile fixture review", () => {
       fontSize: "11px",
       hostFontSize: "11px",
       lineHeight: 17.05,
+      usesIosevka: true,
+      ligaturesDisabled: true,
       textInflationDisabled: true,
     });
     await fileSwitchControls.getByRole("button", { name: "Previous file" }).click();
@@ -325,6 +378,14 @@ test.describe("mobile fixture review", () => {
     await expect(currentHit).toBeVisible();
     await currentHit.click();
     await expect(search.locator(".source-preview")).toContainText("src/review.ts");
+    await expect(search.locator(".source-line").first()).toHaveCSS(
+      "font-family",
+      /Iosevka/,
+    );
+    await expect(search.locator(".source-line").first()).toHaveCSS(
+      "font-variant-ligatures",
+      "none",
+    );
     await search.getByRole("button", { name: "Back to results" }).click();
     await search.getByRole("button", { name: /Other files \(1\)/ }).click();
     await expect(search.getByRole("button", { name: /src\/format\.ts:2:10/ })).toBeVisible();
@@ -571,6 +632,35 @@ test.describe("mobile fixture review", () => {
 });
 
 test.describe("production PWA", () => {
+  test("guides an expired Cloudflare Access session back through sign-in", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The Access recovery regression only needs one service-worker-capable browser.",
+    );
+    let requestedWith: string | undefined;
+    await page.route("**/api/bootstrap", async (route) => {
+      requestedWith = route.request().headers()["x-requested-with"];
+      await route.fulfill({
+        body: "Cloudflare Access sign-in required",
+        contentType: "text/html",
+        status: 401,
+      });
+    });
+
+    await page.goto("/?repo=fixture-repository-two");
+    await expect(page.getByRole("heading", { name: "Sign-in expired" })).toBeVisible();
+    await expect(page.getByText("Sign in again to continue using Couchview.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/api/access/refresh?repo=fixture-repository-two",
+    );
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset offline app" })).toHaveCount(0);
+    expect(requestedWith).toBe("XMLHttpRequest");
+  });
+
   test("has a valid manifest, an uncached live API, a disconnected shell, and update/install affordances", async ({
     browserName,
     context,
@@ -664,7 +754,7 @@ test.describe("production PWA", () => {
       cachePaths.some((pathname) =>
         pathname.includes("ghostty-web") ||
         pathname.endsWith(".wasm") ||
-        pathname.includes("Hack-")
+        pathname.includes("Iosevka-")
       ),
     ).toBe(false);
     expect(cachePaths.length).toBeLessThan(20);
@@ -726,7 +816,8 @@ test.describe("production PWA", () => {
       } else {
         await page.reload({ waitUntil: "domcontentloaded" });
         await expect(page).toHaveTitle("Couchview");
-        await expect(page.getByRole("heading", { name: "Couldn’t open Couchview" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Couchview is unavailable" })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Reset offline app" })).toBeVisible();
       }
     } finally {
       await context.setOffline(false);

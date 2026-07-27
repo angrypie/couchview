@@ -1,33 +1,33 @@
 @font-face {
-  font-family: "Hack";
+  font-family: "Iosevka";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("./assets/fonts/Hack-Regular.ttf") format("truetype");
+  src: url("./assets/fonts/Iosevka-Regular.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "Hack";
+  font-family: "Iosevka";
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url("./assets/fonts/Hack-Bold.ttf") format("truetype");
+  src: url("./assets/fonts/Iosevka-Bold.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "Hack";
+  font-family: "Iosevka";
   font-style: italic;
   font-weight: 400;
   font-display: swap;
-  src: url("./assets/fonts/Hack-Italic.ttf") format("truetype");
+  src: url("./assets/fonts/Iosevka-Italic.woff2") format("woff2");
 }
 
 @font-face {
-  font-family: "Hack";
+  font-family: "Iosevka";
   font-style: italic;
   font-weight: 700;
   font-display: swap;
-  src: url("./assets/fonts/Hack-BoldItalic.ttf") format("truetype");
+  src: url("./assets/fonts/Iosevka-BoldItalic.woff2") format("woff2");
 }
 
 :root {
@@ -35,7 +35,7 @@
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   color: #e7edf5;
   background: #0d1014;
@@ -60,6 +60,8 @@
   --yellow: #eabf62;
   --yellow-bg: #312815;
   --selection: #3a4e77;
+  --code-font-family: "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", monospace;
   --radius: 10px;
   --shadow: 0 18px 50px rgb(0 0 0 / 45%);
 }
@@ -625,8 +627,9 @@ textarea:focus-visible,
   min-width: 100%;
   margin: 0;
   padding: 10px;
-  font: 400 var(--code-size) / 1.55 ui-monospace, SFMono-Regular, Menlo, Monaco,
-    Consolas, "Liberation Mono", monospace;
+  font: 400 var(--code-size) / 1.55 var(--code-font-family);
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   white-space: pre;
 }
 
@@ -649,7 +652,7 @@ textarea:focus-visible,
   color: #f1d594;
   background: #2d2617;
   box-shadow: 0 2px 7px rgb(0 0 0 / 24%);
-  font: 650 10px/1.25 Inter, ui-sans-serif, system-ui, sans-serif;
+  font: 650 10px/1.25 ui-sans-serif, system-ui, sans-serif;
   text-align: left;
 }
 
@@ -1721,7 +1724,9 @@ textarea:focus-visible,
 
 .result-preview,
 .source-line {
-  font: 400 10px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 10px/1.55 var(--code-font-family);
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   white-space: pre;
 }
 
@@ -1911,6 +1916,19 @@ textarea:focus-visible,
   line-height: 1.5;
 }
 
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.state-actions .action-button {
+  min-height: 42px;
+  padding-inline: 12px;
+  text-decoration: none;
+}
+
 .metadata-preview {
   width: min(100%, 680px);
   max-height: 32dvh;
@@ -1921,7 +1939,9 @@ textarea:focus-visible,
   border-radius: 8px;
   color: #aebaca;
   background: #0a0e13;
-  font: 400 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 400 10px/1.5 var(--code-font-family);
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   text-align: left;
   white-space: pre;
 }
@@ -2161,6 +2181,7 @@ textarea:focus-visible,
 @media (orientation: portrait) and (max-width: 759px) {
   .app-shell:not(.compact-landscape) {
     position: relative;
+    height: 100dvh;
     grid-template-rows: auto auto minmax(0, 1fr);
   }
 
@@ -2169,7 +2190,7 @@ textarea:focus-visible,
   }
 
   .app-shell:not(.compact-landscape) .bottom-bar {
-    position: fixed;
+    position: absolute;
     z-index: 35;
     right: auto;
     bottom: calc(6px + env(safe-area-inset-bottom));
@@ -2196,6 +2217,7 @@ textarea:focus-visible,
 @media (orientation: landscape) and (max-height: 599px) {
   .app-shell.compact-landscape {
     position: relative;
+    height: 100dvh;
     grid-template-rows: auto minmax(0, 1fr);
   }
 
@@ -2333,7 +2355,7 @@ textarea:focus-visible,
   }
 
   .compact-landscape .bottom-bar {
-    position: fixed;
+    position: absolute;
     z-index: 35;
     right: auto;
     bottom: calc(5px + env(safe-area-inset-bottom));

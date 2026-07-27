@@ -69,20 +69,36 @@ async function request<T>(
 ): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set("Accept", "application/json");
+  // Cloudflare Access returns a usable 401 for expired AJAX sessions only
+  // when this header is present. Otherwise its login redirect looks offline
+  // to fetch after the redirect crosses origins.
+  headers.set("X-Requested-With", "XMLHttpRequest");
   if (init?.body) headers.set("Content-Type", "application/json");
   if (csrfToken) headers.set(CSRF_HEADER, csrfToken);
 
   let response: Response;
   try {
-    response = await fetch(path, { ...init, headers });
+    response = await fetch(path, {
+      credentials: "same-origin",
+      ...init,
+      headers,
+    });
   } catch {
     if (init?.signal?.aborted) {
       throw new DOMException("The request was aborted.", "AbortError");
     }
     throw new ApiError(
-      "Could not reach the local Couchview server.",
+      "Could not reach Couchview.",
       0,
       "disconnected",
+    );
+  }
+
+  if (response.status === 401) {
+    throw new ApiError(
+      "Your secure sign-in session has expired.",
+      401,
+      "authentication_required",
     );
   }
 

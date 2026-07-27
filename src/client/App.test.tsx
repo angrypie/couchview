@@ -424,6 +424,7 @@ describe("Couchview app", () => {
   let releaseCommitMessageResponse: (() => void) | null = null;
   let commitMessageAvailable = true;
   let terminalAvailable = false;
+  let bootstrapFailureStatus: number | null = null;
 
   beforeEach(() => {
     files = structuredClone(initialFiles);
@@ -448,6 +449,7 @@ describe("Couchview app", () => {
     releaseCommitMessageResponse = null;
     commitMessageAvailable = true;
     terminalAvailable = false;
+    bootstrapFailureStatus = null;
     resetRendererState();
     resetFakeTerminalWebSockets();
     EventSourceStub.instances.length = 0;
@@ -512,6 +514,11 @@ describe("Couchview app", () => {
         : repository;
 
       if (url.pathname === "/api/bootstrap") {
+        if (bootstrapFailureStatus !== null) {
+          return new Response("Cloudflare Access sign-in required", {
+            status: bootstrapFailureStatus,
+          });
+        }
         return Response.json({
           csrfToken: "csrf",
           repositories: catalog,
@@ -892,6 +899,43 @@ describe("Couchview app", () => {
     ).toBe(true);
     fireEvent.click(screen.getAllByRole("button", { name: "Previous file" })[0]!);
     await waitFor(() => expect(screen.getByText("src/first.ts")).toBeTruthy());
+  });
+
+  test("offers a network-only sign-in path when the secure session expires", async () => {
+    bootstrapFailureStatus = 401;
+    window.history.replaceState(null, "", "/?repo=repo-two");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Sign-in expired" });
+    expect(screen.getByText("Sign in again to continue using Couchview.")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Sign in again" }).getAttribute("href"),
+    ).toBe("/api/access/refresh?repo=repo-two");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reset offline app" })).toBeNull();
+  });
+
+  test("offers retry and offline reset for a real connection failure", async () => {
+    globalThis.fetch = (() =>
+      Promise.reject(new TypeError("offline"))) as unknown as typeof fetch;
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Couchview is unavailable" });
+    expect(screen.getByText("Could not reach Couchview.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reset offline app" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+  });
+
+  test("does not suggest an offline reset for a server response", async () => {
+    bootstrapFailureStatus = 503;
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Couldn’t open Couchview" });
+    expect(screen.getByText("Request failed (503)")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reset offline app" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
   });
 
   test("opens one persistent tmux terminal and preserves it across Review handoffs", async () => {
