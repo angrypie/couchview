@@ -228,6 +228,15 @@ test.describe("desktop tmux terminal", () => {
     await expect(debug).toHaveAttribute("aria-pressed", "true");
     const resumedOverlay = workspace.getByTestId("terminal-latency-overlay");
     const canvas = workspace.locator("canvas");
+
+    // Let the already-scheduled render-loop callback run, then park future frames.
+    // The echoed key must still paint and complete its latency sample synchronously.
+    await page.evaluate(() => {
+      let nextFrameId = 1_000_000;
+      window.requestAnimationFrame = () => nextFrameId++;
+    });
+    await page.waitForTimeout(50);
+
     const canvasHash = () => canvas.evaluate((element) => {
       const canvasElement = element as HTMLCanvasElement;
       const context = canvasElement.getContext("2d");

@@ -4,7 +4,7 @@ import type { BrowserTerminalWriteProfile } from "./ghosttyTerminal.ts";
 interface RendererOptions {
   container: HTMLElement;
   config: TerminalRendererConfig;
-  onData(data: Uint8Array<ArrayBuffer>): void;
+  onData(data: Uint8Array<ArrayBuffer>): boolean;
   onResize(cols: number, rows: number): void;
 }
 

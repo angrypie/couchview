@@ -1,6 +1,7 @@
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
+import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
 import { installTerminalFontShortcuts } from "./terminalFontShortcuts.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 import {
@@ -27,7 +28,7 @@ export interface BrowserTerminalWriteProfile {
 interface CreateBrowserTerminalOptions {
   container: HTMLElement;
   config: TerminalRendererConfig;
-  onData(data: Uint8Array<ArrayBuffer>): void;
+  onData(data: Uint8Array<ArrayBuffer>): boolean;
   onResize(cols: number, rows: number): void;
 }
 
@@ -89,6 +90,8 @@ export async function createBrowserTerminal(
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
   const terminalRenderer = terminal.renderer;
   const originalRender = terminalRenderer?.render;
+  const echoPaintController = new TerminalEchoPaintController();
+  let hostWriteDepth = 0;
   let pendingCanvasRenders: BrowserTerminalWriteProfile[] | null = null;
   let keySubscription: { dispose(): void } | null = null;
   const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
@@ -123,7 +126,15 @@ export async function createBrowserTerminal(
   };
   applyAdjustedMetrics();
   const dataSubscription = terminal.onData((data) => {
-    options.onData(encoder.encode(data));
+    const bytes = encoder.encode(data);
+    if (hostWriteDepth > 0) {
+      options.onData(bytes);
+      return;
+    }
+    const token = echoPaintController.beginInput();
+    if (!options.onData(bytes)) {
+      echoPaintController.rejectInput(token);
+    }
   });
   const resizeSubscription = terminal.onResize(({ cols, rows }) => {
     options.onResize(cols, rows);
@@ -152,8 +163,30 @@ export async function createBrowserTerminal(
         pendingCanvasRenders.push(profile);
       }
       try {
-        terminal.write(data);
+        hostWriteDepth += 1;
+        try {
+          terminal.write(data);
+        } finally {
+          hostWriteDepth -= 1;
+        }
         profile?.onWriteComplete();
+        echoPaintController.renderFirstOutput(() => {
+          const renderer = terminal.renderer;
+          const wasmTerm = terminal.wasmTerm;
+          if (!renderer || !wasmTerm) return;
+          // ghostty-web#179 ships this behavior on main, but 0.4.0 predates it.
+          // Keep this adapter local until the next upstream release is available.
+          const { scrollbarOpacity } = terminal as unknown as {
+            scrollbarOpacity: number;
+          };
+          renderer.render(
+            wasmTerm,
+            false,
+            terminal.viewportY,
+            terminal,
+            scrollbarOpacity,
+          );
+        });
       } catch (error) {
         if (pendingCanvasRenders && profile) {
           const profileIndex = pendingCanvasRenders.lastIndexOf(profile);
@@ -172,6 +205,7 @@ export async function createBrowserTerminal(
     dispose() {
       disposeFontShortcuts();
       disposeKeyRepeat();
+      echoPaintController.reset();
       dataSubscription.dispose();
       setLatencyKeyHandler(null);
       resizeSubscription.dispose();

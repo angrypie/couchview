@@ -183,8 +183,10 @@ export function TerminalWorkspace({
             latencyTrackerRef.current?.dataSent(window.performance.now());
           }
           socket.send(data);
+          return true;
         } else {
           latencyTrackerRef.current?.cancelPending();
+          return false;
         }
       },
       onResize(cols, rows) {
