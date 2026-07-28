@@ -2,8 +2,10 @@ import { type CSSProperties, useCallback, useEffect, useRef, useState } from "re
 import {
   AlertTriangle,
   ArrowLeft,
+  Bug,
   LoaderCircle,
   RotateCw,
+  ShieldCheck,
   SquareTerminal,
   Trash2,
 } from "lucide-react";
@@ -18,6 +20,15 @@ import {
   createBrowserTerminal,
   type BrowserTerminalRenderer,
 } from "./ghosttyTerminal.ts";
+import {
+  TerminalLatencyTracker,
+  terminalLatencyEnabled,
+  type TerminalLatencySummary,
+} from "./terminalLatency.ts";
+import {
+  SAFE_TERMINAL_RENDERER_CONFIG,
+  type TerminalRendererConfig,
+} from "./typographyPreferences.ts";
 
 type ConnectionState =
   | "loading"
@@ -33,6 +44,7 @@ interface TerminalWorkspaceProps {
   active: boolean;
   capability: TerminalCapability;
   csrfToken: string;
+  rendererConfig: TerminalRendererConfig;
   repositoryId: string;
   repositoryName: string;
   onBack(): void;
@@ -82,18 +94,24 @@ export function TerminalWorkspace({
   active,
   capability,
   csrfToken,
+  rendererConfig,
   repositoryId,
   repositoryName,
   onBack,
   onEnded,
   onNotice,
 }: TerminalWorkspaceProps) {
+  const [safeMode, setSafeMode] = useState(false);
   const [rendererReady, setRendererReady] = useState(false);
+  const [rendererGeneration, setRendererGeneration] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const [rendererRetryNonce, setRendererRetryNonce] = useState(0);
   const [ending, setEnding] = useState(false);
+  const debugAvailableRef = useRef(terminalLatencyEnabled(window.location.search));
+  const [latencyEnabled, setLatencyEnabled] = useState(debugAvailableRef.current);
+  const [latencySummary, setLatencySummary] = useState<TerminalLatencySummary | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BrowserTerminalRenderer | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -101,8 +119,21 @@ export function TerminalWorkspace({
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const expectedCloseRef = useRef(false);
+  const latencyEnabledRef = useRef(latencyEnabled);
+  latencyEnabledRef.current = latencyEnabled;
+  const latencyTrackerRef = useRef<TerminalLatencyTracker | null>(null);
+  if (latencyEnabled && !latencyTrackerRef.current) {
+    latencyTrackerRef.current = new TerminalLatencyTracker();
+  }
   const activeRef = useRef(active);
   activeRef.current = active;
+  const activeRendererConfig = safeMode
+    ? SAFE_TERMINAL_RENDERER_CONFIG
+    : rendererConfig;
+
+  useEffect(() => {
+    setSafeMode(false);
+  }, [rendererConfig]);
 
   const requestReconnect = useCallback((immediate = false) => {
     if (reconnectTimerRef.current !== null) {
@@ -124,14 +155,27 @@ export function TerminalWorkspace({
       return;
     }
     let disposed = false;
+    // A renderer configuration change disposes the current renderer and its
+    // socket below. Move readiness back through false so the replacement
+    // renderer can trigger a fresh terminal attachment when it becomes ready.
+    setRendererReady(false);
     setConnectionState("loading");
     setConnectionError(null);
+    latencyTrackerRef.current?.reset();
+    setLatencySummary(null);
     void createBrowserTerminal({
       container: containerRef.current,
-      config: capability.renderer,
+      config: activeRendererConfig,
       onData(data) {
         const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+        if (socket?.readyState === WebSocket.OPEN) {
+          if (latencyEnabledRef.current) {
+            latencyTrackerRef.current?.dataSent(window.performance.now());
+          }
+          socket.send(data);
+        } else {
+          latencyTrackerRef.current?.cancelPending();
+        }
       },
       onResize(cols, rows) {
         if (resizeTimerRef.current !== null) window.clearTimeout(resizeTimerRef.current);
@@ -150,6 +194,10 @@ export function TerminalWorkspace({
       }
       rendererRef.current = renderer;
       setRendererReady(true);
+      // Ghostty can reinitialize from its warm WASM cache before React commits
+      // rendererReady=false. A generation change always identifies a new
+      // renderer and therefore always replaces the tmux attachment.
+      setRendererGeneration((value) => value + 1);
     }).catch((error) => {
       if (disposed) return;
       setConnectionState("error");
@@ -162,10 +210,22 @@ export function TerminalWorkspace({
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
       socketRef.current?.close(1000, "workspace_unmounted");
       socketRef.current = null;
+      latencyTrackerRef.current?.cancelPending();
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
-  }, [capability.available, capability.reason, capability.renderer, rendererRetryNonce, repositoryId]);
+  }, [activeRendererConfig, capability.available, capability.reason, rendererRetryNonce, repositoryId]);
+
+  useEffect(() => {
+    const tracker = latencyTrackerRef.current;
+    tracker?.reset();
+    setLatencySummary(null);
+    rendererRef.current?.setLatencyKeyHandler(
+      latencyEnabled && tracker
+        ? (event) => tracker.keyEvent(event, window.performance.now())
+        : null,
+    );
+  }, [latencyEnabled, rendererGeneration]);
 
   useEffect(() => {
     if (!rendererReady || !capability.available) return;
@@ -174,6 +234,8 @@ export function TerminalWorkspace({
     expectedCloseRef.current = false;
     setConnectionState(reconnectAttemptRef.current > 0 ? "reconnecting" : "connecting");
     setConnectionError(null);
+    latencyTrackerRef.current?.reset();
+    setLatencySummary(null);
 
     const connect = async (takeover: boolean): Promise<void> => {
       const renderer = rendererRef.current;
@@ -200,7 +262,20 @@ export function TerminalWorkspace({
         socket.addEventListener("message", (event) => {
           if (disposed || socketRef.current !== socket) return;
           if (typeof event.data !== "string") {
-            renderer.write(new Uint8Array(event.data as ArrayBuffer));
+            const bytes = new Uint8Array(event.data as ArrayBuffer);
+            const tracker = latencyEnabledRef.current
+              ? latencyTrackerRef.current
+              : null;
+            const sampleId = tracker?.hostOutputReceived(window.performance.now()) ?? null;
+            if (sampleId === null || !tracker) {
+              renderer.write(bytes);
+            } else {
+              renderer.write(bytes, () => {
+                if (disposed || socketRef.current !== socket) return;
+                const summary = tracker.canvasRendered(sampleId, window.performance.now());
+                if (summary) setLatencySummary(summary);
+              });
+            }
             return;
           }
           try {
@@ -224,6 +299,7 @@ export function TerminalWorkspace({
         });
         socket.addEventListener("close", (event) => {
           if (socketRef.current === socket) socketRef.current = null;
+          latencyTrackerRef.current?.cancelPending();
           if (disposed) return;
           if (event.code === TERMINAL_ENDED_CLOSE_CODE) {
             expectedCloseRef.current = true;
@@ -239,6 +315,11 @@ export function TerminalWorkspace({
           if (event.code === 4001) {
             setConnectionState("taken-over");
             setConnectionError("Another browser tab took control of this tmux terminal.");
+            return;
+          }
+          if (event.code === 1008 && event.reason === "terminal_size_invalid") {
+            setConnectionState("error");
+            setConnectionError("Terminal dimensions are outside the supported range.");
             return;
           }
           reconnectAttemptRef.current += 1;
@@ -260,7 +341,10 @@ export function TerminalWorkspace({
         }
         const message = error instanceof Error ? error.message : "The terminal connection failed.";
         setConnectionError(message);
-        if (error instanceof ApiError && ["terminal_disabled", "terminal_unavailable"].includes(error.code)) {
+        if (
+          error instanceof ApiError &&
+          ["terminal_disabled", "terminal_unavailable", "terminal_size_invalid"].includes(error.code)
+        ) {
           setConnectionState("error");
           return;
         }
@@ -274,6 +358,7 @@ export function TerminalWorkspace({
     return () => {
       disposed = true;
       expectedCloseRef.current = true;
+      latencyTrackerRef.current?.cancelPending();
       socket?.close(1000, "connection_replaced");
       if (socketRef.current === socket) socketRef.current = null;
     };
@@ -281,6 +366,7 @@ export function TerminalWorkspace({
     capability.available,
     csrfToken,
     reconnectNonce,
+    rendererGeneration,
     rendererReady,
     repositoryId,
     requestReconnect,
@@ -293,7 +379,7 @@ export function TerminalWorkspace({
       rendererRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [active, rendererReady]);
+  }, [active, rendererGeneration, rendererReady]);
 
   const endSession = useCallback(async () => {
     if (!window.confirm(
@@ -314,6 +400,7 @@ export function TerminalWorkspace({
     }
     socketRef.current?.close(1000, "terminal_ended");
     socketRef.current = null;
+    latencyTrackerRef.current?.cancelPending();
     setConnectionState("ended");
     setConnectionError(null);
     setEnding(false);
@@ -332,6 +419,33 @@ export function TerminalWorkspace({
     requestReconnect(true);
   }, [rendererReady, requestReconnect]);
 
+  const enableSafeMode = useCallback(() => {
+    reconnectAttemptRef.current = 0;
+    expectedCloseRef.current = true;
+    if (resizeTimerRef.current !== null) {
+      window.clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    socketRef.current?.close(1000, "safe_mode");
+    socketRef.current = null;
+    latencyTrackerRef.current?.cancelPending();
+    setRendererReady(false);
+    setConnectionState("loading");
+    setConnectionError(null);
+    setSafeMode(true);
+  }, []);
+
+  const toggleLatencyProfiler = useCallback(() => {
+    if (!debugAvailableRef.current) return;
+    setLatencyEnabled((enabled) => !enabled);
+  }, []);
+
+  const connectionLabel = `${stateLabel(connectionState)}${safeMode ? " · Safe Mode" : ""}`;
+
   return (
     <section
       aria-hidden={!active}
@@ -339,7 +453,7 @@ export function TerminalWorkspace({
       className={`terminal-workspace ${active ? "active" : "hidden"}`}
       inert={!active}
       style={{
-        "--terminal-background": capability.renderer.theme.background,
+        "--terminal-background": activeRendererConfig.theme.background,
       } as CSSProperties}
     >
       <header className="terminal-toolbar">
@@ -349,20 +463,43 @@ export function TerminalWorkspace({
         <div className="terminal-heading">
           <SquareTerminal size={16} />
           <span>{repositoryName}</span>
-          <span className={`terminal-connection ${connectionState}`}>{stateLabel(connectionState)}</span>
+          <span className={`terminal-connection ${connectionState}`}>{connectionLabel}</span>
         </div>
-        <button
-          className="terminal-toolbar-button danger"
-          disabled={ending || connectionState === "ended"}
-          onClick={() => void endSession()}
-          type="button"
-        >
-          {ending ? <LoaderCircle className="spinner" size={15} /> : <Trash2 size={15} />}
-          End session
-        </button>
+        <div className="terminal-toolbar-actions">
+          {debugAvailableRef.current && (
+            <button
+              aria-pressed={latencyEnabled}
+              className={`terminal-toolbar-button${latencyEnabled ? " active" : ""}`}
+              onClick={toggleLatencyProfiler}
+              type="button"
+            >
+              <Bug size={15} /> Debug
+            </button>
+          )}
+          <button
+            className="terminal-toolbar-button danger"
+            disabled={ending || connectionState === "ended"}
+            onClick={() => void endSession()}
+            type="button"
+          >
+            {ending ? <LoaderCircle className="spinner" size={15} /> : <Trash2 size={15} />}
+            End session
+          </button>
+        </div>
       </header>
       <div className="terminal-stage">
         <div className="terminal-surface" ref={containerRef} />
+        {latencyEnabled && (
+          <div
+            aria-label="Terminal key-to-canvas latency"
+            className="terminal-latency-overlay"
+            data-testid="terminal-latency-overlay"
+          >
+            {latencySummary
+              ? `Key→canvas ${latencySummary.lastMs.toFixed(1)} ms · p50 ${latencySummary.p50Ms.toFixed(1)} · p95 ${latencySummary.p95Ms.toFixed(1)} · n=${latencySummary.sampleCount}`
+              : "Waiting for a clean echoed key…"}
+          </div>
+        )}
         {(!capability.available || connectionState !== "connected") && (
           <div className="terminal-overlay" role="status">
             {connectionState === "loading" || connectionState === "connecting" || connectionState === "reconnecting" ? (
@@ -370,15 +507,27 @@ export function TerminalWorkspace({
             ) : (
               <AlertTriangle size={24} />
             )}
-            <strong>{stateLabel(connectionState)}</strong>
+            <strong>{connectionLabel}</strong>
             {(connectionError || capability.reason) && (
               <span>{connectionError ?? capability.reason}</span>
             )}
             {["in-use", "taken-over", "ended", "error"].includes(connectionState) && capability.available && (
-              <button className="action-button secondary" onClick={retry} type="button">
-                <RotateCw size={15} />
-                {connectionState === "ended" ? "Start tmux" : "Reconnect"}
-              </button>
+              <div className="terminal-overlay-actions">
+                <button className="action-button secondary" onClick={retry} type="button">
+                  <RotateCw size={15} />
+                  {connectionState === "ended" ? "Start tmux" : "Reconnect"}
+                </button>
+                {connectionState === "error" && !safeMode && (
+                  <button
+                    className="action-button secondary"
+                    onClick={enableSafeMode}
+                    type="button"
+                  >
+                    <ShieldCheck size={15} />
+                    Safe Mode
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}

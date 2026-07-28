@@ -611,11 +611,23 @@ export async function createCouchviewApp(
       if (repositoryId && repositoryId.length <= 512) {
         location.searchParams.set("repo", repositoryId);
       }
+      location.searchParams.set("access_refresh", "1");
       return new Response(null, {
         status: 302,
         headers: {
           "Cache-Control": "no-store",
           Location: `${location.pathname}${location.search}`,
+        },
+      });
+    }
+    if (url.pathname === API_ROUTES.accessLogout && request.method === "GET") {
+      // Cloudflare handles this reserved path at the edge. The /api entry point
+      // prevents an installed service worker from serving the app shell first.
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "Cache-Control": "no-store",
+          Location: "/cdn-cgi/access/logout",
         },
       });
     }

@@ -3,7 +3,7 @@ interface OfflineAppStorageOptions {
   cacheStorage?: Pick<CacheStorage, "delete" | "keys"> | null;
 }
 
-export async function clearOfflineAppStorage(
+export async function clearPwaStorage(
   options: OfflineAppStorageOptions = {},
 ): Promise<void> {
   const serviceWorker = "serviceWorker" in options

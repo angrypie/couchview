@@ -26,7 +26,6 @@ export function usePwaUpdate() {
     }
   });
   const {
-    offlineReady: [offlineReady, setOfflineReady],
     needRefresh: [needRefresh, setNeedRefresh],
     updateServiceWorker,
   } = useRegisterSW({
@@ -59,9 +58,7 @@ export function usePwaUpdate() {
   };
 
   return {
-    offlineReady,
     needRefresh,
-    dismissOfflineReady: () => setOfflineReady(false),
     dismissRefresh: () => setNeedRefresh(false),
     update: () => void updateServiceWorker(true),
     canInstall: Boolean(installPrompt) && !standalone && !installDismissed,

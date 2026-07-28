@@ -193,4 +193,184 @@ test.describe("desktop tmux terminal", () => {
     expect((await state()).socketConnections).toBe(connectedState.socketConnections);
     expect((await state()).running).toBe(false);
   });
+
+  test("measures an isolated printable key through the echoed Ghostty canvas render", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
+    await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    const debug = workspace.getByRole("button", { name: "Debug" });
+    await expect(debug).toHaveAttribute("aria-pressed", "false");
+    await debug.click();
+    await expect(debug).toHaveAttribute("aria-pressed", "true");
+    await expect(page).toHaveURL(/(?:\?|&)terminalLatency=1(?:&|$)/);
+    const overlay = workspace.getByTestId("terminal-latency-overlay");
+    await expect(overlay).toHaveText("Waiting for a clean echoed key…");
+    const canvas = workspace.locator("canvas");
+    const canvasHash = () => canvas.evaluate((element) => {
+      const canvasElement = element as HTMLCanvasElement;
+      const context = canvasElement.getContext("2d");
+      if (!context) return -1;
+      const pixels = context.getImageData(
+        0,
+        0,
+        canvasElement.width,
+        canvasElement.height,
+      ).data;
+      let hash = 2_166_136_261;
+      for (let index = 0; index < pixels.length; index += 4) {
+        hash ^= pixels[index]!;
+        hash = Math.imul(hash, 16_777_619);
+      }
+      return hash >>> 0;
+    });
+
+    await workspace.locator(".terminal-surface").click();
+    await page.waitForTimeout(150);
+    const before = await canvasHash();
+    await page.keyboard.press("x");
+
+    await expect(overlay).toHaveText(
+      /^Key→canvas \d+\.\d ms · p50 \d+\.\d · p95 \d+\.\d · n=1$/,
+    );
+    expect(await canvasHash()).not.toBe(before);
+  });
+
+  test("uses system monospace without loading bundled Iosevka", async ({ page, request }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("couchview:typography:v1", JSON.stringify({
+        diff: {
+          fontFamily: "system",
+          fontSize: 11,
+          lineHeight: 1.55,
+          letterSpacing: 0,
+        },
+        terminal: {
+          fontFamily: "system",
+          fontSize: 15,
+          cellHeightAdjustment: 1,
+          cellWidthAdjustment: -5,
+        },
+      }));
+    });
+    const loadedAssets: string[] = [];
+    page.on("requestfinished", (networkRequest) => {
+      loadedAssets.push(new URL(networkRequest.url()).pathname);
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
+    await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect.poll(() => loadedAssets.some(
+      (pathname) => /\/assets\/ghostty-web-[^/]+\.js$/.test(pathname),
+    )).toBe(true);
+    await expect.poll(() => loadedAssets.some(
+      (pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname),
+    )).toBe(true);
+    expect(loadedAssets.some((pathname) => /\/assets\/Iosevka-[^/]+\.woff2$/.test(pathname)))
+      .toBe(false);
+
+    const state = (await (
+      await request.get("/api/e2e/terminal")
+    ).json()) as TerminalFixtureState;
+    expect(state.attachmentCount).toBe(1);
+    expect(state.socketConnections).toBe(1);
+  });
+
+  test("does not restart Ghostty while terminal typography is edited and applies once", async ({ page, request }) => {
+    const state = async () => (await (
+      await request.get("/api/e2e/terminal")
+    ).json()) as TerminalFixtureState;
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
+    await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await workspace.getByRole("button", { name: "Review" }).click();
+    await page.getByRole("button", { name: "Open settings" }).click();
+
+    const terminalSettings = page.locator(".settings-card").filter({
+      has: page.getByRole("heading", { name: "Terminal" }),
+    });
+    const fontSize = terminalSettings.getByLabel("Font size");
+    await fontSize.fill("16");
+    await fontSize.fill("17");
+    await fontSize.fill("18");
+    await expect(terminalSettings.getByText(
+      "Previewing unapplied changes. The running terminal is unchanged.",
+    )).toBeVisible();
+    expect((await state()).attachmentCount).toBe(1);
+    expect((await state()).socketConnections).toBe(1);
+
+    const applyTerminal = terminalSettings.getByRole("button", {
+      name: "Apply terminal changes",
+    });
+    await expect(applyTerminal).toBeEnabled();
+    await applyTerminal.click();
+    await expect(applyTerminal).toBeDisabled();
+    await expect.poll(async () => (await state()).attachmentCount).toBe(2);
+    await expect.poll(async () => (await state()).socketConnections).toBe(2);
+    await page.getByRole("region", { name: "Settings" })
+      .getByRole("button", { name: "Review" })
+      .click();
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(workspace.getByText("Loading terminal", { exact: true })).toHaveCount(0);
+    expect((await state()).attachmentCount).toBe(2);
+    expect((await state()).socketConnections).toBe(2);
+  });
+
+  test("retries with bundled renderer defaults in Safe Mode", async ({ page, request }) => {
+    let rejectedHostConfig = false;
+    await page.route("**/api/repositories/*/terminal/attachments", async (route) => {
+      if (rejectedHostConfig) {
+        await route.fallback();
+        return;
+      }
+      rejectedHostConfig = true;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "terminal_size_invalid",
+            message: "Terminal dimensions are outside the supported range",
+          },
+        }),
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
+    await expect(workspace.getByText(
+      "Terminal dimensions are outside the supported range",
+    )).toBeVisible();
+    await workspace.getByRole("button", { name: "Safe Mode" }).click();
+    await expect(workspace.getByText("Connected · Safe Mode", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(workspace.getByRole("button", { name: "Safe Mode" })).toHaveCount(0);
+
+    const state = (await (
+      await request.get("/api/e2e/terminal")
+    ).json()) as TerminalFixtureState;
+    expect(state.attachmentCount).toBe(1);
+    expect(state.socketConnections).toBe(1);
+  });
 });

@@ -82,6 +82,10 @@ async function request<T>(
       credentials: "same-origin",
       ...init,
       headers,
+      // A missing Cloudflare Access cookie can produce a cross-origin login
+      // redirect instead of the documented AJAX 401. Keeping the redirect
+      // opaque lets the app identify it without attempting a blocked CORS load.
+      redirect: "manual",
     });
   } catch {
     if (init?.signal?.aborted) {
@@ -94,7 +98,7 @@ async function request<T>(
     );
   }
 
-  if (response.status === 401) {
+  if (response.status === 401 || response.type === "opaqueredirect") {
     throw new ApiError(
       "Your secure sign-in session has expired.",
       401,

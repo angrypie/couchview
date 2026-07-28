@@ -5,6 +5,7 @@ const repositoryFilesApiPath = (repositoryId: string) =>
 
 export const API_ROUTES = {
   bootstrap: "/api/bootstrap",
+  accessLogout: "/api/access/logout",
   accessRefresh: "/api/access/refresh",
   instance: "/api/instance",
   restart: "/api/restart",
@@ -176,31 +177,11 @@ export interface TerminalProfileSummary {
   reason: string | null;
 }
 
-export interface TerminalRendererTheme {
-  background: string;
-  foreground: string;
-  cursor: string;
-  selectionBackground: string;
-  selectionForeground: string;
-  palette: string[];
-}
-
-export interface TerminalRendererConfig {
-  fontFamily: string;
-  fontSize: number;
-  cellHeightAdjustment?: number;
-  cellWidthAdjustment?: number;
-  cursorStyle: "block" | "underline" | "bar";
-  cursorBlink: boolean;
-  theme: TerminalRendererTheme;
-}
-
 export interface TerminalCapability {
   available: boolean;
   reason: string | null;
   persistence: "tmux";
   profiles: TerminalProfileSummary[];
-  renderer: TerminalRendererConfig;
 }
 
 export interface TerminalSessionStatus {

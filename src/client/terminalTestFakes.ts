@@ -1,4 +1,4 @@
-import type { TerminalRendererConfig } from "../shared/contracts.ts";
+import type { TerminalRendererConfig } from "./typographyPreferences.ts";
 
 interface RendererOptions {
   container: HTMLElement;
@@ -9,26 +9,33 @@ interface RendererOptions {
 
 export const rendererState = {
   calls: 0,
+  configs: [] as TerminalRendererConfig[],
   disposed: 0,
   failure: null as Error | null,
   fits: 0,
   focuses: 0,
+  latencyKeyHandler: null as ((event: KeyboardEvent) => void) | null,
   options: null as RendererOptions | null,
+  pendingCanvasRenders: [] as Array<() => void>,
   writes: [] as Uint8Array[],
 };
 
 export function resetRendererState(): void {
   rendererState.calls = 0;
+  rendererState.configs.length = 0;
   rendererState.disposed = 0;
   rendererState.failure = null;
   rendererState.fits = 0;
   rendererState.focuses = 0;
+  rendererState.latencyKeyHandler = null;
   rendererState.options = null;
+  rendererState.pendingCanvasRenders.length = 0;
   rendererState.writes.length = 0;
 }
 
 export async function terminalRendererFactory(options: RendererOptions) {
   rendererState.calls += 1;
+  rendererState.configs.push(options.config);
   const failure = rendererState.failure;
   rendererState.failure = null;
   if (failure) throw failure;
@@ -45,13 +52,18 @@ export async function terminalRendererFactory(options: RendererOptions) {
     focus() {
       rendererState.focuses += 1;
     },
-    write(data: Uint8Array<ArrayBuffer>) {
+    setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null) {
+      rendererState.latencyKeyHandler = handler;
+      if (!handler) rendererState.pendingCanvasRenders.length = 0;
+    },
+    write(data: Uint8Array<ArrayBuffer>, onCanvasRender?: () => void) {
       rendererState.writes.push(data);
+      if (onCanvasRender) rendererState.pendingCanvasRenders.push(onCanvasRender);
     },
   };
 }
 
-type Listener = (event: { data?: unknown; code?: number }) => void;
+type Listener = (event: { data?: unknown; code?: number; reason?: string }) => void;
 
 export class FakeTerminalWebSocket {
   static readonly CONNECTING = 0;
@@ -95,9 +107,9 @@ export class FakeTerminalWebSocket {
     for (const listener of this.listeners.get("message") ?? []) listener({ data });
   }
 
-  emitClose(code: number) {
+  emitClose(code: number, reason = "") {
     this.readyState = FakeTerminalWebSocket.CLOSED;
-    for (const listener of this.listeners.get("close") ?? []) listener({ code });
+    for (const listener of this.listeners.get("close") ?? []) listener({ code, reason });
   }
 }
 

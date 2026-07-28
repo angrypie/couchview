@@ -6,7 +6,6 @@ import type {
   PackageRunSummary,
   ReviewComment,
 } from "../shared/contracts.ts";
-import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import {
   FakeTerminalWebSocket,
   rendererState,
@@ -14,10 +13,13 @@ import {
   resetRendererState,
   terminalRendererFactory,
 } from "./terminalTestFakes.ts";
+import {
+  TYPOGRAPHY_STORAGE_KEY,
+  type TypographyPreferences,
+} from "./typographyPreferences.ts";
 
 mock.module("virtual:pwa-register/react", () => ({
   useRegisterSW: () => ({
-    offlineReady: [false, () => undefined],
     needRefresh: [false, () => undefined],
     updateServiceWorker: async () => undefined,
   }),
@@ -40,6 +42,10 @@ let viewerVisibleLineChange:
 interface MockDiffViewerProps {
   comments: readonly ReviewComment[];
   diff: FileDiff;
+  fontFamily: string;
+  fontSize: number;
+  letterSpacing: number;
+  lineHeight: number;
   lineNumbersVisible: boolean;
   lineWrapEnabled: boolean;
   onCommentClick(comment: ReviewComment): void;
@@ -52,6 +58,10 @@ mock.module("./DiffViewer.tsx", () => ({
     {
       comments,
       diff,
+      fontFamily,
+      fontSize,
+      letterSpacing,
+      lineHeight,
       lineNumbersVisible,
       lineWrapEnabled,
       onCommentClick,
@@ -77,6 +87,12 @@ mock.module("./DiffViewer.tsx", () => ({
         className="pierre-code-view"
         data-line-wrap={String(lineWrapEnabled)}
         data-testid="pierre-code-view"
+        style={{
+          fontFamily,
+          fontSize: `${fontSize}px`,
+          letterSpacing: `${letterSpacing}px`,
+          lineHeight: `${fontSize * lineHeight}px`,
+        }}
       >
         {diff.hunks.flatMap((hunk) =>
           hunk.lines.map((line) => (
@@ -544,7 +560,6 @@ describe("Couchview app", () => {
               available: terminalAvailable,
               reason: terminalAvailable ? null : "tmux is unavailable in this test.",
             }],
-            renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
           },
         });
       }
@@ -890,7 +905,10 @@ describe("Couchview app", () => {
     expect(screen.getByText("11px")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
     expect(screen.getByText("12px")).toBeTruthy();
-    expect(localStorage.getItem("couchview:font-size")).toBe("12");
+    expect(
+      (JSON.parse(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!) as TypographyPreferences)
+        .diff.fontSize,
+    ).toBe(12);
 
     fireEvent.click(screen.getByRole("button", { name: /Review \+ next/ }));
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
@@ -912,10 +930,34 @@ describe("Couchview app", () => {
       screen.getByRole("link", { name: "Sign in again" }).getAttribute("href"),
     ).toBe("/api/access/refresh?repo=repo-two");
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Reset offline app" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
   });
 
-  test("offers retry and offline reset for a real connection failure", async () => {
+  test("stops a completed Access sign-in from silently looping", async () => {
+    bootstrapFailureStatus = 401;
+    window.history.replaceState(
+      null,
+      "",
+      "/?repo=repo-two&access_refresh=1",
+    );
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Sign-in didn’t complete" });
+    expect(
+      screen.getByText(
+        "Cloudflare returned to Couchview, but this browser still does not have a usable Access session.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Reset Cloudflare sign-in" }).getAttribute("href"),
+    ).toBe("/api/access/logout");
+    expect(
+      screen.getByRole("link", { name: "Try sign-in again" }).getAttribute("href"),
+    ).toBe("/api/access/refresh?repo=repo-two");
+    expect(window.location.search).toBe("?repo=repo-two");
+  });
+
+  test("offers sign-in, retry, and app-cache recovery for a connection failure", async () => {
     globalThis.fetch = (() =>
       Promise.reject(new TypeError("offline"))) as unknown as typeof fetch;
     render(<App />);
@@ -923,22 +965,24 @@ describe("Couchview app", () => {
     await screen.findByRole("heading", { name: "Couchview is unavailable" });
     expect(screen.getByText("Could not reach Couchview.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Reset offline app" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reset app cache" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Sign in again" }).getAttribute("href"),
+    ).toBe("/api/access/refresh");
   });
 
-  test("does not suggest an offline reset for a server response", async () => {
+  test("does not suggest authentication or cache recovery for a server response", async () => {
     bootstrapFailureStatus = 503;
     render(<App />);
 
     await screen.findByRole("heading", { name: "Couldn’t open Couchview" });
     expect(screen.getByText("Request failed (503)")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Reset offline app" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
   });
 
-  test("opens one persistent tmux terminal and preserves it across Review handoffs", async () => {
+  test("preserves tmux across Review and applies terminal settings only once", async () => {
     terminalAvailable = true;
     render(<App />);
 
@@ -976,11 +1020,173 @@ describe("Couchview app", () => {
     expect(FakeTerminalWebSocket.instances).toHaveLength(1);
     expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
 
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const settings = screen.getByRole("region", { name: "Settings" });
+    const diffCard = within(settings)
+      .getByRole("heading", { name: "Diff view" })
+      .closest("section")!;
+    const terminalCard = within(settings)
+      .getByRole("heading", { name: "Terminal" })
+      .closest("section")!;
+    fireEvent.change(within(diffCard).getByLabelText("Line height"), {
+      target: { value: "1.8" },
+    });
+    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+      target: { value: "16" },
+    });
+    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+      target: { value: "17" },
+    });
+    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+      target: { value: "18" },
+    });
+    await waitFor(() => expect(rendererState.calls).toBe(1));
+    expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
+    const applyTerminal = within(terminalCard).getByRole("button", {
+      name: "Apply terminal changes",
+    }) as HTMLButtonElement;
+    expect(applyTerminal.disabled).toBe(false);
+
+    fireEvent.click(applyTerminal);
+    await waitFor(() => expect(rendererState.calls).toBe(2));
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(2));
+    expect(applyTerminal.disabled).toBe(true);
+
+    fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
-    expect(rendererState.calls).toBe(1);
+    expect(rendererState.calls).toBe(2);
     expect(
       screen.getByRole("region", { name: "tmux terminal" }).getAttribute("aria-hidden"),
     ).toBe("false");
+  });
+
+  test("opens Settings directly from its own route", async () => {
+    window.history.replaceState(null, "", "/settings?repo=repo");
+    render(<App />);
+
+    const settings = screen.getByRole("region", { name: "Settings" });
+    expect(window.location.pathname).toBe("/settings");
+    expect(within(settings).getByRole("heading", { name: "Typography" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Unified diff" })).toBeNull();
+
+    fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
+    await screen.findByText("src/first.ts");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  test("persists independent diff and terminal typography from Settings", async () => {
+    terminalAvailable = true;
+    render(<App />);
+    await screen.findByText("src/first.ts");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const settings = screen.getByRole("region", { name: "Settings" });
+    expect(window.location.pathname).toBe("/settings");
+    const diffCard = within(settings)
+      .getByRole("heading", { name: "Diff view" })
+      .closest("section")!;
+    const terminalCard = within(settings)
+      .getByRole("heading", { name: "Terminal" })
+      .closest("section")!;
+    expect(within(diffCard).getByTestId("diff-column-ruler").textContent).toContain("80");
+    expect(within(terminalCard).getByTestId("terminal-column-ruler").textContent)
+      .toContain("80");
+    expect(within(terminalCard).getByLabelText("lualine preview").textContent)
+      .toContain("NORMAL");
+    expect(within(terminalCard).getByLabelText("lualine preview").textContent)
+      .toContain("");
+    expect(within(terminalCard).getByLabelText("tmux status preview").textContent)
+      .toContain("nvim *");
+    expect(within(terminalCard).getByLabelText("Cell width adjustment").getAttribute("min"))
+      .toBe("-5");
+    expect(within(terminalCard).getByLabelText("Cell width adjustment").getAttribute("max"))
+      .toBe("5");
+
+    fireEvent.click(within(diffCard).getByRole("button", { name: /^System monospace/ }));
+    fireEvent.change(within(diffCard).getByLabelText("Font size"), {
+      target: { value: "14" },
+    });
+    fireEvent.change(within(diffCard).getByLabelText("Line height"), {
+      target: { value: "1.8" },
+    });
+    fireEvent.change(within(diffCard).getByLabelText("Letter spacing"), {
+      target: { value: "0.4" },
+    });
+
+    fireEvent.click(within(terminalCard).getByRole("button", { name: /^System monospace/ }));
+    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+      target: { value: "18" },
+    });
+    fireEvent.change(within(terminalCard).getByLabelText("Cell height adjustment"), {
+      target: { value: "4" },
+    });
+    fireEvent.change(within(terminalCard).getByLabelText("Cell width adjustment"), {
+      target: { value: "-5" },
+    });
+
+    expect(within(diffCard).getByTestId("diff-typography-preview").style.fontFamily)
+      .toStartWith("ui-monospace");
+    expect(within(terminalCard).getByTestId("terminal-typography-preview").style.fontFamily)
+      .toStartWith("ui-monospace");
+    expect(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)).toBeNull();
+    const defaultTerminal = {
+      fontFamily: "iosevka",
+      fontSize: 15,
+      cellHeightAdjustment: 1,
+      cellWidthAdjustment: -1,
+    } as const;
+    const applyDiff = within(diffCard).getByRole("button", {
+      name: "Apply diff changes",
+    }) as HTMLButtonElement;
+    expect(applyDiff.disabled).toBe(false);
+    expect(applyDiff.closest("header")?.classList.contains("settings-card-header"))
+      .toBe(true);
+    expect(within(diffCard).getByText(/review is unchanged/)).toBeTruthy();
+
+    fireEvent.click(applyDiff);
+    expect(applyDiff.disabled).toBe(true);
+    const diffApplied = JSON.parse(
+      localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!,
+    ) as TypographyPreferences;
+    expect(diffApplied.diff).toEqual({
+      fontFamily: "system",
+      fontSize: 14,
+      lineHeight: 1.8,
+      letterSpacing: 0.4,
+    });
+    expect(diffApplied.terminal).toEqual(defaultTerminal);
+
+    const applyTerminal = within(terminalCard).getByRole("button", {
+      name: "Apply terminal changes",
+    }) as HTMLButtonElement;
+    expect(applyTerminal.disabled).toBe(false);
+    expect(applyTerminal.closest("header")?.classList.contains("settings-card-header"))
+      .toBe(true);
+    expect(within(terminalCard).getByText(/running terminal is unchanged/)).toBeTruthy();
+
+    fireEvent.click(applyTerminal);
+    expect(applyTerminal.disabled).toBe(true);
+    const stored = JSON.parse(
+      localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!,
+    ) as TypographyPreferences;
+    expect(stored.terminal).toEqual({
+      fontFamily: "system",
+      fontSize: 18,
+      cellHeightAdjustment: 4,
+      cellWidthAdjustment: -5,
+    });
+
+    fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
+    expect(window.location.pathname).toBe("/");
+    const viewer = screen.getByTestId("pierre-code-view");
+    expect(viewer.style.fontFamily).toStartWith("ui-monospace");
+    expect(viewer.style.fontSize).toBe("14px");
+    expect(viewer.style.lineHeight).toBe("25.2px");
+    expect(viewer.style.letterSpacing).toBe("0.4px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
+    await waitFor(() => expect(rendererState.calls).toBe(1));
+    expect(rendererState.options?.config).toMatchObject(stored.terminal);
   });
 
   test("migrates pre-rename display preferences", async () => {
@@ -994,7 +1200,10 @@ describe("Couchview app", () => {
     expect(screen.getByText("13px")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Hide line numbers" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
-    expect(localStorage.getItem("couchview:font-size")).toBe("13");
+    expect(
+      (JSON.parse(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!) as TypographyPreferences)
+        .diff.fontSize,
+    ).toBe(13);
     expect(localStorage.getItem("couchview:line-numbers")).toBe("true");
     expect(localStorage.getItem("couchview:line-wrap")).toBe("true");
   });

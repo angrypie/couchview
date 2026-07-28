@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
@@ -15,16 +15,30 @@ async function openFixture(page: Page) {
 }
 
 async function dismissPwaNotices(page: Page) {
-  // The first production visit can announce offline readiness (and iOS can
-  // simultaneously show its install hint). Clear those persistent notices so
-  // they do not intentionally sit above the bottom sheets exercised below.
-  await page.getByText("App shell is ready offline.").waitFor({ state: "visible", timeout: 2_500 }).catch(() => undefined);
+  // Clear persistent install/update notices so they do not intentionally sit
+  // above the bottom sheets exercised below.
   for (const name of ["Dismiss", "Not now", "Later"]) {
     const buttons = await page.getByRole("button", { name, exact: true }).all();
     for (const button of buttons) {
       if (await button.isVisible()) await button.click();
     }
   }
+}
+
+async function setRangeValue(
+  control: Locator,
+  value: number,
+) {
+  await control.evaluate((element, nextValue) => {
+    const input = element as HTMLInputElement;
+    const valueSetter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    valueSetter?.call(input, String(nextValue));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
 }
 
 test.describe("mobile fixture review", () => {
@@ -75,6 +89,109 @@ test.describe("mobile fixture review", () => {
     await expect
       .poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1))
       .toBe(1);
+  });
+
+  test("persists independent diff and terminal typography settings", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "Typography settings need one mobile browser persistence pass.",
+    );
+    await openFixture(page);
+    await page.getByRole("button", { name: "Open settings" }).click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/settings");
+
+    await page.goBack();
+    await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+    await page.goForward();
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/settings");
+
+    const settings = page.getByRole("region", { name: "Settings" });
+    const diffCard = settings.getByRole("region", { name: "Diff view", exact: true });
+    const terminalCard = settings.getByRole("region", { name: "Terminal", exact: true });
+    await expect(settings.getByRole("heading", { name: "Typography" })).toBeVisible();
+    await expect(diffCard.getByTestId("diff-column-ruler")).toContainText("80");
+    await expect(terminalCard.getByTestId("terminal-column-ruler")).toContainText("80");
+    await expect(terminalCard.getByLabel("lualine preview")).toContainText("NORMAL");
+    await expect(terminalCard.getByLabel("lualine preview")).toContainText("");
+    await expect(terminalCard.getByLabel("tmux status preview")).toContainText("nvim *");
+    await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("min", "-5");
+    await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
+    await diffCard.getByRole("button", { name: /^System monospace/ }).click();
+    await setRangeValue(diffCard.getByLabel("Font size"), 14);
+    await setRangeValue(diffCard.getByLabel("Line height"), 1.8);
+    await setRangeValue(diffCard.getByLabel("Letter spacing"), 0.4);
+    const applyDiff = diffCard.getByRole("button", {
+      name: "Apply diff changes",
+    });
+    await expect(applyDiff).toBeEnabled();
+    await expect(diffCard.getByText(/review is unchanged/)).toBeVisible();
+    expect(await applyDiff.evaluate((button) => (
+      button.closest("header")?.classList.contains("settings-card-header") ?? false
+    ))).toBe(true);
+    await applyDiff.click();
+    await expect(applyDiff).toBeDisabled();
+    await expect(
+      terminalCard.getByRole("button", { name: /^Iosevka/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    await terminalCard.getByRole("button", { name: /^System monospace/ }).click();
+    await setRangeValue(terminalCard.getByLabel("Font size"), 18);
+    await setRangeValue(terminalCard.getByLabel("Cell height adjustment"), 4);
+    await setRangeValue(terminalCard.getByLabel("Cell width adjustment"), -5);
+    const applyTerminal = terminalCard.getByRole("button", {
+      name: "Apply terminal changes",
+    });
+    await expect(applyTerminal).toBeEnabled();
+    await expect(terminalCard.getByText(/running terminal is unchanged/)).toBeVisible();
+    expect(await applyTerminal.evaluate((button) => (
+      button.closest("header")?.classList.contains("settings-card-header") ?? false
+    ))).toBe(true);
+    await applyTerminal.click();
+    await expect(applyTerminal).toBeDisabled();
+    await settings.getByRole("button", { name: "Review" }).click();
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+
+    const renderedFont = await page.locator("diffs-container").first().evaluate((host) => {
+      const line = host.shadowRoot?.querySelector<HTMLElement>("[data-line]");
+      if (!line) return null;
+      const style = getComputedStyle(line);
+      return {
+        family: style.fontFamily,
+        fontSize: style.fontSize,
+        letterSpacing: style.letterSpacing,
+        lineHeight: Math.round(Number.parseFloat(style.lineHeight) * 10) / 10,
+      };
+    });
+    expect(renderedFont).toEqual({
+      family: expect.not.stringContaining("Iosevka"),
+      fontSize: "14px",
+      letterSpacing: "0.4px",
+      lineHeight: 25.2,
+    });
+
+    await page.reload();
+    await page.getByRole("button", { name: "Open settings" }).click();
+    const reloadedSettings = page.getByRole("region", { name: "Settings" });
+    const reloadedDiff = reloadedSettings.getByRole("region", {
+      name: "Diff view",
+      exact: true,
+    });
+    const reloadedTerminal = reloadedSettings.getByRole("region", {
+      name: "Terminal",
+      exact: true,
+    });
+    await expect(reloadedDiff.getByRole("button", { name: /^System monospace/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect(reloadedDiff.getByLabel("Font size")).toHaveValue("14");
+    await expect(reloadedDiff.getByLabel("Line height")).toHaveValue("1.8");
+    await expect(reloadedDiff.getByLabel("Letter spacing")).toHaveValue("0.4");
+    await expect(reloadedTerminal.getByRole("button", { name: /^System monospace/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await expect(reloadedTerminal.getByLabel("Font size")).toHaveValue("18");
+    await expect(reloadedTerminal.getByLabel("Cell height adjustment")).toHaveValue("4");
+    await expect(reloadedTerminal.getByLabel("Cell width adjustment")).toHaveValue("-5");
   });
 
   test("keeps review actions at the screen bottom across orientation changes", async ({
@@ -214,8 +331,8 @@ test.describe("mobile fixture review", () => {
     await expect(page.getByRole("button", { name: "Hide line numbers" })).toBeVisible();
 
     const increaseFont = page.getByRole("button", { name: "Increase diff font size" });
-    for (let size = 12; size <= 16; size += 1) await increaseFont.click();
-    await expect(fontValue).toHaveText("16px");
+    for (let size = 12; size <= 24; size += 1) await increaseFont.click();
+    await expect(fontValue).toHaveText("24px");
     await expect(increaseFont).toBeDisabled();
     await expect
       .poll(() =>
@@ -223,7 +340,7 @@ test.describe("mobile fixture review", () => {
           getComputedStyle(document.documentElement).getPropertyValue("--code-size").trim(),
         ),
       )
-      .toBe("16px");
+      .toBe("24px");
 
     const scroller = page.locator("diffs-container [data-code]").first();
     await expect
@@ -611,7 +728,7 @@ test.describe("mobile fixture review", () => {
     await expect
       .poll(() => topBar.evaluate((element) => element.getBoundingClientRect().height))
       .toBeLessThanOrEqual(42);
-    await expect(actions).toHaveCSS("position", "fixed");
+    await expect(actions).toHaveCSS("position", "absolute");
     await expect
       .poll(() => actions.evaluate((element) => element.getBoundingClientRect().width))
       .toBeLessThan(360);
@@ -657,12 +774,63 @@ test.describe("production PWA", () => {
       "/api/access/refresh?repo=fixture-repository-two",
     );
     await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Reset offline app" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reset app cache" })).toHaveCount(0);
     expect(requestedWith).toBe("XMLHttpRequest");
   });
 
-  test("has a valid manifest, an uncached live API, a disconnected shell, and update/install affordances", async ({
-    browserName,
+  test("recognizes a missing Access cookie from its opaque login redirect", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The missing-cookie regression targets Safari's cross-origin redirect behavior.",
+    );
+    await page.route("**/api/bootstrap", async (route) => {
+      await route.continue({
+        headers: {
+          ...route.request().headers(),
+          "x-e2e-cloudflare-access-redirect": "1",
+        },
+      });
+    });
+
+    await page.goto("/?repo=fixture-repository-two");
+    await expect(page.getByRole("heading", { name: "Sign-in expired" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/api/access/refresh?repo=fixture-repository-two",
+    );
+  });
+
+  test("stops an unsuccessful Access refresh from bouncing silently", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The Access recovery regression only needs one service-worker-capable browser.",
+    );
+    await page.route("**/api/bootstrap", async (route) => {
+      await route.fulfill({
+        body: "Cloudflare Access sign-in required",
+        contentType: "text/html",
+        status: 401,
+      });
+    });
+
+    await page.goto("/?repo=fixture-repository-two&access_refresh=1");
+    await expect(page.getByRole("heading", { name: "Sign-in didn’t complete" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Reset Cloudflare sign-in" })).toHaveAttribute(
+      "href",
+      "/api/access/logout",
+    );
+    await expect(page.getByRole("link", { name: "Try sign-in again" })).toHaveAttribute(
+      "href",
+      "/api/access/refresh?repo=fixture-repository-two",
+    );
+    await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+  });
+
+  test("keeps documents and APIs network-only while preserving install and update affordances", async ({
     context,
     page,
   }) => {
@@ -724,7 +892,7 @@ test.describe("production PWA", () => {
     });
     expect(cacheUrls.some((url) => new URL(url).pathname.startsWith("/api/"))).toBe(false);
     const cachePaths = cacheUrls.map((url) => new URL(url).pathname);
-    expect(cachePaths).toContain("/index.html");
+    expect(cachePaths).not.toContain("/index.html");
     expect(cachePaths.some((pathname) => /\/assets\/index-[^/]+\.js$/.test(pathname))).toBe(
       true,
     );
@@ -808,19 +976,19 @@ test.describe("production PWA", () => {
         }
       });
       expect(apiOffline).toBe(true);
-      if (browserName === "webkit") {
-        // WebKit's Playwright transport currently reports an internal error
-        // for an offline service-worker navigation. The already-loaded shell
-        // must still remain rendered while an API request fails offline.
-        await expect(page.getByRole("region", { name: "Current file" })).toBeVisible();
-      } else {
-        await page.reload({ waitUntil: "domcontentloaded" });
-        await expect(page).toHaveTitle("Couchview");
-        await expect(page.getByRole("heading", { name: "Couchview is unavailable" })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Reset offline app" })).toBeVisible();
-      }
+      // An already-loaded app stays mounted, but a new document navigation
+      // must reach the network instead of receiving a cached app shell.
+      await expect(page.getByRole("region", { name: "Current file" })).toBeVisible();
+      const loadedOfflineDocument = await page
+        .goto(`/?offline-check=${Date.now()}`, {
+          timeout: 10_000,
+          waitUntil: "domcontentloaded",
+        })
+        .then(() => true, () => false);
+      expect(loadedOfflineDocument).toBe(false);
     } finally {
       await context.setOffline(false);
+      await page.goto("/");
     }
   });
 });

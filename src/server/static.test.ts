@@ -77,6 +77,11 @@ describe("production static serving", () => {
     expect(shell.headers.get("x-frame-options")).toBe("DENY");
     expect(shell.headers.has("access-control-allow-origin")).toBe(false);
 
+    const settings = await app.fetch(localRequest("/settings?repo=fixture"));
+    expect(settings.status).toBe(200);
+    expect(await settings.text()).toContain("Disconnected shell");
+    expect(settings.headers.get("cache-control")).toBe("no-cache");
+
     const asset = await app.fetch(localRequest("/assets/app-12345678.js"));
     expect(asset.status).toBe(200);
     expect(asset.headers.get("cache-control")).toBe(

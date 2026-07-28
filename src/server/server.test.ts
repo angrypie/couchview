@@ -22,7 +22,6 @@ import {
   type StageFileResponse,
   type StageFilesResponse,
 } from "../shared/contracts.ts";
-import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import {
@@ -148,7 +147,6 @@ describe("Couchview HTTP security and routes", () => {
         reason: null,
         persistence: "tmux",
         profiles: [{ id: "tmux", label: "tmux", available: true, reason: null }],
-        renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
       },
       websocket: {},
       async status() {
@@ -631,14 +629,19 @@ describe("Couchview HTTP security and routes", () => {
     );
     expect(refresh.status).toBe(302);
     expect(refresh.headers.get("location")).toBe(
-      `/?repo=${encodeURIComponent(app.repository.id)}`,
+      `/?repo=${encodeURIComponent(app.repository.id)}&access_refresh=1`,
     );
     expect(refresh.headers.get("cache-control")).toBe("no-store");
     expect(refresh.headers.get("content-security-policy")).toContain("default-src 'self'");
 
     const defaultRefresh = await app.fetch(request(API_ROUTES.accessRefresh));
     expect(defaultRefresh.status).toBe(302);
-    expect(defaultRefresh.headers.get("location")).toBe("/");
+    expect(defaultRefresh.headers.get("location")).toBe("/?access_refresh=1");
+
+    const logout = await app.fetch(request(API_ROUTES.accessLogout));
+    expect(logout.status).toBe(302);
+    expect(logout.headers.get("location")).toBe("/cdn-cgi/access/logout");
+    expect(logout.headers.get("cache-control")).toBe("no-store");
   });
 
   test("generates a protected staged-only commit message and rejects stale output", async () => {

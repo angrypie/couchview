@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
-import { clearOfflineAppStorage } from "./offlineApp.ts";
+import { clearPwaStorage } from "./offlineApp.ts";
 
-describe("offline app recovery", () => {
+describe("PWA cache recovery", () => {
   test("unregisters the service worker and deletes every origin cache", async () => {
     let unregistered = false;
     const deleted: string[] = [];
 
-    await clearOfflineAppStorage({
+    await clearPwaStorage({
       serviceWorker: {
         async getRegistration() {
           return {
@@ -34,7 +34,7 @@ describe("offline app recovery", () => {
   });
 
   test("surfaces cache deletion failures to the recovery screen", async () => {
-    await expect(clearOfflineAppStorage({
+    await expect(clearPwaStorage({
       serviceWorker: null,
       cacheStorage: {
         async keys() {

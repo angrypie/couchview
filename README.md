@@ -75,18 +75,20 @@ browser terminal. Review hides the mounted terminal without ending it; reconnect
 reloads, and Couchview restarts reattach to the same tmux session. **End session**
 kills that session and every program running in it.
 
-The browser renderer uses the supported appearance settings from the host's resolved
-Ghostty configuration when Ghostty is installed, or reads its local config directly.
-Font family, size, pixel-based cell height and width adjustments, cursor, palette,
-and selection colors are supported; other native-only settings are ignored. The
-Iosevka regular, bold, italic, and bold-italic faces are bundled for text. A
-Catppuccin Mocha color fallback is also bundled, so remote browsers do not need the
-font installed. Font, terminal renderer, and WASM assets load only after the
-terminal is opened and are not part of the PWA precache.
+Appearance is browser-owned and never reads the host Ghostty configuration. Open
+**Settings** to tune the diff and terminal independently. Both can use bundled
+Iosevka or the browser's system monospace stack. Diff controls cover font size,
+line height, and letter spacing; terminal controls cover font size plus pixel-based
+cell height and width adjustments (the terminal grid's row and column spacing).
+Cell width can be tuned from −5px to +5px. Settings has its own `/settings` route,
+while preserving the selected repository when returning to Review.
+Preferences are stored in the current browser. The fixed Catppuccin Mocha terminal
+palette and Safe Mode defaults are bundled, while terminal renderer and WASM assets
+load only after the terminal is opened and are not part of the PWA precache.
 
 With the terminal focused, `Cmd++`/`Cmd+-` on Apple devices or `Ctrl++`/`Ctrl+-`
 on Windows and Linux change only its font size; `Cmd+0` or `Ctrl+0` restores the
-Ghostty-configured size. Couchview prevents browser zoom, re-fits tmux, and keeps
+configured size. Couchview prevents browser zoom, re-fits tmux, and keeps
 the temporary size across reconnects and Review handoffs. Reloading resets it.
 
 Terminal access is enabled automatically only when the bind address and every
@@ -145,7 +147,11 @@ Use the following account-agnostic process to configure a deployment:
    identity-provider groups that should have access. Do not use **Everyone** or
    an unrestricted **One-time PIN** login-method rule. Select only the intended
    identity provider, use a suitably short session such as 24 hours, and enable
-   the binding and HttpOnly cookie options.
+   the HttpOnly cookie option. Leave **Binding Cookie** disabled for browser and
+   PWA access unless every client is known to preserve that additional cookie;
+   a missing binding cookie makes Cloudflare reject an otherwise valid Access
+   session. Use `Lax` or `None` rather than `Strict` for the cookie SameSite
+   setting to avoid authentication redirect loops.
 4. In **Networking > Tunnels**, create a remotely managed tunnel and install the
    displayed `cloudflared` command on the same computer as Couchview. Treat the
    tunnel token in that command as a secret and never place it in the repository.
@@ -308,7 +314,7 @@ Development also binds both processes to `127.0.0.1` by default. The UI proxies 
 - When tracked or non-ignored `package.json` files are present, the drawer adds a **Commands** view. Scripts are grouped by subproject, run with the package manager declared by the project or indicated by its nearest lockfile, and stream stdout and stderr into a reconnectable output sheet. Long-running scripts keep running when the sheet closes and can be stopped explicitly.
 - If Git fails or stops producing output, Couchview shows the operation-specific message instead of treating an empty response as a valid diff. Open **Details** to see a diagnostic ID, failure kind, exit code, and bounded Git output, or copy the complete diagnostic for reporting.
 - Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk and comment actions in the dock; compact landscape moves hunk/comments into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
-- Use the minus and plus controls to adjust code from 9–16 px. The compact 11 px default and the selected preference are stored in the browser.
+- Use the minus and plus controls to adjust diff code from 9–24 px, or open **Settings** for all typography controls. The compact 11 px default and the selected preferences are stored in the browser.
 
 Binary and metadata-only changes remain reviewable and stageable but do not accept line comments. Very large diffs show an explicit truncation warning.
 
@@ -316,7 +322,7 @@ Binary and metadata-only changes remain reviewable and stageable but do not acce
 
 On desktop Chrome or Edge over localhost, use the install icon in the address bar or the in-app install guidance. On iPhone or iPad, PWA installation requires Couchview to be served through HTTPS; a plain LAN-IP URL can open the review UI but is not a secure context. When HTTPS is available, open Couchview in Safari, tap **Share**, then **Add to Home Screen**. Launching the installed app uses the standalone, edge-to-edge interface.
 
-The UI shell is available when disconnected, but repository data is intentionally never cached. Diffs, searches, source previews, comments, and all `/api` requests remain network-only, so the offline shell cannot display an old review as current. The service-worker precache contains the core UI and common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars; other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk, WASM runtime, and bundled Iosevka faces also stay out of the precache and load only when the tmux terminal is opened. When a new service worker is ready, Couchview asks before reloading the active review.
+Couchview always loads documents and repository data from the network. The service worker never caches `index.html`, handles document navigations, or caches `/api` responses, so an installed app cannot hide a Cloudflare Access sign-in behind a stale offline shell. It precaches only the versioned core JavaScript and CSS plus common JavaScript, TypeScript, JSX, TSX, JSON, CSS, HTML, and Markdown grammars. Other syntax assets load on demand and are warmed automatically when Couchview preloads adjacent diffs. The Ghostty terminal chunk, WASM runtime, and bundled Iosevka faces also stay out of the precache and load only when the tmux terminal is opened. When a new service worker is ready, Couchview asks before reloading the active review.
 
 ## Local state and security
 

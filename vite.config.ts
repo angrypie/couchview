@@ -95,17 +95,17 @@ export default defineConfig(({ mode }) => {
           cleanupOutdatedCaches: true,
           clientsClaim: false,
           skipWaiting: false,
-          // Keep the disconnected shell and the most common Couchview
-          // languages warm without downloading Pierre's complete grammar and
-          // theme catalog on every service-worker update. Other hashed assets
-          // load on demand and retain the server's immutable browser cache.
+          // Keep the core bundle and the most common Couchview languages warm
+          // without downloading Pierre's complete grammar and
+          // theme catalog on every service-worker update. Document navigations
+          // stay on the network so Cloudflare Access can handle sign-in.
           globPatterns: [
-            "index.html",
             "assets/index-*.{js,css}",
             "assets/{javascript,typescript,jsx,tsx,json,css,html,markdown}-*.js",
           ],
-          navigateFallback: "index.html",
-          navigateFallbackDenylist: [apiPath],
+          // vite-plugin-pwa defaults this to index.html. Disable it explicitly:
+          // an offline app shell can hide an expired Cloudflare Access session.
+          navigateFallback: null,
           runtimeCaching: [
             {
               // Git state is live and repository-specific: never serve API data

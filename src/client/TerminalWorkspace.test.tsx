@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { TERMINAL_ENDED_CLOSE_CODE } from "../shared/contracts.ts";
-import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import {
   FakeTerminalWebSocket,
   rendererState,
@@ -9,6 +8,7 @@ import {
   resetRendererState,
   terminalRendererFactory,
 } from "./terminalTestFakes.ts";
+import { SAFE_TERMINAL_RENDERER_CONFIG } from "./typographyPreferences.ts";
 
 if (!GlobalRegistrator.isRegistered) {
   GlobalRegistrator.register({ url: "http://127.0.0.1:4173/" });
@@ -35,7 +35,6 @@ const capability = {
   profiles: [
     { id: "tmux" as const, label: "tmux", available: true, reason: null },
   ],
-  renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
 };
 
 interface FetchRecord {
@@ -78,6 +77,7 @@ function defaultProps() {
     active: true,
     capability,
     csrfToken: "csrf-token",
+    rendererConfig: SAFE_TERMINAL_RENDERER_CONFIG,
     repositoryId: "repo",
     repositoryName: "fixture",
     onBack: mock(() => undefined),
@@ -92,6 +92,7 @@ beforeEach(() => {
   attachmentResponses = [];
   endResponses = [];
   resetFakeTerminalWebSockets();
+  window.history.replaceState({}, "", "/");
   sessionStorage.clear();
   globalThis.fetch = terminalFetch as typeof fetch;
   Object.defineProperty(globalThis, "WebSocket", {
@@ -132,7 +133,10 @@ describe("TerminalWorkspace", () => {
       path: "/api/repositories/repo/terminal/attachments",
       body: { profileId: "tmux", cols: 100, rows: 32, takeover: false },
     });
-    expect(rendererState.options?.config).toEqual(FALLBACK_TERMINAL_RENDERER_CONFIG);
+    expect(rendererState.options?.config).toEqual(SAFE_TERMINAL_RENDERER_CONFIG);
+    expect(screen.queryByTestId("terminal-latency-overlay")).toBeNull();
+    expect(screen.getByRole("button", { name: "Debug" }).getAttribute("aria-pressed"))
+      .toBe("false");
     expect(socket.protocols).toEqual([
       "couchview-terminal-v1",
       "couchview-ticket.ticket-1",
@@ -167,6 +171,120 @@ describe("TerminalWorkspace", () => {
     view.unmount();
     expect(rendererState.disposed).toBe(1);
     expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
+  });
+
+  test("toggles latency debugging live and mirrors it into the current URL", async () => {
+    render(<TerminalWorkspace {...defaultProps()} />);
+
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+    const debug = screen.getByRole("button", { name: "Debug" });
+
+    fireEvent.click(debug);
+    expect(debug.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("terminal-latency-overlay").textContent)
+      .toBe("Waiting for a clean echoed key…");
+    expect(new URL(window.location.href).searchParams.get("terminalLatency")).toBe("1");
+    expect(rendererState.latencyKeyHandler).not.toBeNull();
+    expect(rendererState.calls).toBe(1);
+    expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+
+    fireEvent.click(debug);
+    expect(debug.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("terminal-latency-overlay")).toBeNull();
+    expect(new URL(window.location.href).searchParams.get("terminalLatency")).toBeNull();
+    expect(rendererState.latencyKeyHandler).toBeNull();
+    expect(rendererState.calls).toBe(1);
+    expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+  });
+
+  test("reports an opt-in key-to-canvas sample only after Ghostty renders host output", async () => {
+    window.history.replaceState({}, "", "/?terminalLatency=1");
+    render(<TerminalWorkspace {...defaultProps()} />);
+
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+    const overlay = screen.getByTestId("terminal-latency-overlay");
+    expect(overlay.textContent).toBe("Waiting for a clean echoed key…");
+    await waitFor(() => expect(rendererState.latencyKeyHandler).not.toBeNull());
+
+    await act(async () => {
+      rendererState.latencyKeyHandler!(new KeyboardEvent("keydown", { key: "x" }));
+      rendererState.options!.onData(new TextEncoder().encode("x"));
+    });
+    expect(rendererState.pendingCanvasRenders).toHaveLength(0);
+
+    await act(async () => socket.emitMessage(new TextEncoder().encode("x").buffer));
+    expect(rendererState.pendingCanvasRenders).toHaveLength(1);
+    expect(overlay.textContent).toBe("Waiting for a clean echoed key…");
+
+    await act(async () => rendererState.pendingCanvasRenders.shift()?.());
+    expect(overlay.textContent).toMatch(
+      /^Key→canvas \d+\.\d ms · p50 \d+\.\d · p95 \d+\.\d · n=1$/,
+    );
+  });
+
+  test("reattaches each new renderer after rapid typography changes while hidden", async () => {
+    const props = defaultProps();
+    const view = render(<TerminalWorkspace {...props} />);
+
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const initialSocket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => initialSocket.emitMessage(JSON.stringify({ type: "ready" })));
+    expect(screen.getByText("Connected")).toBeTruthy();
+
+    const adjustedRendererConfig = {
+      ...props.rendererConfig,
+      fontSize: props.rendererConfig.fontSize + 1,
+    };
+    view.rerender(
+      <TerminalWorkspace
+        {...props}
+        active={false}
+        rendererConfig={adjustedRendererConfig}
+      />,
+    );
+
+    await waitFor(() => expect(rendererState.calls).toBe(2));
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(2));
+    expect(initialSocket.closes).toContainEqual({
+      code: 1000,
+      reason: "workspace_unmounted",
+    });
+    const replacementSocket = FakeTerminalWebSocket.instances[1]!;
+    await act(async () => replacementSocket.emitMessage(JSON.stringify({ type: "ready" })));
+
+    const finalRendererConfig = {
+      ...adjustedRendererConfig,
+      fontSize: adjustedRendererConfig.fontSize + 1,
+    };
+    view.rerender(
+      <TerminalWorkspace
+        {...props}
+        active={false}
+        rendererConfig={finalRendererConfig}
+      />,
+    );
+    await waitFor(() => expect(rendererState.calls).toBe(3));
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(3));
+    const finalSocket = FakeTerminalWebSocket.instances[2]!;
+    await act(async () => finalSocket.emitMessage(JSON.stringify({ type: "ready" })));
+
+    view.rerender(
+      <TerminalWorkspace
+        {...props}
+        active
+        rendererConfig={finalRendererConfig}
+      />,
+    );
+    expect(screen.getByText("Connected")).toBeTruthy();
+    expect(rendererState.configs).toEqual([
+      props.rendererConfig,
+      adjustedRendererConfig,
+      finalRendererConfig,
+    ]);
   });
 
   test("asks before taking control from another tab", async () => {
@@ -252,6 +370,75 @@ describe("TerminalWorkspace", () => {
 
     await act(async () => socket.emitClose(TERMINAL_ENDED_CLOSE_CODE));
     expect(screen.getAllByText("Session ended")).toHaveLength(2);
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+  });
+
+  test("does not retry an attachment with unsupported terminal dimensions", async () => {
+    attachmentResponses.push(jsonResponse({
+      error: {
+        code: "terminal_size_invalid",
+        message: "Terminal dimensions are outside the supported range",
+      },
+    }, 400));
+
+    render(<TerminalWorkspace {...defaultProps()} />);
+
+    expect(
+      await screen.findByText("Terminal dimensions are outside the supported range"),
+    ).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    expect(
+      fetchRecords.filter((record) => record.path.endsWith("/terminal/attachments")),
+    ).toHaveLength(1);
+    expect(FakeTerminalWebSocket.instances).toHaveLength(0);
+  });
+
+  test("reinitializes with bundled defaults when Safe Mode is requested", async () => {
+    const hostRenderer = {
+      ...SAFE_TERMINAL_RENDERER_CONFIG,
+      cellHeightAdjustment: 10,
+      cellWidthAdjustment: 4,
+    };
+    attachmentResponses.push(jsonResponse({
+      error: {
+        code: "terminal_size_invalid",
+        message: "Terminal dimensions are outside the supported range",
+      },
+    }, 400));
+
+    render(
+      <TerminalWorkspace
+        {...defaultProps()}
+        rendererConfig={hostRenderer}
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Safe Mode" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Safe Mode" }));
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+
+    expect(rendererState.configs).toEqual([
+      hostRenderer,
+      SAFE_TERMINAL_RENDERER_CONFIG,
+    ]);
+    expect(rendererState.disposed).toBe(1);
+    expect(screen.getByText("Connected · Safe Mode")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Safe Mode" })).toBeNull();
+  });
+
+  test("does not reconnect after an unsupported terminal resize", async () => {
+    render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+
+    await act(async () => socket.emitClose(1008, "terminal_size_invalid"));
+    expect(
+      screen.getByText("Terminal dimensions are outside the supported range."),
+    ).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(FakeTerminalWebSocket.instances).toHaveLength(1);
   });

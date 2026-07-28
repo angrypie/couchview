@@ -30,20 +30,38 @@ describe("API client", () => {
   test("requests an AJAX 401 and reports that secure sign-in is required", async () => {
     let requestHeaders = new Headers();
     let credentials: RequestCredentials | undefined;
+    let redirect: RequestRedirect | undefined;
     globalThis.fetch = ((_input, init) => {
       requestHeaders = new Headers(init?.headers);
       credentials = init?.credentials;
+      redirect = init?.redirect;
       return Promise.resolve(new Response("Sign in", { status: 401 }));
     }) as typeof fetch;
 
     const error = await api.bootstrap().catch((caught) => caught);
     expect(requestHeaders.get("x-requested-with")).toBe("XMLHttpRequest");
     expect(credentials).toBe("same-origin");
+    expect(redirect).toBe("manual");
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({
       status: 401,
       code: "authentication_required",
       message: "Your secure sign-in session has expired.",
+    });
+  });
+
+  test("treats an opaque Access login redirect as an authentication failure", async () => {
+    globalThis.fetch = (() => Promise.resolve({
+      ok: false,
+      status: 0,
+      type: "opaqueredirect",
+    } as Response)) as unknown as typeof fetch;
+
+    const error = await api.bootstrap().catch((caught) => caught);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      code: "authentication_required",
     });
   });
 

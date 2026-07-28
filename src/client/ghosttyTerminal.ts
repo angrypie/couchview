@@ -1,14 +1,18 @@
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
-import type { TerminalRendererConfig } from "../shared/contracts.ts";
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
 import { installTerminalFontShortcuts } from "./terminalFontShortcuts.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
+import {
+  codeFontStack,
+  type TerminalRendererConfig,
+} from "./typographyPreferences.ts";
 
 export interface BrowserTerminalRenderer {
   readonly cols: number;
   readonly rows: number;
-  write(data: Uint8Array<ArrayBuffer>): void;
+  write(data: Uint8Array<ArrayBuffer>, onCanvasRender?: () => void): void;
+  setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null): void;
   focus(): void;
   fit(): void;
   dispose(): void;
@@ -25,16 +29,6 @@ let initialization: Promise<import("ghostty-web").Ghostty> | null = null;
 const encoder = new TextEncoder();
 const BUNDLED_TEXT_FONT_FAMILY = "Iosevka";
 
-function browserFontFamily(configuredFamily: string): string {
-  return /\bnerd\s+font\b/i.test(configuredFamily)
-    ? BUNDLED_TEXT_FONT_FAMILY
-    : configuredFamily;
-}
-
-function quotedFontFamily(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
-
 export async function createBrowserTerminal(
   options: CreateBrowserTerminalOptions,
 ): Promise<BrowserTerminalRenderer> {
@@ -45,13 +39,10 @@ export async function createBrowserTerminal(
   });
   const ghosttyInstance = await initialization;
   const { config } = options;
-  await document.fonts?.load(`${config.fontSize}px "${BUNDLED_TEXT_FONT_FAMILY}"`);
-  const configuredFamily = browserFontFamily(config.fontFamily);
-  const quotedConfiguredFamily = quotedFontFamily(configuredFamily);
-  const fontFamily = configuredFamily.toLowerCase() === BUNDLED_TEXT_FONT_FAMILY.toLowerCase()
-    ? `${quotedConfiguredFamily}, monospace`
-    : `${quotedConfiguredFamily}, "${BUNDLED_TEXT_FONT_FAMILY}", ` +
-      "monospace";
+  if (config.fontFamily === "iosevka") {
+    await document.fonts?.load(`${config.fontSize}px "${BUNDLED_TEXT_FONT_FAMILY}"`);
+  }
+  const fontFamily = codeFontStack(config.fontFamily);
   const palette = config.theme.palette;
 
   const terminal = new ghostty.Terminal({
@@ -90,6 +81,26 @@ export async function createBrowserTerminal(
   terminal.loadAddon(fitAddon);
   terminal.open(options.container);
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
+  const terminalRenderer = terminal.renderer;
+  const originalRender = terminalRenderer?.render;
+  let pendingCanvasRenders: Array<() => void> | null = null;
+  let keySubscription: { dispose(): void } | null = null;
+  const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
+    keySubscription?.dispose();
+    keySubscription = null;
+    pendingCanvasRenders?.splice(0);
+    pendingCanvasRenders = null;
+    if (terminalRenderer && originalRender) terminalRenderer.render = originalRender;
+    if (!handler || !terminalRenderer || !originalRender) return;
+
+    pendingCanvasRenders = [];
+    terminalRenderer.render = (...args: Parameters<typeof terminalRenderer.render>) => {
+      originalRender.apply(terminalRenderer, args);
+      const callbacks = pendingCanvasRenders?.splice(0) ?? [];
+      for (const callback of callbacks) callback();
+    };
+    keySubscription = terminal.onKey(({ domEvent }) => handler(domEvent));
+  };
   const applyAdjustedMetrics = () => {
     const renderer = terminal.renderer;
     if (!renderer) return;
@@ -129,9 +140,21 @@ export async function createBrowserTerminal(
     get rows() {
       return terminal.rows;
     },
-    write(data) {
-      terminal.write(data);
+    write(data, onCanvasRender) {
+      if (pendingCanvasRenders && onCanvasRender) {
+        pendingCanvasRenders.push(onCanvasRender);
+      }
+      try {
+        terminal.write(data);
+      } catch (error) {
+        if (pendingCanvasRenders && onCanvasRender) {
+          const callbackIndex = pendingCanvasRenders.lastIndexOf(onCanvasRender);
+          if (callbackIndex >= 0) pendingCanvasRenders.splice(callbackIndex, 1);
+        }
+        throw error;
+      }
     },
+    setLatencyKeyHandler,
     focus() {
       terminal.focus();
     },
@@ -142,6 +165,7 @@ export async function createBrowserTerminal(
       disposeFontShortcuts();
       disposeKeyRepeat();
       dataSubscription.dispose();
+      setLatencyKeyHandler(null);
       resizeSubscription.dispose();
       fitAddon.dispose();
       terminal.dispose();

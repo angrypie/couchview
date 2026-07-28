@@ -10,11 +10,9 @@ import {
   type TerminalAttachmentResponse,
   type TerminalCapability,
   type TerminalEndResponse,
-  type TerminalRendererConfig,
   type TerminalSessionStatus,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
-import { defaultTerminalRendererConfig } from "./terminalConfig.ts";
 
 export const TERMINAL_PROTOCOL = "couchview-terminal-v1";
 export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
@@ -73,7 +71,6 @@ export interface TerminalSessionServiceOptions {
   now?: () => number;
   tokenFactory?: () => string;
   runtimeDirectory?: string;
-  rendererConfig?: TerminalRendererConfig;
   userTmuxConfigPath?: string | null;
   terminalFactory?: (options: Bun.TerminalOptions) => Bun.Terminal;
   terminalSpawner?: (
@@ -171,7 +168,6 @@ function capabilityFor(
   enabled: boolean,
   disabledReason: string | undefined,
   dependencies: TerminalDependencies,
-  renderer: TerminalRendererConfig,
 ): TerminalCapability {
   let reason: string | null = null;
   if (!enabled) {
@@ -196,7 +192,6 @@ function capabilityFor(
         reason,
       },
     ],
-    renderer,
   };
 }
 
@@ -257,7 +252,6 @@ export class TerminalSessionService {
       options.enabled,
       options.disabledReason,
       this.dependencies,
-      options.rendererConfig ?? defaultTerminalRendererConfig(),
     );
     this.commandRunner = options.commandRunner ?? runCommand;
     this.now = options.now ?? Date.now;

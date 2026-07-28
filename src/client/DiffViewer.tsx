@@ -46,6 +46,7 @@ const PIERRE_UNSAFE_CSS = `
   --diffs-dark-bg: var(--viewer-bg, #0d1014);
   --diffs-dark: var(--viewer-text, #e7edf5);
   --diffs-font-family: var(--code-font-family, "Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace);
+  --diffs-letter-spacing: 0px;
   --diffs-min-number-column-width: 1ch;
   --diffs-bg-context-override: var(--viewer-context, #131820);
   --diffs-bg-separator-override: var(--viewer-separator, #17243a);
@@ -58,6 +59,7 @@ const PIERRE_UNSAFE_CSS = `
   --diffs-modified-color-override: var(--viewer-accent, #7da6ff);
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
+  letter-spacing: var(--diffs-letter-spacing);
 }
 [data-diff]:not([data-disable-line-numbers]) [data-column-number] {
   padding-inline: .45ch !important;
@@ -98,7 +100,10 @@ export interface DiffViewerHandle {
 interface DiffViewerProps {
   comments: readonly ReviewComment[];
   diff: FileDiff;
+  fontFamily: string;
   fontSize: number;
+  letterSpacing: number;
+  lineHeight: number;
   lineNumbersVisible: boolean;
   lineWrapEnabled: boolean;
   selectedRange: SelectedLineRange | null;
@@ -147,8 +152,10 @@ function enhanceRenderedDiff(
   host: HTMLElement,
   phase: "mount" | "update" | "unmount",
   lineNumbersVisible: boolean,
+  fontFamily: string,
   fontSize: number,
   lineHeight: number,
+  letterSpacing: number,
 ): void {
   const root = host.shadowRoot;
   if (!root) return;
@@ -171,8 +178,10 @@ function enhanceRenderedDiff(
   // metric to the same value whenever a virtualized item is mounted or reused.
   host.style.setProperty("-webkit-text-size-adjust", "100%");
   host.style.setProperty("text-size-adjust", "100%");
+  host.style.setProperty("--diffs-font-family", fontFamily);
   host.style.setProperty("--diffs-font-size", `${fontSize}px`);
   host.style.setProperty("--diffs-line-height", `${lineHeight}px`);
+  host.style.setProperty("--diffs-letter-spacing", `${letterSpacing}px`);
 
   if (lineNumbersVisible) {
     for (const number of root.querySelectorAll<HTMLElement>("[data-column-number]")) {
@@ -226,7 +235,10 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
     {
       comments,
       diff,
+      fontFamily,
       fontSize,
+      letterSpacing,
+      lineHeight: lineHeightMultiplier,
       lineNumbersVisible,
       lineWrapEnabled,
       onCommentClick,
@@ -263,7 +275,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
       () => commentAnnotationsVersion(comments, diff.fileId, diff.contentRevision),
       [comments, diff.contentRevision, diff.fileId],
     );
-    const lineHeight = fontSize * 1.55;
+    const lineHeight = fontSize * lineHeightMultiplier;
 
     const items = useMemo<CodeViewItem<CommentAnnotationMetadata>[]>(() => {
       if (!adapted.value) return [];
@@ -333,7 +345,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
         scrollToLine,
         scrollToHunk(hunkIndex) {
           const target = hunkTarget(diff, hunkIndex);
-          if (target) scrollToLine(target);
+          if (target) scrollToLine({ ...target, behavior: "instant" });
         },
         scrollToComment(comment) {
           const target = commentTarget(comment);
@@ -383,14 +395,19 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
             node,
             phase,
             lineNumbersVisible,
+            fontFamily,
             fontSize,
             lineHeight,
+            letterSpacing,
           );
         },
       }),
       [
+        fontFamily,
         fontSize,
+        letterSpacing,
         lineHeight,
+        lineHeightMultiplier,
         lineNumbersVisible,
         lineWrapEnabled,
         onIdentifierClick,
@@ -462,8 +479,10 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
           renderAnnotation={renderAnnotation}
           selectedLines={selectedLines}
           style={{
+            "--diffs-font-family": fontFamily,
             "--diffs-font-size": `${fontSize}px`,
             "--diffs-line-height": `${lineHeight}px`,
+            "--diffs-letter-spacing": `${letterSpacing}px`,
             WebkitTextSizeAdjust: "100%",
             textSizeAdjust: "100%",
           } as CSSProperties}

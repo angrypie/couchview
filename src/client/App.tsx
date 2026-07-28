@@ -37,6 +37,7 @@ import {
   RotateCcw,
   Search,
   Send,
+  Settings2,
   Sparkles,
   Square,
   SquareTerminal,
@@ -70,7 +71,6 @@ import {
   type ServerEvent,
   type SourcePreviewResponse,
 } from "../shared/contracts.ts";
-import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../shared/terminalDefaults.ts";
 import { ApiError, api } from "./api.ts";
 import { CodexCommentsPanel } from "./CodexCommentsPanel.tsx";
 import {
@@ -78,7 +78,7 @@ import {
   formatCommentReference,
 } from "./commentExport.ts";
 import { usePwaUpdate } from "./usePwaUpdate.ts";
-import { clearOfflineAppStorage } from "./offlineApp.ts";
+import { clearPwaStorage } from "./offlineApp.ts";
 import {
   DiffViewer,
   type DiffViewerHandle,
@@ -88,6 +88,15 @@ import {
   selectedRangeFromEndpoints,
 } from "./diffAdapter.ts";
 import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
+import { SettingsPage } from "./SettingsWorkspace.tsx";
+import {
+  codeFontStack,
+  loadTypographyPreferences,
+  saveTypographyPreferences,
+  terminalRendererConfig,
+  TYPOGRAPHY_LIMITS,
+  type TypographyPreferences,
+} from "./typographyPreferences.ts";
 
 type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
@@ -96,7 +105,13 @@ type SearchScope = "current" | "other";
 type DrawerView = "files" | "commands";
 type BulkStageScope = "all" | "reviewed";
 type RestartPhase = "building" | "restarting" | "loading" | null;
-type WorkspaceMode = "review" | "terminal";
+type WorkspaceMode = "review" | "terminal" | "settings";
+
+const SETTINGS_PATH = "/settings";
+
+function isSettingsPath(pathname = window.location.pathname): boolean {
+  return pathname.replace(/\/+$/, "") === SETTINGS_PATH;
+}
 
 interface HunkRow {
   type: "hunk";
@@ -161,9 +176,6 @@ const emptyPackageScripts: PackageScriptsResponse = {
   warnings: [],
 };
 
-const MIN_FONT_SIZE = 9;
-const MAX_FONT_SIZE = 16;
-const DEFAULT_FONT_SIZE = 11;
 const DIFF_CACHE_LIMIT = 8;
 
 function diffCacheKey(
@@ -280,40 +292,6 @@ function useMediaQuery(query: string): boolean {
   }, [query]);
 
   return matches;
-}
-
-function useStoredNumber(
-  key: string,
-  fallback: number,
-  legacyKey?: string,
-): [number, (value: number) => void] {
-  const [value, setValue] = useState(() => {
-    try {
-      const current = localStorage.getItem(key);
-      const stored = current ?? (legacyKey ? localStorage.getItem(legacyKey) : null);
-      if (current === null && stored !== null) localStorage.setItem(key, stored);
-      const parsed = stored ? Number(stored) : Number.NaN;
-      return Number.isFinite(parsed)
-        ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, parsed))
-        : fallback;
-    } catch {
-      return fallback;
-    }
-  });
-
-  const update = useCallback(
-    (next: number) => {
-      setValue(next);
-      try {
-        localStorage.setItem(key, String(next));
-      } catch {
-        // Font resizing still works when persistent storage is unavailable.
-      }
-    },
-    [key],
-  );
-
-  return [value, update];
 }
 
 function useStoredBoolean(
@@ -625,7 +603,7 @@ export function App() {
   const [comments, setComments] = useState<ReviewComment[]>([]);
   const [loadError, setLoadError] = useState("");
   const [loadErrorCode, setLoadErrorCode] = useState("");
-  const [offlineResetBusy, setOfflineResetBusy] = useState(false);
+  const [appCacheResetBusy, setAppCacheResetBusy] = useState(false);
   const [diffError, setDiffError] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
   const [connected, setConnected] = useState(true);
@@ -636,11 +614,8 @@ export function App() {
   const [fileQuery, setFileQuery] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
-  const [fontSize, setFontSize] = useStoredNumber(
-    "couchview:font-size",
-    DEFAULT_FONT_SIZE,
-    "couch-review:font-size",
-  );
+  const [typographyPreferences, setTypographyPreferencesState] =
+    useState<TypographyPreferences>(loadTypographyPreferences);
   const [lineNumbersVisible, setLineNumbersVisible] = useStoredBoolean(
     "couchview:line-numbers",
     false,
@@ -693,8 +668,46 @@ export function App() {
   const [pendingCommentJump, setPendingCommentJump] = useState<ReviewComment | null>(null);
   const [focusedCommentId, setFocusedCommentId] = useState<string | null>(null);
   const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("review");
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() =>
+    isSettingsPath() ? "settings" : "review"
+  );
   const [terminalOpened, setTerminalOpened] = useState(false);
+
+  const openSettingsPage = useCallback(() => {
+    const url = new URL(window.location.href);
+    if (!isSettingsPath(url.pathname)) {
+      url.pathname = SETTINGS_PATH;
+      window.history.pushState({ couchviewPage: "settings" }, "", url);
+    }
+    setWorkspaceMode("settings");
+  }, []);
+
+  const closeSettingsPage = useCallback(() => {
+    const url = new URL(window.location.href);
+    url.pathname = "/";
+    window.history.replaceState(null, "", url);
+    setWorkspaceMode("review");
+  }, []);
+
+  const setTypographyPreferences = useCallback((next: TypographyPreferences) => {
+    setTypographyPreferencesState(saveTypographyPreferences(next));
+  }, []);
+  const setFontSize = useCallback((fontSize: number) => {
+    setTypographyPreferencesState((current) => saveTypographyPreferences({
+      ...current,
+      diff: { ...current.diff, fontSize },
+    }));
+  }, []);
+  const fontSize = typographyPreferences.diff.fontSize;
+  const terminalConfig = useMemo(
+    () => terminalRendererConfig(typographyPreferences.terminal),
+    [
+      typographyPreferences.terminal.cellHeightAdjustment,
+      typographyPreferences.terminal.cellWidthAdjustment,
+      typographyPreferences.terminal.fontFamily,
+      typographyPreferences.terminal.fontSize,
+    ],
+  );
 
   const desktop = useMediaQuery("(min-width: 760px) and (min-height: 600px)");
   const landscape = useMediaQuery("(orientation: landscape) and (max-height: 599px)");
@@ -726,6 +739,7 @@ export function App() {
   const commitMessageRequestRef = useRef<AbortController | null>(null);
   const restartRequestRef = useRef<AbortController | null>(null);
   const visibleLineRef = useRef<{ lineNumber: number; side: SelectableSide } | null>(null);
+  const hunkNavigationLockUntilRef = useRef(0);
   const pwa = usePwaUpdate();
 
   filesRef.current = files;
@@ -777,7 +791,6 @@ export function App() {
     reason: "The browser tmux terminal is unavailable from this Couchview server.",
     persistence: "tmux" as const,
     profiles: [],
-    renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
   };
   const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
   const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
@@ -1356,11 +1369,19 @@ export function App() {
     setPhase("loading");
     setLoadError("");
     setLoadErrorCode("");
+    const currentUrl = new URL(window.location.href);
+    const accessRefreshAttempted = currentUrl.searchParams.get("access_refresh") === "1";
+    const clearAccessRefreshMarker = () => {
+      if (!accessRefreshAttempted) return;
+      currentUrl.searchParams.delete("access_refresh");
+      window.history.replaceState(null, "", currentUrl);
+    };
     try {
       const nextBootstrap = await api.bootstrap();
+      clearAccessRefreshMarker();
       repositoryCatalogRef.current = nextBootstrap.repositories;
       setBootstrap(nextBootstrap);
-      const requestedId = new URL(window.location.href).searchParams.get("repo");
+      const requestedId = currentUrl.searchParams.get("repo");
       const selected =
         nextBootstrap.repositories.find(
           (item) => item.id === requestedId && item.available,
@@ -1377,25 +1398,31 @@ export function App() {
       await loadRepository(selected.id, "replace");
     } catch (error) {
       setLoadError(messageOf(error));
-      setLoadErrorCode(error instanceof ApiError ? error.code : "unknown");
+      const errorCode = error instanceof ApiError ? error.code : "unknown";
+      setLoadErrorCode(
+        errorCode === "authentication_required" && accessRefreshAttempted
+          ? "authentication_refresh_failed"
+          : errorCode,
+      );
+      clearAccessRefreshMarker();
       setConnected(!(error instanceof ApiError && error.status === 0));
       setPhase("error");
     }
   }, [clearRepositorySelection, loadRepository]);
 
-  const resetOfflineApp = useCallback(async () => {
-    if (offlineResetBusy) return;
-    setOfflineResetBusy(true);
+  const resetAppCache = useCallback(async () => {
+    if (appCacheResetBusy) return;
+    setAppCacheResetBusy(true);
     try {
-      await clearOfflineAppStorage();
+      await clearPwaStorage();
       window.location.reload();
     } catch {
       setLoadError(
-        "Couchview could not reset its offline data. Remove its website data in browser settings, then reload.",
+        "Couchview could not reset its app cache. Remove its website data in browser settings, then reload.",
       );
-      setOfflineResetBusy(false);
+      setAppCacheResetBusy(false);
     }
-  }, [offlineResetBusy]);
+  }, [appCacheResetBusy]);
 
   useEffect(() => {
     void loadApp();
@@ -1417,13 +1444,15 @@ export function App() {
 
   useEffect(() => {
     repositoryIdRef.current = repositoryId;
-    setWorkspaceMode("review");
+    if (!isSettingsPath()) setWorkspaceMode("review");
     setTerminalOpened(false);
   }, [repositoryId]);
 
   useEffect(() => {
     const onPopState = () => {
-      const requestedId = new URL(window.location.href).searchParams.get("repo");
+      const currentUrl = new URL(window.location.href);
+      setWorkspaceMode(isSettingsPath(currentUrl.pathname) ? "settings" : "review");
+      const requestedId = currentUrl.searchParams.get("repo");
       const selected = repositoryCatalogRef.current.find(
         (item) => item.id === requestedId && item.available,
       );
@@ -1636,6 +1665,7 @@ export function App() {
   useLayoutEffect(() => {
     setSelection(null);
     visibleLineRef.current = null;
+    hunkNavigationLockUntilRef.current = 0;
     setHunkNavigation(navigationBeforeFirstHunk());
     setDiffError("");
     if (!currentFileId) {
@@ -1690,9 +1720,13 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [currentFileId, files, prefetchDiff, repositoryId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.style.setProperty("--code-size", `${fontSize}px`);
-  }, [fontSize]);
+    document.documentElement.style.setProperty(
+      "--code-font-family",
+      codeFontStack(typographyPreferences.diff.fontFamily),
+    );
+  }, [fontSize, typographyPreferences.diff.fontFamily]);
 
   useEffect(() => {
     if (!searchOpen || searchQuery.trim().length < 1 || !activeFile || !repositoryId) {
@@ -1780,7 +1814,7 @@ export function App() {
       }
       setRestartPhase("loading");
       try {
-        await clearOfflineAppStorage();
+        await clearPwaStorage();
       } catch {
         // A network reload still refreshes non-PWA and restricted browser sessions.
       }
@@ -1868,6 +1902,9 @@ export function App() {
       const targetHunk =
         direction === -1 ? hunkNavigation.previous : hunkNavigation.next;
       if (targetHunk === null || targetHunk < 0 || targetHunk >= hunkCount) return;
+      // Pierre can report an intermediate visible line while a large, wrapped
+      // diff is settling. Keep repeated hunk taps routed from the requested hunk.
+      if (hunkCount > 1) hunkNavigationLockUntilRef.current = Date.now() + 250;
       setHunkNavigation(navigationAtHunk(targetHunk, hunkCount));
       diffViewerRef.current?.scrollToHunk(targetHunk);
     },
@@ -1912,6 +1949,7 @@ export function App() {
   const handleVisibleLineChange = useCallback(
     (lineNumber: number, side: SelectableSide) => {
       visibleLineRef.current = { lineNumber, side };
+      if (Date.now() < hunkNavigationLockUntilRef.current) return;
       setHunkNavigation(
         navigationAtVisibleLine(diff?.hunks ?? [], lineNumber, side),
       );
@@ -3022,6 +3060,33 @@ export function App() {
     selectedPackageRunId,
   ]);
 
+  const terminalWorkspace = terminalOpened && bootstrap && repositoryId && repository ? (
+    <TerminalWorkspace
+      active={workspaceMode === "terminal"}
+      capability={terminalCapability}
+      csrfToken={bootstrap.csrfToken}
+      onBack={() => setWorkspaceMode("review")}
+      onEnded={() => showToast("tmux session ended")}
+      onNotice={showToast}
+      rendererConfig={terminalConfig}
+      repositoryId={repositoryId}
+      repositoryName={repository.name}
+    />
+  ) : null;
+
+  if (workspaceMode === "settings") {
+    return (
+      <>
+        {terminalWorkspace}
+        <SettingsPage
+          onBack={closeSettingsPage}
+          onChange={setTypographyPreferences}
+          preferences={typographyPreferences}
+        />
+      </>
+    );
+  }
+
   if (phase === "loading") {
     return (
       <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
@@ -3036,6 +3101,7 @@ export function App() {
 
   if (phase === "error") {
     const authenticationRequired = loadErrorCode === "authentication_required";
+    const authenticationRefreshFailed = loadErrorCode === "authentication_refresh_failed";
     const disconnected = loadErrorCode === "disconnected";
     const repositoryId = new URL(window.location.href).searchParams.get("repo");
     const accessRefresh = new URL(API_ROUTES.accessRefresh, window.location.origin);
@@ -3045,19 +3111,35 @@ export function App() {
         <div className="error-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
           <AlertTriangle className="state-icon" size={32} />
           <h1 className="state-title">
-            {authenticationRequired
+            {authenticationRefreshFailed
+              ? "Sign-in didn’t complete"
+              : authenticationRequired
               ? "Sign-in expired"
               : disconnected
                 ? "Couchview is unavailable"
                 : "Couldn’t open Couchview"}
           </h1>
           <p className="state-copy">
-            {authenticationRequired
+            {authenticationRefreshFailed
+              ? "Cloudflare returned to Couchview, but this browser still does not have a usable Access session."
+              : authenticationRequired
               ? "Sign in again to continue using Couchview."
               : loadError}
           </p>
           <div className="state-actions">
-            {authenticationRequired ? (
+            {authenticationRefreshFailed ? (
+              <>
+                <a className="action-button" href={API_ROUTES.accessLogout}>
+                  <RotateCcw size={16} /> Reset Cloudflare sign-in
+                </a>
+                <a
+                  className="action-button secondary"
+                  href={`${accessRefresh.pathname}${accessRefresh.search}`}
+                >
+                  <LogIn size={16} /> Try sign-in again
+                </a>
+              </>
+            ) : authenticationRequired ? (
               <>
                 <a className="action-button" href={`${accessRefresh.pathname}${accessRefresh.search}`}>
                   <LogIn size={16} /> Sign in again
@@ -3072,23 +3154,37 @@ export function App() {
                   <RefreshCw size={16} /> Retry
                 </button>
                 {disconnected && (
+                  <a
+                    className="action-button secondary"
+                    href={`${accessRefresh.pathname}${accessRefresh.search}`}
+                  >
+                    <LogIn size={16} /> Sign in again
+                  </a>
+                )}
+                {disconnected && (
                   <button
                     className="action-button secondary"
-                    disabled={offlineResetBusy}
-                    onClick={() => void resetOfflineApp()}
+                    disabled={appCacheResetBusy}
+                    onClick={() => void resetAppCache()}
                     type="button"
                   >
-                    {offlineResetBusy ? (
+                    {appCacheResetBusy ? (
                       <LoaderCircle className="spinner" size={16} />
                     ) : (
                       <RotateCcw size={16} />
                     )}
-                    Reset offline app
+                    Reset app cache
                   </button>
                 )}
               </>
             )}
           </div>
+          {authenticationRefreshFailed && (
+            <p className="state-help">
+              Reset signs this browser out of every Cloudflare Access app. Return to Couchview and
+              sign in again.
+            </p>
+          )}
         </div>
       </main>
     );
@@ -3104,21 +3200,11 @@ export function App() {
   const activeFileFullyStaged = Boolean(activeFile?.staged && !activeFile.unstaged);
 
   return (
-    <main
-      className={`app-shell ${compactLandscape ? "compact-landscape" : ""} ${workspaceMode === "terminal" ? "terminal-active" : ""}`}
-    >
-      {terminalOpened && bootstrap && repositoryId && repository && (
-        <TerminalWorkspace
-          active={workspaceMode === "terminal"}
-          capability={terminalCapability}
-          csrfToken={bootstrap.csrfToken}
-          onBack={() => setWorkspaceMode("review")}
-          onEnded={() => showToast("tmux session ended")}
-          onNotice={showToast}
-          repositoryId={repositoryId}
-          repositoryName={repository.name}
-        />
-      )}
+    <>
+      {terminalWorkspace}
+      <main
+        className={`app-shell ${compactLandscape ? "compact-landscape" : ""} ${workspaceMode === "terminal" ? "terminal-active" : ""}`}
+      >
       {drawerVisible && (
         <>
           {!desktop && (
@@ -3556,6 +3642,17 @@ export function App() {
         >
           <SquareTerminal size={18} />
         </button>
+        {compactLandscape && (
+          <button
+            aria-label="Open settings"
+            className="icon-button settings-launch-button"
+            onClick={openSettingsPage}
+            title="Typography settings"
+            type="button"
+          >
+            <Settings2 size={18} />
+          </button>
+        )}
         <div className="font-controls" aria-label="Diff display controls">
           <button
             aria-label={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
@@ -3580,8 +3677,11 @@ export function App() {
           <button
             aria-label="Decrease diff font size"
             className="icon-button compact-button"
-            disabled={fontSize <= MIN_FONT_SIZE}
-            onClick={() => setFontSize(Math.max(MIN_FONT_SIZE, fontSize - 1))}
+            disabled={fontSize <= TYPOGRAPHY_LIMITS.diff.fontSize.min}
+            onClick={() => setFontSize(Math.max(
+              TYPOGRAPHY_LIMITS.diff.fontSize.min,
+              fontSize - TYPOGRAPHY_LIMITS.diff.fontSize.step,
+            ))}
             type="button"
           >
             <Minus size={15} />
@@ -3590,8 +3690,11 @@ export function App() {
           <button
             aria-label="Increase diff font size"
             className="icon-button compact-button"
-            disabled={fontSize >= MAX_FONT_SIZE}
-            onClick={() => setFontSize(Math.min(MAX_FONT_SIZE, fontSize + 1))}
+            disabled={fontSize >= TYPOGRAPHY_LIMITS.diff.fontSize.max}
+            onClick={() => setFontSize(Math.min(
+              TYPOGRAPHY_LIMITS.diff.fontSize.max,
+              fontSize + TYPOGRAPHY_LIMITS.diff.fontSize.step,
+            ))}
             type="button"
           >
             <Plus size={15} />
@@ -3643,6 +3746,15 @@ export function App() {
           type="button"
         >
           <ChevronRight size={20} />
+        </button>
+        <button
+          aria-label="Open settings"
+          className="icon-button settings-launch-button"
+          onClick={openSettingsPage}
+          title="Typography settings"
+          type="button"
+        >
+          <Settings2 size={18} />
         </button>
       </section>}
 
@@ -3714,7 +3826,10 @@ export function App() {
           <DiffViewer
             comments={comments}
             diff={diff}
+            fontFamily={codeFontStack(typographyPreferences.diff.fontFamily)}
             fontSize={fontSize}
+            letterSpacing={typographyPreferences.diff.letterSpacing}
+            lineHeight={typographyPreferences.diff.lineHeight}
             lineNumbersVisible={lineNumbersVisible}
             lineWrapEnabled={lineWrapEnabled}
             onCommentClick={openInlineComment}
@@ -4654,14 +4769,6 @@ export function App() {
             </span>
           </div>
         )}
-        {pwa.offlineReady && (
-          <div className="toast">
-            <span>App shell is ready offline.</span>
-            <button className="text-button" onClick={pwa.dismissOfflineReady} type="button">
-              Dismiss
-            </button>
-          </div>
-        )}
         {pwa.canInstall && (
           <div className="toast">
             <span>Install Couchview for full-screen access.</span>
@@ -4700,6 +4807,7 @@ export function App() {
           </p>
         </div>
       )}
-    </main>
+      </main>
+    </>
   );
 }

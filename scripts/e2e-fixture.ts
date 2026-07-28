@@ -25,7 +25,6 @@ import {
 	type TerminalAttachmentRequest,
 	TERMINAL_ENDED_CLOSE_CODE,
 } from "../src/shared/contracts.ts";
-import { FALLBACK_TERMINAL_RENDERER_CONFIG } from "../src/shared/terminalDefaults.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
 const port = Number(process.env.E2E_PORT || 4174);
@@ -535,10 +534,23 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			const destination = new URL("/", url);
 			const repositoryId = url.searchParams.get("repo");
 			if (repositoryId) destination.searchParams.set("repo", repositoryId);
+			destination.searchParams.set("access_refresh", "1");
 			return Response.redirect(destination, 302);
+		}
+		if (url.pathname === API_ROUTES.accessLogout && request.method === "GET") {
+			return Response.redirect(new URL("/cdn-cgi/access/logout", url), 302);
 		}
 
 		if (url.pathname === "/api/bootstrap" && request.method === "GET") {
+			if (request.headers.get("x-e2e-cloudflare-access-redirect") === "1") {
+				return new Response(null, {
+					status: 302,
+					headers: {
+						Location:
+							"https://angrypie.cloudflareaccess.com/cdn-cgi/access/login/couchview.angrypie.dev",
+					},
+				});
+			}
 			return json({
 				csrfToken,
 				repositories: repositoryCatalog,
@@ -568,7 +580,6 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 								reason: null,
 							},
 						],
-						renderer: FALLBACK_TERMINAL_RENDERER_CONFIG,
 					},
 				} satisfies BootstrapResponse);
 		}
