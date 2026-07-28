@@ -531,7 +531,7 @@ textarea:focus-visible,
   right: max(10px, env(safe-area-inset-right));
   bottom: max(10px, env(safe-area-inset-bottom));
   z-index: 1;
-  width: min(390px, calc(100% - 20px));
+  width: min(600px, calc(100% - 20px));
   padding: 11px;
   border: 1px solid rgb(148 163 184 / 30%);
   border-radius: 9px;
@@ -606,9 +606,64 @@ textarea:focus-visible,
 }
 
 .terminal-latency-grid small,
+.terminal-latency-phases small,
 .terminal-latency-note {
   color: #94a3b8;
   font-size: 9px;
+}
+
+.terminal-latency-phase-heading {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.terminal-latency-phase-heading strong {
+  color: #e2e8f0;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.terminal-latency-phase-heading span {
+  color: #64748b;
+  font-size: 8px;
+}
+
+.terminal-latency-phases {
+  margin-top: 5px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.terminal-latency-phases > div {
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgb(96 165 250 / 17%);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgb(30 64 175 / 10%);
+}
+
+.terminal-latency-phases span {
+  overflow: hidden;
+  color: #93c5fd;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.terminal-latency-phases strong {
+  color: #f8fafc;
+  font-size: 14px;
+  line-height: 1.25;
 }
 
 .terminal-latency-breakdown {
@@ -635,6 +690,10 @@ textarea:focus-visible,
 
   .terminal-latency-grid strong {
     font-size: 15px;
+  }
+
+  .terminal-latency-phases {
+    grid-template-columns: 1fr;
   }
 }
 

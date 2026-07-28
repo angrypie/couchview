@@ -24,6 +24,7 @@ import {
   TerminalLatencyTracker,
   TerminalRoundTripTracker,
   terminalLatencyEnabled,
+  type TerminalKeyLatencySummary,
   type TerminalLatencySummary,
 } from "./terminalLatency.ts";
 import {
@@ -114,7 +115,7 @@ export function TerminalWorkspace({
   const [latencyEnabled, setLatencyEnabled] = useState(
     terminalLatencyEnabled(window.location.search),
   );
-  const [latencySummary, setLatencySummary] = useState<TerminalLatencySummary | null>(null);
+  const [latencySummary, setLatencySummary] = useState<TerminalKeyLatencySummary | null>(null);
   const [roundTripSummary, setRoundTripSummary] = useState<TerminalLatencySummary | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BrowserTerminalRenderer | null>(null);
@@ -273,18 +274,29 @@ export function TerminalWorkspace({
         socket.addEventListener("message", (event) => {
           if (disposed || socketRef.current !== socket) return;
           if (typeof event.data !== "string") {
-            const bytes = new Uint8Array(event.data as ArrayBuffer);
             const tracker = latencyEnabledRef.current
               ? latencyTrackerRef.current
               : null;
-            const sampleId = tracker?.hostOutputReceived(window.performance.now()) ?? null;
+            const receivedAt = tracker ? window.performance.now() : null;
+            const bytes = new Uint8Array(event.data as ArrayBuffer);
+            const sampleId = tracker && receivedAt !== null
+              ? tracker.hostOutputReceived(receivedAt)
+              : null;
             if (sampleId === null || !tracker) {
               renderer.write(bytes);
             } else {
-              renderer.write(bytes, () => {
-                if (disposed || socketRef.current !== socket) return;
-                const summary = tracker.canvasRendered(sampleId, window.performance.now());
-                if (summary) setLatencySummary(summary);
+              renderer.write(bytes, {
+                onWriteComplete() {
+                  tracker.terminalWriteCompleted(sampleId, window.performance.now());
+                },
+                onRenderStart() {
+                  tracker.canvasRenderStarted(sampleId, window.performance.now());
+                },
+                onRenderComplete() {
+                  if (disposed || socketRef.current !== socket) return;
+                  const summary = tracker.canvasRendered(sampleId, window.performance.now());
+                  if (summary) setLatencySummary(summary);
+                },
               });
             }
             return;
@@ -495,12 +507,6 @@ export function TerminalWorkspace({
   }, [latencyEnabled]);
 
   const connectionLabel = `${stateLabel(connectionState)}${safeMode ? " · Safe Mode" : ""}`;
-  const estimatedNetworkShare = latencySummary && roundTripSummary && latencySummary.p50Ms > 0
-    ? Math.min(100, Math.round((roundTripSummary.p50Ms / latencySummary.p50Ms) * 100))
-    : null;
-  const estimatedRemainder = latencySummary && roundTripSummary
-    ? Math.max(0, latencySummary.p50Ms - roundTripSummary.p50Ms)
-    : null;
 
   return (
     <section
@@ -556,15 +562,17 @@ export function TerminalWorkspace({
             <div className="terminal-latency-grid">
               <div>
                 <span>Key → canvas</span>
-                <strong>{latencySummary ? `${latencySummary.lastMs.toFixed(1)} ms` : "Waiting…"}</strong>
+                <strong>
+                  {latencySummary ? `${latencySummary.total.lastMs.toFixed(1)} ms` : "Waiting…"}
+                </strong>
                 <small>
                   {latencySummary
-                    ? `p50 ${latencySummary.p50Ms.toFixed(1)} · p95 ${latencySummary.p95Ms.toFixed(1)} · n=${latencySummary.sampleCount}`
+                    ? `p50 ${latencySummary.total.p50Ms.toFixed(1)} · p95 ${latencySummary.total.p95Ms.toFixed(1)} · n=${latencySummary.total.sampleCount}`
                     : "Type one clean printable key"}
                 </small>
               </div>
               <div>
-                <span>Server round trip</span>
+                <span>Baseline RTT</span>
                 <strong>{roundTripSummary ? `${roundTripSummary.lastMs.toFixed(1)} ms` : "Measuring…"}</strong>
                 <small>
                   {roundTripSummary
@@ -573,13 +581,106 @@ export function TerminalWorkspace({
                 </small>
               </div>
             </div>
+            <div className="terminal-latency-phase-heading">
+              <strong>Per-key phases</strong>
+              <span>latest · p50 · p95</span>
+            </div>
+            <div className="terminal-latency-phases">
+              <div>
+                <span>Press → send</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.pressToSend.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.pressToSend.p50Ms.toFixed(1)} · p95 ${latencySummary.pressToSend.p95Ms.toFixed(1)}`
+                    : "Browser input path"}
+                </small>
+              </div>
+              <div>
+                <span>Send → receive</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.sendToReceive.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.sendToReceive.p50Ms.toFixed(1)} · p95 ${latencySummary.sendToReceive.p95Ms.toFixed(1)}`
+                    : "Wire + server/tmux echo"}
+                </small>
+              </div>
+              <div>
+                <span>Receive → paint</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.receiveToPaint.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.receiveToPaint.p50Ms.toFixed(1)} · p95 ${latencySummary.receiveToPaint.p95Ms.toFixed(1)}`
+                    : "Ghostty parse + canvas frame"}
+                </small>
+              </div>
+            </div>
+            <div className="terminal-latency-phase-heading">
+              <strong>Receive → paint detail</strong>
+              <span>latest · p50 · p95</span>
+            </div>
+            <div className="terminal-latency-phases terminal-latency-receive-detail">
+              <div>
+                <span>Receive → write done</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.receiveToWrite.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.receiveToWrite.p50Ms.toFixed(1)} · p95 ${latencySummary.receiveToWrite.p95Ms.toFixed(1)}`
+                    : "Bytes + Ghostty/WASM write"}
+                </small>
+              </div>
+              <div>
+                <span>Frame wait</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.writeToRender.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.writeToRender.p50Ms.toFixed(1)} · p95 ${latencySummary.writeToRender.p95Ms.toFixed(1)}`
+                    : "Write done → render starts"}
+                </small>
+              </div>
+              <div>
+                <span>Canvas render</span>
+                <strong>
+                  {latencySummary
+                    ? `${latencySummary.renderDuration.lastMs.toFixed(1)} ms`
+                    : "—"}
+                </strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.renderDuration.p50Ms.toFixed(1)} · p95 ${latencySummary.renderDuration.p95Ms.toFixed(1)}`
+                    : "CanvasRenderer execution"}
+                </small>
+              </div>
+            </div>
             <div className="terminal-latency-breakdown">
-              {estimatedNetworkShare === null || estimatedRemainder === null
-                ? "Network share appears after both measurements are available."
-                : `Median RTT is ~${estimatedNetworkShare}% of key→canvas; estimated tmux, app, parsing, and frame time is ${estimatedRemainder.toFixed(1)} ms.`}
+              {latencySummary
+                ? `Latest key: ${latencySummary.pressToSend.lastMs.toFixed(1)} + ${latencySummary.sendToReceive.lastMs.toFixed(1)} + ${latencySummary.receiveToPaint.lastMs.toFixed(1)} = ${latencySummary.total.lastMs.toFixed(1)} ms.`
+                : "The three phases form one accepted key timeline and add to key→canvas."}
             </div>
             <small className="terminal-latency-note">
-              RTT approximates the combined outbound and return network portion.
+              Send→receive combines both network legs with server/tmux echo. Baseline RTT is a
+              separate immediate WebSocket ping. Receive→paint ends when CanvasRenderer returns,
+              before browser compositing or physical display scanout. Frame wait is Ghostty render
+              loop scheduling; canvas render is synchronous renderer execution.
             </small>
           </div>
         )}

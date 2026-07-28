@@ -11,11 +11,17 @@ import {
 export interface BrowserTerminalRenderer {
   readonly cols: number;
   readonly rows: number;
-  write(data: Uint8Array<ArrayBuffer>, onCanvasRender?: () => void): void;
+  write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile): void;
   setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null): void;
   focus(): void;
   fit(): void;
   dispose(): void;
+}
+
+export interface BrowserTerminalWriteProfile {
+  onWriteComplete(): void;
+  onRenderStart(): void;
+  onRenderComplete(): void;
 }
 
 interface CreateBrowserTerminalOptions {
@@ -83,7 +89,7 @@ export async function createBrowserTerminal(
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
   const terminalRenderer = terminal.renderer;
   const originalRender = terminalRenderer?.render;
-  let pendingCanvasRenders: Array<() => void> | null = null;
+  let pendingCanvasRenders: BrowserTerminalWriteProfile[] | null = null;
   let keySubscription: { dispose(): void } | null = null;
   const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
     keySubscription?.dispose();
@@ -95,9 +101,10 @@ export async function createBrowserTerminal(
 
     pendingCanvasRenders = [];
     terminalRenderer.render = (...args: Parameters<typeof terminalRenderer.render>) => {
+      const profiles = pendingCanvasRenders?.splice(0) ?? [];
+      for (const profile of profiles) profile.onRenderStart();
       originalRender.apply(terminalRenderer, args);
-      const callbacks = pendingCanvasRenders?.splice(0) ?? [];
-      for (const callback of callbacks) callback();
+      for (const profile of profiles) profile.onRenderComplete();
     };
     keySubscription = terminal.onKey(({ domEvent }) => handler(domEvent));
   };
@@ -140,16 +147,17 @@ export async function createBrowserTerminal(
     get rows() {
       return terminal.rows;
     },
-    write(data, onCanvasRender) {
-      if (pendingCanvasRenders && onCanvasRender) {
-        pendingCanvasRenders.push(onCanvasRender);
+    write(data, profile) {
+      if (pendingCanvasRenders && profile) {
+        pendingCanvasRenders.push(profile);
       }
       try {
         terminal.write(data);
+        profile?.onWriteComplete();
       } catch (error) {
-        if (pendingCanvasRenders && onCanvasRender) {
-          const callbackIndex = pendingCanvasRenders.lastIndexOf(onCanvasRender);
-          if (callbackIndex >= 0) pendingCanvasRenders.splice(callbackIndex, 1);
+        if (pendingCanvasRenders && profile) {
+          const profileIndex = pendingCanvasRenders.lastIndexOf(profile);
+          if (profileIndex >= 0) pendingCanvasRenders.splice(profileIndex, 1);
         }
         throw error;
       }

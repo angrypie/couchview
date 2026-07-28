@@ -1,4 +1,5 @@
 import type { TerminalRendererConfig } from "./typographyPreferences.ts";
+import type { BrowserTerminalWriteProfile } from "./ghosttyTerminal.ts";
 
 interface RendererOptions {
   container: HTMLElement;
@@ -16,7 +17,7 @@ export const rendererState = {
   focuses: 0,
   latencyKeyHandler: null as ((event: KeyboardEvent) => void) | null,
   options: null as RendererOptions | null,
-  pendingCanvasRenders: [] as Array<() => void>,
+  pendingCanvasRenders: [] as BrowserTerminalWriteProfile[],
   writes: [] as Uint8Array[],
 };
 
@@ -56,9 +57,10 @@ export async function terminalRendererFactory(options: RendererOptions) {
       rendererState.latencyKeyHandler = handler;
       if (!handler) rendererState.pendingCanvasRenders.length = 0;
     },
-    write(data: Uint8Array<ArrayBuffer>, onCanvasRender?: () => void) {
+    write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile) {
       rendererState.writes.push(data);
-      if (onCanvasRender) rendererState.pendingCanvasRenders.push(onCanvasRender);
+      profile?.onWriteComplete();
+      if (profile) rendererState.pendingCanvasRenders.push(profile);
     },
   };
 }

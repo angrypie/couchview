@@ -220,7 +220,7 @@ describe("TerminalWorkspace", () => {
     await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
     const overlay = screen.getByTestId("terminal-latency-overlay");
     expect(overlay.textContent).toContain("Waiting…");
-    expect(overlay.textContent).toContain("Server round trip");
+    expect(overlay.textContent).toContain("Baseline RTT");
     await waitFor(() => expect(rendererState.latencyKeyHandler).not.toBeNull());
 
     const ping = socket.sent
@@ -229,7 +229,7 @@ describe("TerminalWorkspace", () => {
       .find((control) => control.type === "ping");
     expect(ping?.id).toBeNumber();
     await act(async () => socket.emitMessage(JSON.stringify({ type: "pong", id: ping!.id })));
-    expect(overlay.textContent).toMatch(/Server round trip\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Baseline RTT\d+\.\d ms/);
 
     await act(async () => {
       rendererState.latencyKeyHandler!(new KeyboardEvent("keydown", { key: "x" }));
@@ -241,10 +241,22 @@ describe("TerminalWorkspace", () => {
     expect(rendererState.pendingCanvasRenders).toHaveLength(1);
     expect(overlay.textContent).toContain("Waiting…");
 
-    await act(async () => rendererState.pendingCanvasRenders.shift()?.());
+    await act(async () => {
+      const render = rendererState.pendingCanvasRenders.shift();
+      render?.onRenderStart();
+      render?.onRenderComplete();
+    });
     expect(overlay.textContent).toMatch(/Key → canvas\d+\.\d ms/);
     expect(overlay.textContent).toMatch(/p50 \d+\.\d · p95 \d+\.\d · n=1/);
-    expect(overlay.textContent).toContain("Median RTT is ~");
+    expect(overlay.textContent).toMatch(/Press → send\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Send → receive\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Receive → paint\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Receive → write done\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Frame wait\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/Canvas render\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(
+      /Latest key: \d+\.\d \+ \d+\.\d \+ \d+\.\d = \d+\.\d ms/,
+    );
   });
 
   test("reattaches each new renderer after rapid typography changes while hidden", async () => {

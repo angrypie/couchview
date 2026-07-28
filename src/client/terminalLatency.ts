@@ -5,6 +5,16 @@ export interface TerminalLatencySummary {
   sampleCount: number;
 }
 
+export interface TerminalKeyLatencySummary {
+  total: TerminalLatencySummary;
+  pressToSend: TerminalLatencySummary;
+  sendToReceive: TerminalLatencySummary;
+  receiveToPaint: TerminalLatencySummary;
+  receiveToWrite: TerminalLatencySummary;
+  writeToRender: TerminalLatencySummary;
+  renderDuration: TerminalLatencySummary;
+}
+
 export interface TerminalLatencyKeyEvent {
   altKey: boolean;
   ctrlKey: boolean;
@@ -32,7 +42,20 @@ interface PendingKey {
 
 interface ActiveSample extends PendingKey {
   id: number;
+  sentAt: number;
   responseAt: number | null;
+  writeCompletedAt: number | null;
+  renderStartedAt: number | null;
+}
+
+interface CompletedKeySample {
+  total: number;
+  pressToSend: number;
+  sendToReceive: number;
+  receiveToPaint: number;
+  receiveToWrite: number;
+  writeToRender: number;
+  renderDuration: number;
 }
 
 const DEFAULT_HISTORY_LIMIT = 200;
@@ -59,6 +82,21 @@ function summarizeLatencySamples(samples: readonly number[]): TerminalLatencySum
     p50Ms: roundedMilliseconds(percentile(sorted, 0.5)),
     p95Ms: roundedMilliseconds(percentile(sorted, 0.95)),
     sampleCount: samples.length,
+  };
+}
+
+function summarizeKeySamples(
+  samples: readonly CompletedKeySample[],
+): TerminalKeyLatencySummary | null {
+  if (samples.length === 0) return null;
+  return {
+    total: summarizeLatencySamples(samples.map((sample) => sample.total))!,
+    pressToSend: summarizeLatencySamples(samples.map((sample) => sample.pressToSend))!,
+    sendToReceive: summarizeLatencySamples(samples.map((sample) => sample.sendToReceive))!,
+    receiveToPaint: summarizeLatencySamples(samples.map((sample) => sample.receiveToPaint))!,
+    receiveToWrite: summarizeLatencySamples(samples.map((sample) => sample.receiveToWrite))!,
+    writeToRender: summarizeLatencySamples(samples.map((sample) => sample.writeToRender))!,
+    renderDuration: summarizeLatencySamples(samples.map((sample) => sample.renderDuration))!,
   };
 }
 
@@ -92,7 +130,7 @@ export class TerminalLatencyTracker {
   private readonly historyLimit: number;
   private readonly quietWindowMs: number;
   private readonly sampleTimeoutMs: number;
-  private readonly samples: number[] = [];
+  private readonly samples: CompletedKeySample[] = [];
   private pendingKey: PendingKey | null = null;
   private activeSample: ActiveSample | null = null;
   private lastHostOutputAt = Number.NEGATIVE_INFINITY;
@@ -135,7 +173,10 @@ export class TerminalLatencyTracker {
     this.activeSample = {
       ...this.pendingKey,
       id: this.nextSampleId++,
+      sentAt: now,
       responseAt: null,
+      writeCompletedAt: null,
+      renderStartedAt: null,
     };
     this.pendingKey = null;
   }
@@ -148,16 +189,55 @@ export class TerminalLatencyTracker {
     return this.activeSample.id;
   }
 
-  canvasRendered(sampleId: number, now: number): TerminalLatencySummary | null {
+  terminalWriteCompleted(sampleId: number, now: number): void {
     this.expirePending(now);
     if (
       !this.activeSample ||
       this.activeSample.id !== sampleId ||
-      this.activeSample.responseAt === null
+      this.activeSample.responseAt === null ||
+      this.activeSample.writeCompletedAt !== null
+    ) {
+      return;
+    }
+    this.activeSample.writeCompletedAt = now;
+  }
+
+  canvasRenderStarted(sampleId: number, now: number): void {
+    this.expirePending(now);
+    if (
+      !this.activeSample ||
+      this.activeSample.id !== sampleId ||
+      this.activeSample.writeCompletedAt === null ||
+      this.activeSample.renderStartedAt !== null
+    ) {
+      return;
+    }
+    this.activeSample.renderStartedAt = now;
+  }
+
+  canvasRendered(sampleId: number, now: number): TerminalKeyLatencySummary | null {
+    this.expirePending(now);
+    if (
+      !this.activeSample ||
+      this.activeSample.id !== sampleId ||
+      this.activeSample.responseAt === null ||
+      this.activeSample.writeCompletedAt === null ||
+      this.activeSample.renderStartedAt === null
     ) {
       return null;
     }
-    this.samples.push(Math.max(0, now - this.activeSample.startedAt));
+    const responseAt = this.activeSample.responseAt;
+    const writeCompletedAt = this.activeSample.writeCompletedAt;
+    const renderStartedAt = this.activeSample.renderStartedAt;
+    this.samples.push({
+      total: Math.max(0, now - this.activeSample.startedAt),
+      pressToSend: Math.max(0, this.activeSample.sentAt - this.activeSample.startedAt),
+      sendToReceive: Math.max(0, responseAt - this.activeSample.sentAt),
+      receiveToPaint: Math.max(0, now - responseAt),
+      receiveToWrite: Math.max(0, writeCompletedAt - responseAt),
+      writeToRender: Math.max(0, renderStartedAt - writeCompletedAt),
+      renderDuration: Math.max(0, now - renderStartedAt),
+    });
     if (this.samples.length > this.historyLimit) this.samples.shift();
     this.activeSample = null;
     return this.summary();
@@ -178,8 +258,8 @@ export class TerminalLatencyTracker {
     this.blockedUntil = Number.NEGATIVE_INFINITY;
   }
 
-  summary(): TerminalLatencySummary | null {
-    return summarizeLatencySamples(this.samples);
+  summary(): TerminalKeyLatencySummary | null {
+    return summarizeKeySamples(this.samples);
   }
 
   private expirePending(now: number): void {

@@ -212,9 +212,9 @@ test.describe("desktop tmux terminal", () => {
     await expect(page).toHaveURL(/(?:\?|&)terminalLatency=1(?:&|$)/);
     const overlay = workspace.getByTestId("terminal-latency-overlay");
     await expect(overlay).toContainText("Key → canvas");
-    await expect(overlay).toContainText("Server round trip");
+    await expect(overlay).toContainText("Baseline RTT");
     const networkMetric = overlay.locator(".terminal-latency-grid > div").filter({
-      hasText: "Server round trip",
+      hasText: "Baseline RTT",
     });
     await expect(networkMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
 
@@ -256,6 +256,18 @@ test.describe("desktop tmux terminal", () => {
     });
     await expect(keyMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
     await expect(keyMetric.locator("small")).toContainText("n=1");
+    for (const label of ["Press → send", "Send → receive", "Receive → paint"]) {
+      const phase = resumedOverlay.locator(".terminal-latency-phases > div").filter({
+        hasText: label,
+      });
+      await expect(phase.locator("strong")).toHaveText(/\d+\.\d ms/);
+    }
+    for (const label of ["Receive → write done", "Frame wait", "Canvas render"]) {
+      const detail = resumedOverlay.locator(".terminal-latency-receive-detail > div").filter({
+        hasText: label,
+      });
+      await expect(detail.locator("strong")).toHaveText(/\d+\.\d ms/);
+    }
     expect(await canvasHash()).not.toBe(before);
   });
 
