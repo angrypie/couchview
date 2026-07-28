@@ -52,6 +52,8 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/terminal`,
   terminalAttachments: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/terminal/attachments`,
+  terminalLease: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/terminal/lease`,
   terminalEnd: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/terminal/end`,
   terminalSocket: (repositoryId: string) =>
@@ -74,6 +76,10 @@ export const API_ROUTES = {
 
 export const CSRF_HEADER = "x-couchview-csrf";
 export const TERMINAL_ENDED_CLOSE_CODE = 4002;
+export const TERMINAL_P2P_FAILED_CLOSE_CODE = 4004;
+export const TERMINAL_LEASE_EXPIRED_CLOSE_CODE = 4005;
+export const TERMINAL_DATA_CHANNEL_LABEL = "couchview-terminal";
+export const TERMINAL_DATA_CHANNEL_PROTOCOL = "couchview-terminal-data-v1";
 
 export type ChangeKind =
   | "added"
@@ -148,6 +154,8 @@ export interface InstanceResponse {
   port: number;
   accessOrigins: string[];
   terminalEnabled: boolean;
+  terminalP2pEnabled: boolean;
+  terminalStunUrls: string[];
 }
 
 export interface RestartCapability {
@@ -203,6 +211,25 @@ export interface TerminalAttachmentResponse {
   expiresAt: string;
   protocol: "couchview-terminal-v1";
   session: TerminalSessionStatus;
+  webRtc?: TerminalWebRtcConfiguration;
+}
+
+export interface TerminalIceServer {
+  urls: string;
+}
+
+export interface TerminalWebRtcConfiguration {
+  iceServers: TerminalIceServer[];
+  negotiationTimeoutMs: number;
+  leaseRenewIntervalMs: number;
+}
+
+export interface TerminalLeaseRequest {
+  clientId: string;
+}
+
+export interface TerminalLeaseResponse {
+  expiresAt: string;
 }
 
 export interface TerminalEndResponse {

@@ -121,8 +121,50 @@ Forgetting a repository uses the same warning.
 
 The terminal runs on the Couchview host. If Couchview itself runs on a remote
 machine, tmux, its shell, and the repository are remote automatically. The
-authenticated WebSocket provides browser attachment and reconnection without
-exposing a separate terminal transport.
+authenticated WebSocket always provides browser attachment, authorization,
+signaling, and reconnection.
+
+#### Optional direct terminal path
+
+Terminal traffic can opportunistically move from that WebSocket to an ordered,
+reliable WebRTC DataChannel. This is a separate explicit opt-in and requires
+terminal access itself to be enabled:
+
+```sh
+couchview --enable-terminal --enable-terminal-p2p
+# or
+COUCHVIEW_TERMINAL=1 COUCHVIEW_TERMINAL_P2P=1 couchview
+```
+
+Use `--disable-terminal-p2p` or `COUCHVIEW_TERMINAL_P2P=0` to force WebSocket
+transport. P2P is disabled by default, including when terminal access is enabled
+automatically on loopback. The toolbar reports **Finding direct path**, **Direct
+P2P**, **WebSocket**, or **WebSocket fallback**. When ICE cannot establish a
+direct route, the existing terminal stays attached over WebSocket. If an active
+DataChannel is lost or exceeds its bounded backpressure buffer, Couchview
+immediately reattaches over WebSocket without ending tmux; use **Retry P2P** to
+make another direct-path attempt.
+
+The default ICE discovery server is `stun:stun.cloudflare.com:3478`. Override it
+with one to four comma-separated `stun:` URLs:
+
+```sh
+COUCHVIEW_TERMINAL_STUN=stun:stun.example.net:3478,stun:backup.example.net couchview \
+  --enable-terminal --enable-terminal-p2p
+```
+
+There is deliberately no TURN relay. Networks that block UDP, symmetric NATs,
+and restrictive firewalls can therefore prevent a direct path; WebSocket remains
+the fallback. The authenticated control WebSocket stays open during P2P, and the
+browser renews a same-origin authorization lease through the protected HTTP API.
+Closing that controller, taking over from another tab, ending the session,
+forgetting the repository, or restarting Couchview also tears down WebRTC.
+
+P2P changes the privacy boundary: ICE can reveal peer IP addresses to the
+authorized browser and Couchview host, and terminal payloads on a direct path no
+longer traverse Cloudflare Tunnel. Cloudflare Access and Tunnel still protect
+signaling, lease renewal, and WebSocket fallback. Enable it only when that direct
+peer-to-peer exposure is acceptable.
 
 ### Remote HTTPS access through Cloudflare
 
@@ -336,7 +378,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 
 Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. If a database already exists at the pre-rename `couch-review` path and the new path does not exist, Couchview continues using it so saved reviews and comments remain available. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
 
-Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo`, `--port`, `--enable-terminal`, and `--disable-terminal` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
+Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo`, `--port`, `--enable-terminal`, `--disable-terminal`, `--enable-terminal-p2p`, and `--disable-terminal-p2p` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 

@@ -9,6 +9,8 @@ interface TerminalFixtureState {
   socketConnections: number;
   inputs: string[];
   resizes: Array<{ cols: number; rows: number }>;
+  p2pActive: boolean;
+  p2pConnections: number;
 }
 
 test.describe("desktop tmux terminal", () => {
@@ -195,6 +197,62 @@ test.describe("desktop tmux terminal", () => {
     expect((await state()).attachmentCount).toBe(connectedState.attachmentCount);
     expect((await state()).socketConnections).toBe(connectedState.socketConnections);
     expect((await state()).running).toBe(false);
+  });
+
+  test("moves terminal traffic to a real DataChannel and falls back without ending tmux", async ({
+    page,
+    request,
+  }) => {
+    const state = async () => (await (
+      await request.get("/api/e2e/terminal")
+    ).json()) as TerminalFixtureState;
+    await page.goto("/?terminalLatency=1");
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const workspace = page.getByRole("region", { name: "tmux terminal" });
+    const surface = workspace.locator(".terminal-surface");
+    await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(workspace.getByTestId("terminal-transport")).toHaveText("Direct P2P", {
+      timeout: 15_000,
+    });
+    await expect.poll(async () => (await state()).p2pActive).toBe(true);
+
+    await surface.click();
+    await page.keyboard.type("direct-data-channel");
+    await expect.poll(async () => (await state()).inputs.join("")).toContain(
+      "direct-data-channel",
+    );
+    const overlay = workspace.getByTestId("terminal-latency-overlay");
+    const baseline = overlay.locator(".terminal-latency-grid > div").filter({
+      hasText: "Baseline RTT",
+    });
+    await expect(baseline.locator("strong")).toHaveText(/\d+\.\d ms/);
+
+    const failed = await request.post("/api/e2e/terminal/p2p/fail", {
+      headers: { "x-couchview-csrf": fixtureCsrf },
+    });
+    expect(failed.ok()).toBe(true);
+    await expect(workspace.getByTestId("terminal-transport")).toHaveText(
+      "WebSocket fallback",
+      { timeout: 15_000 },
+    );
+    await expect.poll(async () => (await state()).socketConnections).toBe(2);
+    expect((await state()).running).toBe(true);
+    expect((await state()).p2pConnections).toBe(1);
+
+    await surface.click();
+    await page.keyboard.type("websocket-fallback");
+    await expect.poll(async () => (await state()).inputs.join("")).toContain(
+      "websocket-fallback",
+    );
+    await workspace.getByRole("button", { name: "Retry P2P" }).click();
+    await expect(workspace.getByTestId("terminal-transport")).toHaveText("Direct P2P", {
+      timeout: 15_000,
+    });
+    await expect.poll(async () => (await state()).p2pConnections).toBe(2);
+    expect((await state()).running).toBe(true);
   });
 
   test("measures an isolated printable key through the echoed Ghostty canvas render", async ({

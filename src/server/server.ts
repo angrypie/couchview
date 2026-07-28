@@ -38,6 +38,7 @@ import {
   type StageFileRequest,
   type StageFilesRequest,
   type TerminalAttachmentRequest,
+  type TerminalLeaseRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import {
@@ -60,7 +61,7 @@ import {
 
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
-export const INSTANCE_PROTOCOL_VERSION = 3;
+export const INSTANCE_PROTOCOL_VERSION = 4;
 export const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
@@ -83,6 +84,8 @@ export interface CouchviewAppOptions {
     enabled: boolean;
     disabledReason?: string;
     namespaceSeed?: string;
+    p2pEnabled?: boolean;
+    stunUrls?: string[];
   };
   terminalSessions?: TerminalSessionService;
 }
@@ -440,6 +443,8 @@ export async function createCouchviewApp(
         : "Terminal access on non-loopback hosts requires --enable-terminal or COUCHVIEW_TERMINAL=1."),
     namespaceSeed: options.terminal?.namespaceSeed ??
       `${stateDatabasePath}\0${host}\0${port}`,
+    p2pEnabled: options.terminal?.p2pEnabled ?? false,
+    stunUrls: options.terminal?.stunUrls,
   });
   const streams = new Set<StreamState>();
   const subscriptions = new Map<string, () => void>();
@@ -641,6 +646,8 @@ export async function createCouchviewApp(
         port,
         accessOrigins: [...accessOrigins],
         terminalEnabled: terminalSessions.enabled,
+        terminalP2pEnabled: terminalSessions.p2pEnabled,
+        terminalStunUrls: [...terminalSessions.stunUrls],
       };
       return json(response);
     }
@@ -744,6 +751,17 @@ export async function createCouchviewApp(
         ),
         { status: 201 },
       );
+    }
+    if (nestedPath === "terminal/lease" && request.method === "POST") {
+      const input = await readJsonObject<TerminalLeaseRequest>(request);
+      const origin = request.headers.get("origin");
+      if (!origin) {
+        throw new HttpError(403, "origin_required", "A same-origin browser request is required");
+      }
+      return json(await terminalSessions.renewLease(repositoryId, input, {
+        host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+        origin: normalizeOrigin(origin),
+      }));
     }
     if (nestedPath === "terminal/end" && request.method === "POST") {
       return json(await terminalSessions.end(repositoryId));

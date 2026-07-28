@@ -138,10 +138,13 @@ describe("Couchview HTTP security and routes", () => {
       repositoryRoot: string;
     }> = [];
     const endCalls: string[] = [];
+    const leaseCalls: Array<{ repositoryId: string; clientId: string }> = [];
     let consumedUpgrade = false;
     let closed = false;
     const terminalSessions = {
       enabled: true,
+      p2pEnabled: true,
+      stunUrls: ["stun:stun.cloudflare.com:3478"],
       capability: {
         available: true,
         reason: null,
@@ -170,6 +173,10 @@ describe("Couchview HTTP security and routes", () => {
         endCalls.push(repositoryId);
         return { status: "ended" };
       },
+      renewLease(repositoryId: string, input: { clientId: string }) {
+        leaseCalls.push({ repositoryId, clientId: input.clientId });
+        return { expiresAt: "2026-07-26T12:02:00.000Z" };
+      },
       consumeUpgrade(
         repositoryId: string,
         _request: Request,
@@ -185,6 +192,8 @@ describe("Couchview HTTP security and routes", () => {
           cols: 100,
           rows: 32,
           takeover: false,
+          host: "127.0.0.1:3001",
+          origin: "http://127.0.0.1:3001",
         };
       },
       close() {
@@ -232,6 +241,20 @@ describe("Couchview HTTP security and routes", () => {
     expect(attachmentCalls).toEqual([{
       repositoryId: app.repository.id,
       repositoryRoot: app.repository.root,
+    }]);
+
+    const leased = await app.fetch(request(
+      API_ROUTES.terminalLease(app.repository.id),
+      {
+        method: "POST",
+        headers: mutationHeaders,
+        body: JSON.stringify({ clientId: "client_12345678" }),
+      },
+    ));
+    expect(leased.status).toBe(200);
+    expect(leaseCalls).toEqual([{
+      repositoryId: app.repository.id,
+      clientId: "client_12345678",
     }]);
 
     const ended = await app.fetch(request(
@@ -1117,7 +1140,7 @@ describe("Couchview HTTP security and routes", () => {
     expect(instance.status).toBe(200);
     expect(await instance.json()).toMatchObject({
       service: "couchview",
-      protocolVersion: 3,
+      protocolVersion: 4,
       instanceId: app.instanceId,
       bindHost: "127.0.0.1",
       port: 3001,

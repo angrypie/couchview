@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { TERMINAL_ENDED_CLOSE_CODE } from "../shared/contracts.ts";
+import {
+  TERMINAL_ENDED_CLOSE_CODE,
+  TERMINAL_P2P_FAILED_CLOSE_CODE,
+} from "../shared/contracts.ts";
 import {
   FakeTerminalWebSocket,
   rendererState,
@@ -26,6 +29,7 @@ const { TerminalWorkspace } = await import("./TerminalWorkspace.tsx");
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
+const originalRtcPeerConnection = globalThis.RTCPeerConnection;
 const originalConfirm = window.confirm;
 
 const capability = {
@@ -46,6 +50,118 @@ interface FetchRecord {
 let fetchRecords: FetchRecord[] = [];
 let attachmentResponses: Response[] = [];
 let endResponses: Response[] = [];
+let leaseResponses: Response[] = [];
+
+const applicationSdp = "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+
+type RtcListener = (event: MessageEvent | Event) => void;
+
+class FakeRtcDataChannel {
+  readonly label = "couchview-terminal";
+  readonly protocol = "couchview-terminal-data-v1";
+  readonly ordered = true;
+  readonly maxRetransmits = null;
+  readonly maxPacketLifeTime = null;
+  binaryType: BinaryType = "blob";
+  readyState: RTCDataChannelState = "connecting";
+  bufferedAmount = 0;
+  readonly sent: Array<string | ArrayBuffer> = [];
+  private readonly listeners = new Map<string, RtcListener[]>();
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener as RtcListener);
+    this.listeners.set(type, listeners);
+  }
+
+  send(value: string | ArrayBuffer | ArrayBufferView<ArrayBuffer>): void {
+    if (typeof value === "string" || value instanceof ArrayBuffer) {
+      this.sent.push(value);
+    } else {
+      this.sent.push(Uint8Array.from(new Uint8Array(
+        value.buffer,
+        value.byteOffset,
+        value.byteLength,
+      )).buffer);
+    }
+  }
+
+  open(): void {
+    this.readyState = "open";
+    this.emit("open", new Event("open"));
+  }
+
+  emitMessage(value: string | ArrayBuffer): void {
+    this.emit("message", new MessageEvent("message", { data: value }));
+  }
+
+  emitClose(): void {
+    this.readyState = "closed";
+    this.emit("close", new Event("close"));
+  }
+
+  close(): void {
+    if (this.readyState !== "closed") this.emitClose();
+  }
+
+  private emit(type: string, event: MessageEvent | Event): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+}
+
+class FakeRtcPeerConnection {
+  static instances: FakeRtcPeerConnection[] = [];
+
+  readonly channel = new FakeRtcDataChannel();
+  readonly configuration: RTCConfiguration;
+  iceGatheringState: RTCIceGatheringState = "complete";
+  connectionState: RTCPeerConnectionState = "new";
+  localDescription: (RTCSessionDescription & { toJSON(): RTCSessionDescriptionInit }) | null = null;
+  remoteDescription: RTCSessionDescriptionInit | null = null;
+  closed = false;
+  private readonly listeners = new Map<string, EventListener[]>();
+
+  constructor(configuration: RTCConfiguration = {}) {
+    this.configuration = configuration;
+    FakeRtcPeerConnection.instances.push(this);
+  }
+
+  createDataChannel(): RTCDataChannel {
+    return this.channel as unknown as RTCDataChannel;
+  }
+
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    return { type: "offer", sdp: applicationSdp };
+  }
+
+  async setLocalDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    this.localDescription = {
+      type: description.type!,
+      sdp: description.sdp!,
+      toJSON: () => ({ type: description.type, sdp: description.sdp }),
+    } as RTCSessionDescription & { toJSON(): RTCSessionDescriptionInit };
+  }
+
+  async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    this.remoteDescription = description;
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? [];
+    this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
+  }
+
+  close(): void {
+    this.closed = true;
+    this.connectionState = "closed";
+  }
+}
 
 function jsonResponse(value: unknown, status = 200): Response {
   return Response.json(value, { status });
@@ -69,6 +185,11 @@ function terminalFetch(input: string | URL | Request, init?: RequestInit): Promi
   if (url.pathname.endsWith("/terminal/end")) {
     return Promise.resolve(endResponses.shift() ?? jsonResponse({ status: "ended" }));
   }
+  if (url.pathname.endsWith("/terminal/lease")) {
+    return Promise.resolve(leaseResponses.shift() ?? jsonResponse({
+      expiresAt: "2026-07-26T12:02:00.000Z",
+    }));
+  }
   return Promise.resolve(jsonResponse({ error: { code: "not_found", message: url.pathname } }, 404));
 }
 
@@ -86,11 +207,39 @@ function defaultProps() {
   };
 }
 
+function installFakeRtc(): void {
+  const constructor = FakeRtcPeerConnection as unknown as typeof RTCPeerConnection;
+  Object.defineProperty(globalThis, "RTCPeerConnection", {
+    configurable: true,
+    value: constructor,
+  });
+  Object.defineProperty(window, "RTCPeerConnection", {
+    configurable: true,
+    value: constructor,
+  });
+}
+
+function p2pAttachment(ticket: string, leaseRenewIntervalMs = 30_000) {
+  return jsonResponse({
+    ticket,
+    expiresAt: "2026-07-26T12:00:30.000Z",
+    protocol: "couchview-terminal-v1",
+    session: { profileId: "tmux", running: true, controllerConnected: false },
+    webRtc: {
+      iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+      negotiationTimeoutMs: 10_000,
+      leaseRenewIntervalMs,
+    },
+  }, 201);
+}
+
 beforeEach(() => {
   resetRendererState();
   fetchRecords = [];
   attachmentResponses = [];
   endResponses = [];
+  leaseResponses = [];
+  FakeRtcPeerConnection.instances = [];
   resetFakeTerminalWebSockets();
   window.history.replaceState({}, "", "/");
   sessionStorage.clear();
@@ -102,6 +251,14 @@ beforeEach(() => {
   Object.defineProperty(window, "WebSocket", {
     configurable: true,
     value: FakeTerminalWebSocket,
+  });
+  Object.defineProperty(globalThis, "RTCPeerConnection", {
+    configurable: true,
+    value: undefined,
+  });
+  Object.defineProperty(window, "RTCPeerConnection", {
+    configurable: true,
+    value: undefined,
   });
   window.confirm = () => true;
 });
@@ -116,6 +273,14 @@ afterEach(() => {
   Object.defineProperty(window, "WebSocket", {
     configurable: true,
     value: originalWebSocket,
+  });
+  Object.defineProperty(globalThis, "RTCPeerConnection", {
+    configurable: true,
+    value: originalRtcPeerConnection,
+  });
+  Object.defineProperty(window, "RTCPeerConnection", {
+    configurable: true,
+    value: originalRtcPeerConnection,
   });
   window.confirm = originalConfirm;
 });
@@ -174,6 +339,148 @@ describe("TerminalWorkspace", () => {
     view.unmount();
     expect(rendererState.disposed).toBe(1);
     expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
+  });
+
+  test("keeps WebSocket transport when native WebRTC is unavailable", async () => {
+    attachmentResponses.push(p2pAttachment("p2p-unavailable"));
+    render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("WebSocket");
+    expect(socket.sent.some((value) =>
+      typeof value === "string" && value.includes("webrtc-offer")
+    )).toBe(false);
+  });
+
+  test("upgrades input, output, resize, pings, and lease renewal to direct P2P", async () => {
+    installFakeRtc();
+    attachmentResponses.push(p2pAttachment("p2p-success", 20));
+    const view = render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+    await waitFor(() => expect(FakeRtcPeerConnection.instances).toHaveLength(1));
+    const peer = FakeRtcPeerConnection.instances[0]!;
+    expect(peer.configuration.iceServers).toEqual([
+      { urls: "stun:stun.cloudflare.com:3478" },
+    ]);
+    await waitFor(() => expect(socket.sent.some((value) =>
+      typeof value === "string" && value.includes("webrtc-offer")
+    )).toBe(true));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("Finding direct path");
+
+    await act(async () => socket.emitMessage(JSON.stringify({
+      type: "webrtc-answer",
+      answer: { type: "answer", sdp: applicationSdp },
+    })));
+    expect(peer.remoteDescription).toEqual({ type: "answer", sdp: applicationSdp });
+    peer.channel.open();
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "webrtc-switch" })));
+    expect(socket.sent).toContain(JSON.stringify({ type: "webrtc-activate" }));
+
+    const websocketBinaryBeforeSwitch = socket.sent.filter((value) =>
+      value instanceof Uint8Array
+    ).length;
+    rendererState.options!.onData(new TextEncoder().encode("queued"));
+    expect(socket.sent.filter((value) => value instanceof Uint8Array)).toHaveLength(
+      websocketBinaryBeforeSwitch,
+    );
+    expect(peer.channel.sent).toHaveLength(0);
+
+    await act(async () => peer.channel.emitMessage(JSON.stringify({
+      type: "ready",
+      transport: "webrtc",
+      leaseExpiresAt: "2026-07-26T12:02:00.000Z",
+    })));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("Direct P2P");
+    expect(new TextDecoder().decode(peer.channel.sent[0] as ArrayBuffer)).toBe("queued");
+
+    await act(async () => peer.channel.emitMessage(new TextEncoder().encode("direct-output").buffer));
+    expect(new TextDecoder().decode(rendererState.writes.at(-1))).toBe("direct-output");
+    rendererState.options!.onResize(121, 41);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    expect(peer.channel.sent.some((value) =>
+      typeof value === "string" && value === JSON.stringify({ type: "resize", cols: 121, rows: 41 })
+    )).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Debug" }));
+    await waitFor(() => expect(peer.channel.sent.some((value) =>
+      typeof value === "string" && value.includes('"type":"ping"')
+    )).toBe(true));
+    await waitFor(() => expect(fetchRecords.some((record) =>
+      record.path.endsWith("/terminal/lease") &&
+      (record.body as { clientId?: string }).clientId
+    )).toBe(true));
+    expect(socket.closes).toHaveLength(0);
+
+    view.unmount();
+    expect(peer.closed).toBe(true);
+  });
+
+  test("falls back after direct-path loss, suppresses automatic retry, and offers Retry P2P", async () => {
+    installFakeRtc();
+    attachmentResponses.push(
+      p2pAttachment("p2p-first"),
+      p2pAttachment("p2p-fallback"),
+    );
+    render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const firstSocket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => firstSocket.emitMessage(JSON.stringify({ type: "ready" })));
+    await waitFor(() => expect(FakeRtcPeerConnection.instances).toHaveLength(1));
+    const firstPeer = FakeRtcPeerConnection.instances[0]!;
+    await act(async () => firstSocket.emitMessage(JSON.stringify({
+      type: "webrtc-answer",
+      answer: { type: "answer", sdp: applicationSdp },
+    })));
+    firstPeer.channel.open();
+    await act(async () => firstSocket.emitMessage(JSON.stringify({ type: "webrtc-switch" })));
+    await act(async () => firstPeer.channel.emitMessage(JSON.stringify({
+      type: "ready",
+      transport: "webrtc",
+    })));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("Direct P2P");
+
+    await act(async () => firstPeer.channel.emitClose());
+    expect(firstSocket.closes).toContainEqual({
+      code: TERMINAL_P2P_FAILED_CLOSE_CODE,
+      reason: "terminal_p2p_client_failed",
+    });
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("WebSocket fallback");
+    await act(async () => firstSocket.emitClose(
+      TERMINAL_P2P_FAILED_CLOSE_CODE,
+      "terminal_p2p_channel_closed",
+    ));
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(2));
+    const fallbackSocket = FakeTerminalWebSocket.instances[1]!;
+    await act(async () => fallbackSocket.emitMessage(JSON.stringify({ type: "ready" })));
+    expect(FakeRtcPeerConnection.instances).toHaveLength(1);
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("WebSocket fallback");
+    expect(screen.getByRole("button", { name: "Retry P2P" })).toBeTruthy();
+    rendererState.options!.onData(new TextEncoder().encode("fallback-input"));
+    expect(fallbackSocket.sent.some((value) => value instanceof Uint8Array)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry P2P" }));
+    await waitFor(() => expect(FakeRtcPeerConnection.instances).toHaveLength(2));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("Finding direct path");
+  });
+
+  test("returns to the live WebSocket when direct negotiation is unavailable", async () => {
+    installFakeRtc();
+    attachmentResponses.push(p2pAttachment("p2p-negotiation-fallback"));
+    render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+    await waitFor(() => expect(FakeRtcPeerConnection.instances).toHaveLength(1));
+    await act(async () => socket.emitMessage(JSON.stringify({
+      type: "webrtc-unavailable",
+      message: "No direct path",
+    })));
+    expect(screen.getByTestId("terminal-transport").textContent).toBe("WebSocket");
+    rendererState.options!.onData(new TextEncoder().encode("still-live"));
+    expect(socket.sent.some((value) => value instanceof Uint8Array)).toBe(true);
   });
 
   test("keeps the Debug control visible while gating diagnostics behind its flag", async () => {

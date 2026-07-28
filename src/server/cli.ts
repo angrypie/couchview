@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { rename, rm } from "node:fs/promises";
+import { isIP } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,12 +27,17 @@ import {
 import { terminalAccessIsLoopback } from "./terminalSessions.ts";
 
 export type TerminalMode = "auto" | "enabled" | "disabled";
+export type TerminalP2pMode = "auto" | "enabled" | "disabled";
+
+export const DEFAULT_TERMINAL_STUN_URLS = ["stun:stun.cloudflare.com:3478"] as const;
 
 interface CliOptions {
   root: string;
   host: string;
   port: number;
   terminalMode: TerminalMode;
+  terminalP2pMode: TerminalP2pMode;
+  terminalStunUrls: string[];
 }
 
 interface RunningRegistration {
@@ -209,6 +215,15 @@ export function parseCli(argv: string[]): CliOptions {
     else throw new Error("COUCHVIEW_TERMINAL must be 1 or 0");
   }
   let terminalFlag: Exclude<TerminalMode, "auto"> | null = null;
+  const terminalP2pEnvironment = Bun.env.COUCHVIEW_TERMINAL_P2P;
+  let environmentTerminalP2pMode: TerminalP2pMode = "auto";
+  if (terminalP2pEnvironment !== undefined) {
+    if (terminalP2pEnvironment === "1") environmentTerminalP2pMode = "enabled";
+    else if (terminalP2pEnvironment === "0") environmentTerminalP2pMode = "disabled";
+    else throw new Error("COUCHVIEW_TERMINAL_P2P must be 1 or 0");
+  }
+  const terminalStunUrls = parseTerminalStunUrls(Bun.env.COUCHVIEW_TERMINAL_STUN);
+  let terminalP2pFlag: Exclude<TerminalP2pMode, "auto"> | null = null;
   let explicitRoot = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -235,6 +250,17 @@ export function parseCli(argv: string[]): CliOptions {
         throw new Error("--enable-terminal and --disable-terminal cannot be used together");
       }
       terminalFlag = mode;
+    } else if (
+      argument === "--enable-terminal-p2p" ||
+      argument === "--disable-terminal-p2p"
+    ) {
+      const mode = argument === "--enable-terminal-p2p" ? "enabled" : "disabled";
+      if (terminalP2pFlag && terminalP2pFlag !== mode) {
+        throw new Error(
+          "--enable-terminal-p2p and --disable-terminal-p2p cannot be used together",
+        );
+      }
+      terminalP2pFlag = mode;
     } else if (argument && !argument.startsWith("-")) {
       if (explicitRoot) throw new Error("Repository path may only be provided once");
       root = argument;
@@ -252,7 +278,42 @@ export function parseCli(argv: string[]): CliOptions {
     host: normalizeBindHost(host),
     port,
     terminalMode: terminalFlag ?? environmentTerminalMode,
+    terminalP2pMode: terminalP2pFlag ?? environmentTerminalP2pMode,
+    terminalStunUrls,
   };
+}
+
+export function parseTerminalStunUrls(value: string | undefined): string[] {
+  const urls = value === undefined
+    ? [...DEFAULT_TERMINAL_STUN_URLS]
+    : value.split(",").map((candidate) => candidate.trim());
+  if (urls.length < 1 || urls.length > 4 || urls.some((candidate) => !candidate)) {
+    throw new Error("COUCHVIEW_TERMINAL_STUN must contain between 1 and 4 STUN URLs");
+  }
+  for (const candidate of urls) {
+    const match = /^stun:(\[[0-9A-Fa-f:.]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(candidate);
+    const rawHost = match?.[1] ?? "";
+    const host = rawHost.startsWith("[") ? rawHost.slice(1, -1) : rawHost;
+    const validHost = rawHost.startsWith("[")
+      ? isIP(host) === 6
+      : isIP(host) === 4 || (
+          host.length <= 253 &&
+          host.split(".").every((label) =>
+            /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(label)
+          )
+        );
+    const explicitPort = match?.[2];
+    if (
+      !match ||
+      !validHost ||
+      (explicitPort !== undefined && (Number(explicitPort) < 1 || Number(explicitPort) > 65_535))
+    ) {
+      throw new Error(
+        "COUCHVIEW_TERMINAL_STUN entries must use stun:host or stun:host:port",
+      );
+    }
+  }
+  return [...new Set(urls)];
 }
 
 function parseRestartCli(argv: string[]): RestartCliOptions {
@@ -330,7 +391,10 @@ function isInstanceResponse(value: unknown): value is InstanceResponse {
     typeof candidate.port === "number" &&
     Array.isArray(candidate.accessOrigins) &&
     candidate.accessOrigins.every((origin) => typeof origin === "string") &&
-    typeof candidate.terminalEnabled === "boolean";
+    typeof candidate.terminalEnabled === "boolean" &&
+    typeof candidate.terminalP2pEnabled === "boolean" &&
+    Array.isArray(candidate.terminalStunUrls) &&
+    candidate.terminalStunUrls.every((url) => typeof url === "string");
 }
 
 async function responseError(response: Response): Promise<string> {
@@ -538,6 +602,24 @@ async function registerWithRunningServer(
       `Couchview is already using port ${options.port} with terminal access enabled; stop it or choose another port`,
     );
   }
+  if (options.terminalP2pMode === "enabled" && !rawInstance.terminalP2pEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with terminal P2P disabled; stop it or choose another port`,
+    );
+  }
+  if (options.terminalP2pMode === "disabled" && rawInstance.terminalP2pEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with terminal P2P enabled; stop it or choose another port`,
+    );
+  }
+  if (
+    options.terminalP2pMode === "enabled" &&
+    options.terminalStunUrls.join(",") !== rawInstance.terminalStunUrls.join(",")
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with different terminal STUN servers; stop it or choose another port`,
+    );
+  }
 
   const database = await StateDatabase.open(resolveStateDatabasePath());
   try {
@@ -674,6 +756,12 @@ export async function startServer(
   const terminalLoopbackOnly = terminalAccessIsLoopback(options.host, allowedOrigins);
   const terminalEnabled = options.terminalMode === "enabled" ||
     (options.terminalMode === "auto" && terminalLoopbackOnly);
+  const terminalP2pEnabled = options.terminalP2pMode === "enabled";
+  if (terminalP2pEnabled && !terminalEnabled) {
+    throw new Error(
+      "Terminal P2P requires terminal access; add --enable-terminal or remove --enable-terminal-p2p",
+    );
+  }
   const terminalDisabledReason = options.terminalMode === "disabled"
     ? "Terminal access was disabled by configuration."
     : "Terminal access on non-loopback hosts requires --enable-terminal or COUCHVIEW_TERMINAL=1.";
@@ -689,6 +777,8 @@ export async function startServer(
     terminal: {
       enabled: terminalEnabled,
       disabledReason: terminalEnabled ? undefined : terminalDisabledReason,
+      p2pEnabled: terminalP2pEnabled,
+      stunUrls: options.terminalStunUrls,
     },
     restart: {
       ...capability,
@@ -816,6 +906,11 @@ export async function startServer(
       "Browser terminal access is enabled beyond loopback. tmux and its programs run with your OS-user permissions; protect every exposed origin with trusted access control.",
     );
   }
+  if (terminalP2pEnabled) {
+    console.warn(
+      "Direct terminal P2P is enabled. Authorized peers can learn this host's network addresses, and terminal payloads bypass Cloudflare after signaling; Access and the tunnel still protect signaling, authorization renewal, and WebSocket fallback.",
+    );
+  }
 
   let stopped = false;
   const stop = () => {
@@ -853,6 +948,11 @@ export async function startServer(
             ? ["--enable-terminal"]
             : options.terminalMode === "disabled"
               ? ["--disable-terminal"]
+              : []),
+          ...(options.terminalP2pMode === "enabled"
+            ? ["--enable-terminal-p2p"]
+            : options.terminalP2pMode === "disabled"
+              ? ["--disable-terminal-p2p"]
               : []),
         ],
         {

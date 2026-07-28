@@ -13,7 +13,10 @@ import {
 import {
   API_ROUTES,
   TERMINAL_ENDED_CLOSE_CODE,
+  TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
+  TERMINAL_P2P_FAILED_CLOSE_CODE,
   type TerminalCapability,
+  type TerminalWebRtcConfiguration,
 } from "../shared/contracts.ts";
 import { ApiError, api } from "./api.ts";
 import {
@@ -31,6 +34,10 @@ import {
   SAFE_TERMINAL_RENDERER_CONFIG,
   type TerminalRendererConfig,
 } from "./typographyPreferences.ts";
+import {
+  TerminalWebRtcUpgrade,
+  type TerminalTransportStatus,
+} from "./terminalWebRtc.ts";
 
 type ConnectionState =
   | "loading"
@@ -56,6 +63,7 @@ interface TerminalWorkspaceProps {
 
 const clientStorageKey = "couchview:terminal-client-id";
 const LATENCY_PING_INTERVAL_MS = 2_000;
+const LEASE_RETRY_INTERVAL_MS = 5_000;
 
 function terminalClientId(): string {
   const existing = window.sessionStorage.getItem(clientStorageKey);
@@ -93,6 +101,19 @@ function stateLabel(state: ConnectionState): string {
   }
 }
 
+function transportLabel(status: TerminalTransportStatus): string {
+  switch (status) {
+    case "finding":
+      return "Finding direct path";
+    case "direct":
+      return "Direct P2P";
+    case "fallback":
+      return "WebSocket fallback";
+    default:
+      return "WebSocket";
+  }
+}
+
 export function TerminalWorkspace({
   active,
   capability,
@@ -109,6 +130,7 @@ export function TerminalWorkspace({
   const [rendererGeneration, setRendererGeneration] = useState(0);
   const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [transportStatus, setTransportStatus] = useState<TerminalTransportStatus>("websocket");
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const [rendererRetryNonce, setRendererRetryNonce] = useState(0);
   const [ending, setEnding] = useState(false);
@@ -120,6 +142,12 @@ export function TerminalWorkspace({
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BrowserTerminalRenderer | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const webRtcRef = useRef<TerminalWebRtcUpgrade | null>(null);
+  const webRtcConfigurationRef = useRef<TerminalWebRtcConfiguration | null>(null);
+  const retryP2pRef = useRef<(() => void) | null>(null);
+  const suppressAutomaticP2pRef = useRef(false);
+  const clientIdRef = useRef<string | null>(null);
+  if (!clientIdRef.current) clientIdRef.current = terminalClientId();
   const resizeTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -145,6 +173,10 @@ export function TerminalWorkspace({
     setSafeMode(false);
   }, [rendererConfig]);
 
+  useEffect(() => {
+    suppressAutomaticP2pRef.current = false;
+  }, [repositoryId]);
+
   const requestReconnect = useCallback((immediate = false) => {
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current);
@@ -156,6 +188,33 @@ export function TerminalWorkspace({
       reconnectTimerRef.current = null;
       setReconnectNonce((value) => value + 1);
     }, delay);
+  }, []);
+
+  const sendTerminalData = useCallback((data: Uint8Array<ArrayBufferLike>): boolean => {
+    if (webRtcRef.current?.sendData(data)) {
+      if (latencyEnabledRef.current) {
+        latencyTrackerRef.current?.dataSent(window.performance.now());
+      }
+      return true;
+    }
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) {
+      latencyTrackerRef.current?.cancelPending();
+      return false;
+    }
+    if (latencyEnabledRef.current) {
+      latencyTrackerRef.current?.dataSent(window.performance.now());
+    }
+    socket.send(Uint8Array.from(data));
+    return true;
+  }, []);
+
+  const sendTerminalControl = useCallback((control: Record<string, unknown>): boolean => {
+    if (webRtcRef.current?.sendControl(control)) return true;
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify(control));
+    return true;
   }, []);
 
   useEffect(() => {
@@ -177,26 +236,13 @@ export function TerminalWorkspace({
       container: containerRef.current,
       config: activeRendererConfig,
       onData(data) {
-        const socket = socketRef.current;
-        if (socket?.readyState === WebSocket.OPEN) {
-          if (latencyEnabledRef.current) {
-            latencyTrackerRef.current?.dataSent(window.performance.now());
-          }
-          socket.send(data);
-          return true;
-        } else {
-          latencyTrackerRef.current?.cancelPending();
-          return false;
-        }
+        return sendTerminalData(data);
       },
       onResize(cols, rows) {
         if (resizeTimerRef.current !== null) window.clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = window.setTimeout(() => {
           resizeTimerRef.current = null;
-          const socket = socketRef.current;
-          if (socket?.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: "resize", cols, rows }));
-          }
+          sendTerminalControl({ type: "resize", cols, rows });
         }, 50);
       },
     }).then((renderer) => {
@@ -220,13 +266,25 @@ export function TerminalWorkspace({
       expectedCloseRef.current = true;
       if (resizeTimerRef.current !== null) window.clearTimeout(resizeTimerRef.current);
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      webRtcRef.current?.close();
+      webRtcRef.current = null;
+      webRtcConfigurationRef.current = null;
+      retryP2pRef.current = null;
       socketRef.current?.close(1000, "workspace_unmounted");
       socketRef.current = null;
       latencyTrackerRef.current?.cancelPending();
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
-  }, [activeRendererConfig, capability.available, capability.reason, rendererRetryNonce, repositoryId]);
+  }, [
+    activeRendererConfig,
+    capability.available,
+    capability.reason,
+    rendererRetryNonce,
+    repositoryId,
+    sendTerminalControl,
+    sendTerminalData,
+  ]);
 
   useEffect(() => {
     const tracker = latencyTrackerRef.current;
@@ -245,11 +303,102 @@ export function TerminalWorkspace({
     if (!rendererReady || !capability.available) return;
     let disposed = false;
     let socket: WebSocket | null = null;
+    let webRtc: TerminalWebRtcUpgrade | null = null;
+    let webRtcConfiguration: TerminalWebRtcConfiguration | null = null;
+    let leaseTimer: number | null = null;
+    let leaseAbort: AbortController | null = null;
+    let directActive = false;
+    let p2pStarted = false;
     expectedCloseRef.current = false;
     setConnectionState(reconnectAttemptRef.current > 0 ? "reconnecting" : "connecting");
     setConnectionError(null);
     latencyTrackerRef.current?.reset();
     setLatencySummary(null);
+
+    const clearLeaseRenewal = () => {
+      if (leaseTimer !== null) window.clearTimeout(leaseTimer);
+      leaseTimer = null;
+      leaseAbort?.abort();
+      leaseAbort = null;
+    };
+
+    const scheduleLeaseRenewal = (delayMs: number) => {
+      if (leaseTimer !== null) window.clearTimeout(leaseTimer);
+      leaseTimer = window.setTimeout(() => {
+        leaseTimer = null;
+        if (disposed || !directActive || !webRtcConfiguration) return;
+        leaseAbort = new AbortController();
+        void api.renewTerminalLease(
+          repositoryId,
+          { clientId: clientIdRef.current! },
+          csrfToken,
+          leaseAbort.signal,
+        ).then(() => {
+          leaseAbort = null;
+          if (!disposed && directActive && webRtcConfiguration) {
+            scheduleLeaseRenewal(webRtcConfiguration.leaseRenewIntervalMs);
+          }
+        }).catch((error) => {
+          leaseAbort = null;
+          const retryable = !(error instanceof ApiError) ||
+            error.status === 408 ||
+            error.status === 425 ||
+            error.status === 429 ||
+            error.status >= 500;
+          if (
+            !disposed &&
+            directActive &&
+            (error as Error).name !== "AbortError" &&
+            retryable
+          ) {
+            scheduleLeaseRenewal(LEASE_RETRY_INTERVAL_MS);
+          }
+        });
+      }, delayMs);
+    };
+
+    const writeHostOutput = (bytes: Uint8Array<ArrayBufferLike>) => {
+      if (disposed) return;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      const renderBytes = Uint8Array.from(bytes);
+      const tracker = latencyEnabledRef.current ? latencyTrackerRef.current : null;
+      const receivedAt = tracker ? window.performance.now() : null;
+      const sampleId = tracker && receivedAt !== null
+        ? tracker.hostOutputReceived(receivedAt)
+        : null;
+      if (sampleId === null || !tracker) {
+        renderer.write(renderBytes);
+        return;
+      }
+      renderer.write(renderBytes, {
+        onWriteComplete() {
+          tracker.terminalWriteCompleted(sampleId, window.performance.now());
+        },
+        onRenderStart() {
+          tracker.canvasRenderStarted(sampleId, window.performance.now());
+        },
+        onRenderComplete() {
+          if (disposed || rendererRef.current !== renderer) return;
+          const summary = tracker.canvasRendered(sampleId, window.performance.now());
+          if (summary) setLatencySummary(summary);
+        },
+      });
+    };
+
+    const handleTerminalControl = (control: Record<string, unknown>) => {
+      if (
+        control.type === "pong" &&
+        Number.isSafeInteger(control.id) &&
+        latencyEnabledRef.current
+      ) {
+        const summary = roundTripTrackerRef.current?.pong(
+          control.id as number,
+          window.performance.now(),
+        );
+        if (summary) setRoundTripSummary(summary);
+      }
+    };
 
     const connect = async (takeover: boolean): Promise<void> => {
       const renderer = rendererRef.current;
@@ -258,7 +407,7 @@ export function TerminalWorkspace({
         const attachment = await api.createTerminalAttachment(
           repositoryId,
           {
-            clientId: terminalClientId(),
+            clientId: clientIdRef.current!,
             profileId: "tmux",
             cols: Math.max(2, renderer.cols || 80),
             rows: Math.max(1, renderer.rows || 24),
@@ -267,67 +416,86 @@ export function TerminalWorkspace({
           csrfToken,
         );
         if (disposed) return;
+        webRtcConfiguration = attachment.webRtc ?? null;
+        webRtcConfigurationRef.current = webRtcConfiguration;
+        setTransportStatus(
+          webRtcConfiguration && suppressAutomaticP2pRef.current ? "fallback" : "websocket",
+        );
         socket = new WebSocket(
           terminalWebSocketUrl(repositoryId),
           [attachment.protocol, `couchview-ticket.${attachment.ticket}`],
         );
         socket.binaryType = "arraybuffer";
         socketRef.current = socket;
+        webRtc = new TerminalWebRtcUpgrade({
+          sendSignal(value) {
+            if (disposed || socket?.readyState !== WebSocket.OPEN) return false;
+            socket.send(JSON.stringify(value));
+            return true;
+          },
+          onControl: handleTerminalControl,
+          onData: writeHostOutput,
+          onDirectActive() {
+            directActive = true;
+            if (webRtcConfiguration) {
+              scheduleLeaseRenewal(webRtcConfiguration.leaseRenewIntervalMs);
+            }
+          },
+          onActiveFailure() {
+            if (disposed) return;
+            directActive = false;
+            clearLeaseRenewal();
+            suppressAutomaticP2pRef.current = true;
+            setTransportStatus("fallback");
+            if (socket?.readyState === WebSocket.OPEN) {
+              socket.close(TERMINAL_P2P_FAILED_CLOSE_CODE, "terminal_p2p_client_failed");
+            }
+          },
+          onStatus: setTransportStatus,
+        });
+        webRtcRef.current = webRtc;
+        retryP2pRef.current = () => {
+          if (
+            !disposed &&
+            socket?.readyState === WebSocket.OPEN &&
+            webRtc?.canRetry &&
+            webRtcConfiguration
+          ) {
+            suppressAutomaticP2pRef.current = false;
+            p2pStarted = true;
+            void webRtc.start(webRtcConfiguration);
+          }
+        };
         socket.addEventListener("message", (event) => {
           if (disposed || socketRef.current !== socket) return;
           if (typeof event.data !== "string") {
-            const tracker = latencyEnabledRef.current
-              ? latencyTrackerRef.current
-              : null;
-            const receivedAt = tracker ? window.performance.now() : null;
-            const bytes = new Uint8Array(event.data as ArrayBuffer);
-            const sampleId = tracker && receivedAt !== null
-              ? tracker.hostOutputReceived(receivedAt)
-              : null;
-            if (sampleId === null || !tracker) {
-              renderer.write(bytes);
-            } else {
-              renderer.write(bytes, {
-                onWriteComplete() {
-                  tracker.terminalWriteCompleted(sampleId, window.performance.now());
-                },
-                onRenderStart() {
-                  tracker.canvasRenderStarted(sampleId, window.performance.now());
-                },
-                onRenderComplete() {
-                  if (disposed || socketRef.current !== socket) return;
-                  const summary = tracker.canvasRendered(sampleId, window.performance.now());
-                  if (summary) setLatencySummary(summary);
-                },
-              });
-            }
+            if (!directActive) writeHostOutput(new Uint8Array(event.data as ArrayBuffer));
             return;
           }
           try {
-            const control = JSON.parse(event.data) as {
-              type?: string;
-              code?: string;
-              id?: number;
-              message?: string;
-            };
-            if (
-              control.type === "pong" &&
-              Number.isSafeInteger(control.id) &&
-              latencyEnabledRef.current
-            ) {
-              const summary = roundTripTrackerRef.current?.pong(
-                control.id!,
-                window.performance.now(),
-              );
-              if (summary) setRoundTripSummary(summary);
-            } else if (control.type === "ready") {
+            const control = JSON.parse(event.data) as Record<string, unknown>;
+            if (webRtc?.handleSignal(control)) return;
+            handleTerminalControl(control);
+            if (control.type === "ready") {
               reconnectAttemptRef.current = 0;
               setConnectionState("connected");
               setConnectionError(null);
               renderer.fit();
               if (activeRef.current) renderer.focus();
+              if (
+                webRtcConfiguration &&
+                !suppressAutomaticP2pRef.current &&
+                !p2pStarted
+              ) {
+                p2pStarted = true;
+                void webRtc?.start(webRtcConfiguration);
+              }
             } else if (control.type === "error") {
-              setConnectionError(control.message ?? "The terminal connection failed.");
+              setConnectionError(
+                typeof control.message === "string"
+                  ? control.message
+                  : "The terminal connection failed.",
+              );
             }
           } catch {
             // Unknown control frames are ignored; terminal bytes are always binary.
@@ -335,6 +503,11 @@ export function TerminalWorkspace({
         });
         socket.addEventListener("close", (event) => {
           if (socketRef.current === socket) socketRef.current = null;
+          if (webRtcRef.current === webRtc) webRtcRef.current = null;
+          if (retryP2pRef.current) retryP2pRef.current = null;
+          directActive = false;
+          clearLeaseRenewal();
+          webRtc?.close();
           latencyTrackerRef.current?.cancelPending();
           if (disposed) return;
           if (event.code === TERMINAL_ENDED_CLOSE_CODE) {
@@ -348,6 +521,17 @@ export function TerminalWorkspace({
             return;
           }
           if (expectedCloseRef.current) return;
+          if (
+            event.code === TERMINAL_P2P_FAILED_CLOSE_CODE ||
+            event.code === TERMINAL_LEASE_EXPIRED_CLOSE_CODE
+          ) {
+            suppressAutomaticP2pRef.current = true;
+            setTransportStatus("fallback");
+            reconnectAttemptRef.current += 1;
+            setConnectionState("reconnecting");
+            requestReconnect(true);
+            return;
+          }
           if (event.code === 4001) {
             setConnectionState("taken-over");
             setConnectionError("Another browser tab took control of this tmux terminal.");
@@ -394,6 +578,10 @@ export function TerminalWorkspace({
     return () => {
       disposed = true;
       expectedCloseRef.current = true;
+      clearLeaseRenewal();
+      webRtc?.close();
+      if (webRtcRef.current === webRtc) webRtcRef.current = null;
+      if (retryP2pRef.current) retryP2pRef.current = null;
       latencyTrackerRef.current?.cancelPending();
       socket?.close(1000, "connection_replaced");
       if (socketRef.current === socket) socketRef.current = null;
@@ -415,11 +603,9 @@ export function TerminalWorkspace({
     if (!latencyEnabled || connectionState !== "connected" || !tracker) return;
 
     const ping = () => {
-      const socket = socketRef.current;
-      if (socket?.readyState !== WebSocket.OPEN) return;
       const id = ++pingSequenceRef.current;
       if (!tracker.start(id, window.performance.now())) return;
-      socket.send(JSON.stringify({ type: "ping", id }));
+      if (!sendTerminalControl({ type: "ping", id })) tracker.cancelPending();
     };
     ping();
     const interval = window.setInterval(ping, LATENCY_PING_INTERVAL_MS);
@@ -427,7 +613,7 @@ export function TerminalWorkspace({
       window.clearInterval(interval);
       tracker.cancelPending();
     };
-  }, [connectionState, latencyEnabled, rendererGeneration]);
+  }, [connectionState, latencyEnabled, rendererGeneration, sendTerminalControl]);
 
   useEffect(() => {
     if (!active || !rendererReady) return;
@@ -457,6 +643,9 @@ export function TerminalWorkspace({
     }
     socketRef.current?.close(1000, "terminal_ended");
     socketRef.current = null;
+    webRtcRef.current?.close();
+    webRtcRef.current = null;
+    retryP2pRef.current = null;
     latencyTrackerRef.current?.cancelPending();
     setConnectionState("ended");
     setConnectionError(null);
@@ -489,11 +678,18 @@ export function TerminalWorkspace({
     }
     socketRef.current?.close(1000, "safe_mode");
     socketRef.current = null;
+    webRtcRef.current?.close();
+    webRtcRef.current = null;
+    retryP2pRef.current = null;
     latencyTrackerRef.current?.cancelPending();
     setRendererReady(false);
     setConnectionState("loading");
     setConnectionError(null);
     setSafeMode(true);
+  }, []);
+
+  const retryP2p = useCallback(() => {
+    retryP2pRef.current?.();
   }, []);
 
   const toggleLatencyProfiler = useCallback(() => {
@@ -528,8 +724,23 @@ export function TerminalWorkspace({
           <SquareTerminal size={16} />
           <span>{repositoryName}</span>
           <span className={`terminal-connection ${connectionState}`}>{connectionLabel}</span>
+          <span
+            className={`terminal-transport ${transportStatus}`}
+            data-testid="terminal-transport"
+          >
+            {transportLabel(transportStatus)}
+          </span>
         </div>
         <div className="terminal-toolbar-actions">
+          {transportStatus === "fallback" && webRtcConfigurationRef.current && (
+            <button
+              className="terminal-toolbar-button"
+              onClick={retryP2p}
+              type="button"
+            >
+              <RotateCw size={15} /> Retry P2P
+            </button>
+          )}
           <button
             aria-pressed={latencyEnabled}
             className={`terminal-toolbar-button${latencyEnabled ? " active" : ""}`}

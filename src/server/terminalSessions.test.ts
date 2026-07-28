@@ -5,6 +5,8 @@ import path from "node:path";
 
 import {
   TERMINAL_ENDED_CLOSE_CODE,
+  TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
+  TERMINAL_P2P_FAILED_CLOSE_CODE,
 } from "../shared/contracts.ts";
 import {
   isLoopbackHostname,
@@ -13,6 +15,9 @@ import {
   terminalAccessIsLoopback,
   TerminalSessionService,
   type TerminalCommandRunner,
+  type TerminalDataChannel,
+  type TerminalEvent,
+  type TerminalPeerConnection,
   type TerminalSocketData,
 } from "./terminalSessions.ts";
 
@@ -71,6 +76,10 @@ async function serviceFixture(
     tokenFactory?: () => string;
     userTmuxConfig?: string;
     withPty?: boolean;
+    p2pEnabled?: boolean;
+    peerConnectionFactory?: (iceServers: readonly string[]) => TerminalPeerConnection;
+    setTimer?: typeof setTimeout;
+    clearTimer?: typeof clearTimeout;
   } = {},
 ) {
   const runtimeDirectory = await mkdtemp(path.join(tmpdir(), "couchview-terminal-"));
@@ -81,13 +90,20 @@ async function serviceFixture(
   if (userTmuxConfigPath) await writeFile(userTmuxConfigPath, options.userTmuxConfig!, "utf8");
   let terminalClosed = 0;
   let processKilled = 0;
+  const terminalWrites: Uint8Array[] = [];
+  const terminalResizes: Array<{ cols: number; rows: number }> = [];
+  let terminalOptions: Bun.TerminalOptions | null = null;
   const terminal = {
     close() {
       terminalClosed += 1;
     },
-    resize() {},
+    resize(cols: number, rows: number) {
+      terminalResizes.push({ cols, rows });
+    },
     setRawMode() {},
-    write() {},
+    write(bytes: Uint8Array) {
+      terminalWrites.push(Uint8Array.from(bytes));
+    },
   } as unknown as Bun.Terminal;
   const process = {
     exited: new Promise<number>(() => undefined),
@@ -108,9 +124,16 @@ async function serviceFixture(
     now: options.now,
     tokenFactory: options.tokenFactory,
     userTmuxConfigPath,
+    p2pEnabled: options.p2pEnabled,
+    peerConnectionFactory: options.peerConnectionFactory,
+    setTimer: options.setTimer,
+    clearTimer: options.clearTimer,
     ...(options.withPty
       ? {
-          terminalFactory: () => terminal,
+          terminalFactory: (createdOptions: Bun.TerminalOptions) => {
+            terminalOptions = createdOptions;
+            return terminal;
+          },
           terminalSpawner: () => process,
         }
       : {}),
@@ -120,6 +143,9 @@ async function serviceFixture(
     runtimeDirectory,
     service,
     terminalClosed: () => terminalClosed,
+    terminalOptions: () => terminalOptions,
+    terminalResizes,
+    terminalWrites,
   };
 }
 
@@ -146,12 +172,15 @@ function upgradeRequest(ticket: string): Request {
 
 function fakeSocket(data: TerminalSocketData) {
   const sent: string[] = [];
+  const binary: Uint8Array[] = [];
   const closes: Array<{ code?: number; reason?: string }> = [];
   return {
     binaryType: "arraybuffer",
     closes,
     data,
-    sendBinary() {
+    binary,
+    sendBinary(value: Uint8Array) {
+      binary.push(Uint8Array.from(value));
       return 1;
     },
     sendText(value: string) {
@@ -165,7 +194,87 @@ function fakeSocket(data: TerminalSocketData) {
   } as unknown as Bun.ServerWebSocket<TerminalSocketData> & {
     closes: Array<{ code?: number; reason?: string }>;
     sent: string[];
+    binary: Uint8Array[];
   };
+}
+
+class FakeTerminalEvent<T extends unknown[]> implements TerminalEvent<T> {
+  private readonly handlers = new Set<(...args: T) => void>();
+
+  subscribe(handler: (...args: T) => void) {
+    this.handlers.add(handler);
+    return { unSubscribe: () => this.handlers.delete(handler) };
+  }
+
+  emit(...args: T): void {
+    for (const handler of this.handlers) handler(...args);
+  }
+}
+
+class FakeDataChannel implements TerminalDataChannel {
+  readonly label: string;
+  readonly protocol: string;
+  readonly ordered: boolean;
+  readonly maxRetransmits = undefined;
+  readonly maxPacketLifeTime = undefined;
+  readyState: "open" | "closed" | "connecting" | "closing" = "connecting";
+  bufferedAmount = 0;
+  readonly stateChanged = new FakeTerminalEvent<[
+    "open" | "closed" | "connecting" | "closing"
+  ]>();
+  readonly onMessage = new FakeTerminalEvent<[string | Buffer<ArrayBufferLike>]>();
+  readonly error = new FakeTerminalEvent<[Error]>();
+  readonly sent: Array<string | Buffer<ArrayBufferLike>> = [];
+
+  constructor(options: { label?: string; protocol?: string; ordered?: boolean } = {}) {
+    this.label = options.label ?? "couchview-terminal";
+    this.protocol = options.protocol ?? "couchview-terminal-data-v1";
+    this.ordered = options.ordered ?? true;
+  }
+
+  send(value: string | Buffer<ArrayBufferLike>): void {
+    this.sent.push(typeof value === "string" ? value : Buffer.from(value));
+  }
+
+  open(): void {
+    this.readyState = "open";
+    this.stateChanged.emit("open");
+  }
+
+  close(): void {
+    if (this.readyState === "closed") return;
+    this.readyState = "closed";
+    this.stateChanged.emit("closed");
+  }
+}
+
+class FakePeerConnection implements TerminalPeerConnection {
+  readonly onDataChannel = new FakeTerminalEvent<[TerminalDataChannel]>();
+  readonly connectionStateChange = new FakeTerminalEvent<[
+    "disconnected" | "closed" | "new" | "connected" | "connecting" | "failed"
+  ]>();
+  localDescription: { type: "answer"; sdp: string } | undefined;
+  remoteDescription: { type: "offer"; sdp: string } | undefined;
+  closed = false;
+
+  async setRemoteDescription(description: { type: "offer"; sdp: string }): Promise<void> {
+    this.remoteDescription = description;
+  }
+
+  async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
+    return {
+      type: "answer",
+      sdp: "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n",
+    };
+  }
+
+  async setLocalDescription(description: { type: "answer"; sdp: string }): Promise<void> {
+    this.localDescription = description;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+  }
 }
 
 describe("terminal network policy", () => {
@@ -481,6 +590,272 @@ describe("persistent tmux sessions", () => {
       binding,
     )).toThrow(expect.objectContaining({ code: "terminal_ticket_invalid" }));
     expect(harness.sessionRunning).toBe(false);
+    fixture.service.close();
+  });
+});
+
+const applicationOffer = {
+  type: "offer" as const,
+  sdp: "v=0\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n",
+};
+
+async function finishNegotiation(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("direct terminal transport", () => {
+  test("hands off in order and routes terminal bytes, controls, and leases through WebRTC", async () => {
+    const harness = commandHarness();
+    const peer = new FakePeerConnection();
+    const fixture = await serviceFixture(harness, {
+      withPty: true,
+      p2pEnabled: true,
+      peerConnectionFactory: () => peer,
+    });
+    const binding = { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" };
+    const issued = await fixture.service.issueAttachment(
+      "repo",
+      "/project",
+      attachmentRequest(),
+      binding,
+    );
+    expect(issued.webRtc).toEqual({
+      iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+      negotiationTimeoutMs: 10_000,
+      leaseRenewIntervalMs: 30_000,
+    });
+    const socket = fakeSocket(
+      fixture.service.consumeUpgrade("repo", upgradeRequest(issued.ticket), binding),
+    );
+    fixture.service.websocket.open!(socket);
+    fixture.service.websocket.message!(socket, JSON.stringify({
+      type: "webrtc-offer",
+      offer: applicationOffer,
+    }));
+    await finishNegotiation();
+    expect(peer.remoteDescription).toEqual(applicationOffer);
+    expect(socket.sent.map((value) => JSON.parse(value))).toContainEqual(
+      expect.objectContaining({ type: "webrtc-answer" }),
+    );
+
+    const channel = new FakeDataChannel();
+    peer.onDataChannel.emit(channel);
+    channel.open();
+    expect(socket.sent.map((value) => JSON.parse(value))).toContainEqual({
+      type: "webrtc-switch",
+    });
+    const terminalData = fixture.terminalOptions()?.data;
+    if (!terminalData) throw new Error("terminal data callback missing");
+    terminalData({} as Bun.Terminal, Uint8Array.from([1, 2, 3]));
+    expect(socket.binary).toHaveLength(0);
+
+    fixture.service.websocket.message!(socket, JSON.stringify({ type: "webrtc-activate" }));
+    expect(JSON.parse(channel.sent[0] as string)).toMatchObject({
+      type: "ready",
+      transport: "webrtc",
+    });
+    expect([...channel.sent[1] as Buffer]).toEqual([1, 2, 3]);
+
+    channel.onMessage.emit(Buffer.from("input"));
+    channel.onMessage.emit(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
+    channel.onMessage.emit(JSON.stringify({ type: "ping", id: 9 }));
+    fixture.service.websocket.message!(socket, Buffer.from("ignored"));
+    expect(fixture.terminalWrites.map((value) => new TextDecoder().decode(value))).toEqual([
+      "input",
+    ]);
+    expect(fixture.terminalResizes).toEqual([{ cols: 120, rows: 40 }]);
+    expect(channel.sent.map((value) => typeof value === "string" ? JSON.parse(value) : value))
+      .toContainEqual({ type: "pong", id: 9 });
+
+    const renewed = fixture.service.renewLease("repo", {
+      clientId: "client_12345678",
+    }, binding);
+    expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.now());
+    expect(() => fixture.service.renewLease("repo", {
+      clientId: "different_client",
+    }, binding)).toThrow(expect.objectContaining({ code: "terminal_lease_forbidden" }));
+
+    fixture.service.websocket.close!(socket, 1000, "closed");
+    expect(peer.closed).toBe(true);
+    expect(harness.sessionRunning).toBe(true);
+    fixture.service.close();
+  });
+
+  test("rejects malformed, oversized, and invalid-channel negotiations without losing WebSocket", async () => {
+    const harness = commandHarness();
+    const peers: FakePeerConnection[] = [];
+    const fixture = await serviceFixture(harness, {
+      withPty: true,
+      p2pEnabled: true,
+      peerConnectionFactory: () => {
+        const peer = new FakePeerConnection();
+        peers.push(peer);
+        return peer;
+      },
+    });
+    const binding = { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" };
+    const issued = await fixture.service.issueAttachment(
+      "repo",
+      "/project",
+      attachmentRequest(),
+      binding,
+    );
+    const socket = fakeSocket(
+      fixture.service.consumeUpgrade("repo", upgradeRequest(issued.ticket), binding),
+    );
+    fixture.service.websocket.open!(socket);
+
+    fixture.service.websocket.message!(socket, JSON.stringify({
+      type: "webrtc-offer",
+      offer: { type: "offer", sdp: "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" },
+    }));
+    fixture.service.websocket.message!(socket, JSON.stringify({
+      type: "webrtc-offer",
+      offer: { ...applicationOffer, sdp: `${applicationOffer.sdp}${"a".repeat(49 * 1024)}` },
+    }));
+    expect(socket.closes).toHaveLength(0);
+    expect(socket.sent.map((value) => JSON.parse(value)).filter((value) =>
+      value.type === "webrtc-unavailable"
+    )).toHaveLength(2);
+
+    fixture.service.websocket.message!(socket, JSON.stringify({
+      type: "webrtc-offer",
+      offer: applicationOffer,
+    }));
+    await finishNegotiation();
+    const invalid = new FakeDataChannel({ ordered: false });
+    peers[0]!.onDataChannel.emit(invalid);
+    expect(peers[0]!.closed).toBe(true);
+    expect(socket.closes).toHaveLength(0);
+
+    const terminalData = fixture.terminalOptions()?.data;
+    if (!terminalData) throw new Error("terminal data callback missing");
+    terminalData({} as Bun.Terminal, Uint8Array.from([7]));
+    expect(socket.binary.map((value) => [...value])).toEqual([[7]]);
+    fixture.service.close();
+  });
+
+  test("times out negotiation while retaining the attached WebSocket", async () => {
+    const harness = commandHarness();
+    const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
+    const setTimer = ((callback: () => void, delay = 0) => {
+      timers.push({ callback, delay, cleared: false });
+      return timers.length as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    const clearTimer = ((handle: ReturnType<typeof setTimeout>) => {
+      const timer = timers[Number(handle) - 1];
+      if (timer) timer.cleared = true;
+    }) as typeof clearTimeout;
+    const peer = new FakePeerConnection();
+    const fixture = await serviceFixture(harness, {
+      withPty: true,
+      p2pEnabled: true,
+      peerConnectionFactory: () => peer,
+      setTimer,
+      clearTimer,
+    });
+    const binding = { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" };
+    const issued = await fixture.service.issueAttachment(
+      "repo",
+      "/project",
+      attachmentRequest(),
+      binding,
+    );
+    const socket = fakeSocket(
+      fixture.service.consumeUpgrade("repo", upgradeRequest(issued.ticket), binding),
+    );
+    fixture.service.websocket.open!(socket);
+    fixture.service.websocket.message!(socket, JSON.stringify({
+      type: "webrtc-offer",
+      offer: applicationOffer,
+    }));
+    await finishNegotiation();
+    const negotiationTimer = timers.find((timer) => timer.delay === 10_000);
+    if (!negotiationTimer) throw new Error("negotiation timer missing");
+    negotiationTimer.callback();
+    expect(socket.closes).toHaveLength(0);
+    expect(peer.closed).toBe(true);
+    expect(socket.sent.map((value) => JSON.parse(value))).toContainEqual(
+      expect.objectContaining({ type: "webrtc-unavailable" }),
+    );
+    fixture.service.close();
+  });
+
+  test("expires leases and enforces active-channel backpressure with dedicated close codes", async () => {
+    let now = 1_000;
+    const harness = commandHarness();
+    const timers: Array<{ callback: () => void; delay: number; cleared: boolean }> = [];
+    const setTimer = ((callback: () => void, delay = 0) => {
+      timers.push({ callback, delay, cleared: false });
+      return timers.length as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    const clearTimer = ((handle: ReturnType<typeof setTimeout>) => {
+      const timer = timers[Number(handle) - 1];
+      if (timer) timer.cleared = true;
+    }) as typeof clearTimeout;
+    const peers: FakePeerConnection[] = [];
+    const fixture = await serviceFixture(harness, {
+      withPty: true,
+      p2pEnabled: true,
+      now: () => now,
+      setTimer,
+      clearTimer,
+      peerConnectionFactory: () => {
+        const peer = new FakePeerConnection();
+        peers.push(peer);
+        return peer;
+      },
+    });
+    const binding = { host: "127.0.0.1:4173", origin: "http://127.0.0.1:4173" };
+    const attach = async (clientId: string) => {
+      const issued = await fixture.service.issueAttachment(
+        "repo",
+        "/project",
+        attachmentRequest(clientId),
+        binding,
+      );
+      const socket = fakeSocket(
+        fixture.service.consumeUpgrade("repo", upgradeRequest(issued.ticket), binding),
+      );
+      fixture.service.websocket.open!(socket);
+      fixture.service.websocket.message!(socket, JSON.stringify({
+        type: "webrtc-offer",
+        offer: applicationOffer,
+      }));
+      await finishNegotiation();
+      const channel = new FakeDataChannel();
+      peers.at(-1)!.onDataChannel.emit(channel);
+      channel.open();
+      fixture.service.websocket.message!(socket, JSON.stringify({ type: "webrtc-activate" }));
+      return { channel, socket };
+    };
+
+    const leased = await attach("client_12345678");
+    fixture.service.renewLease("repo", { clientId: "client_12345678" }, binding);
+    const leaseTimer = [...timers].reverse().find((timer) =>
+      timer.delay === 120_000 && !timer.cleared
+    );
+    if (!leaseTimer) throw new Error("lease timer missing");
+    now += 120_001;
+    leaseTimer.callback();
+    expect(leased.socket.closes).toContainEqual({
+      code: TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
+      reason: "terminal_lease_expired",
+    });
+    expect(harness.sessionRunning).toBe(true);
+
+    const pressured = await attach("client_abcdefgh");
+    pressured.channel.bufferedAmount = 1024 * 1024;
+    const terminalData = fixture.terminalOptions()?.data;
+    if (!terminalData) throw new Error("terminal data callback missing");
+    terminalData({} as Bun.Terminal, Uint8Array.from([9]));
+    expect(pressured.socket.closes).toContainEqual({
+      code: TERMINAL_P2P_FAILED_CLOSE_CODE,
+      reason: "terminal_p2p_backpressure",
+    });
+    expect(harness.sessionRunning).toBe(true);
     fixture.service.close();
   });
 });

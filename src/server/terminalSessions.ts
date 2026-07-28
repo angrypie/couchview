@@ -3,13 +3,20 @@ import { existsSync } from "node:fs";
 import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { RTCPeerConnection } from "werift";
 
 import {
+  TERMINAL_DATA_CHANNEL_LABEL,
+  TERMINAL_DATA_CHANNEL_PROTOCOL,
   TERMINAL_ENDED_CLOSE_CODE,
+  TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
+  TERMINAL_P2P_FAILED_CLOSE_CODE,
   type TerminalAttachmentRequest,
   type TerminalAttachmentResponse,
   type TerminalCapability,
   type TerminalEndResponse,
+  type TerminalLeaseRequest,
+  type TerminalLeaseResponse,
   type TerminalSessionStatus,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
@@ -20,6 +27,12 @@ export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
 const TICKET_LIFETIME_MS = 30_000;
 const MAX_TICKETS = 256;
 const COMMAND_TIMEOUT_MS = 5_000;
+export const TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS = 10_000;
+export const TERMINAL_P2P_LEASE_RENEW_INTERVAL_MS = 30_000;
+export const TERMINAL_P2P_LEASE_TTL_MS = 120_000;
+const MAX_TERMINAL_CONTROL_BYTES = 48 * 1024;
+const MAX_TERMINAL_TRANSPORT_BUFFER_BYTES = 1024 * 1024;
+const DEFAULT_STUN_URLS = ["stun:stun.cloudflare.com:3478"];
 
 export interface TerminalSocketData {
   kind: "terminal";
@@ -30,6 +43,8 @@ export interface TerminalSocketData {
   cols: number;
   rows: number;
   takeover: boolean;
+  host: string;
+  origin: string;
 }
 
 export interface TerminalDependencies {
@@ -51,8 +66,45 @@ export type TerminalCommandRunner = (
 
 interface StoredTicket extends TerminalSocketData {
   expiresAt: number;
-  host: string;
-  origin: string;
+}
+
+export interface TerminalEvent<T extends unknown[]> {
+  subscribe(handler: (...args: T) => void): { unSubscribe(): void };
+}
+
+export interface TerminalDataChannel {
+  readonly label: string;
+  readonly protocol: string;
+  readonly ordered: boolean;
+  readonly maxRetransmits?: number | null;
+  readonly maxPacketLifeTime?: number | null;
+  readonly readyState: "open" | "closed" | "connecting" | "closing";
+  readonly bufferedAmount: number;
+  readonly stateChanged: TerminalEvent<["open" | "closed" | "connecting" | "closing"]>;
+  readonly onMessage: TerminalEvent<[string | Buffer<ArrayBufferLike>]>;
+  readonly error: TerminalEvent<[Error]>;
+  send(data: Buffer<ArrayBufferLike> | string): void;
+  close(): void;
+}
+
+export interface TerminalPeerConnection {
+  readonly onDataChannel: TerminalEvent<[TerminalDataChannel]>;
+  readonly connectionStateChange: TerminalEvent<[
+    "disconnected" | "closed" | "new" | "connected" | "connecting" | "failed"
+  ]>;
+  readonly localDescription?: { type: "offer" | "answer"; sdp: string };
+  setRemoteDescription(description: { type: "offer"; sdp: string }): Promise<void>;
+  createAnswer(): Promise<{ type: "answer"; sdp: string }>;
+  setLocalDescription(description: { type: "answer"; sdp: string }): Promise<unknown>;
+  close(): Promise<void>;
+}
+
+interface TerminalWebRtcState {
+  peer: TerminalPeerConnection;
+  channel: TerminalDataChannel | null;
+  negotiationTimer: ReturnType<typeof setTimeout> | null;
+  outputBuffer: Buffer<ArrayBuffer>[];
+  outputBufferBytes: number;
 }
 
 interface TerminalAttachment {
@@ -60,6 +112,12 @@ interface TerminalAttachment {
   terminal: Bun.Terminal;
   process: ReturnType<typeof Bun.spawn>;
   clientId: string;
+  host: string;
+  origin: string;
+  transport: "websocket" | "switching" | "webrtc";
+  webRtc: TerminalWebRtcState | null;
+  leaseExpiresAt: number | null;
+  leaseTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export interface TerminalSessionServiceOptions {
@@ -81,6 +139,11 @@ export interface TerminalSessionServiceOptions {
       terminal: Bun.Terminal;
     },
   ) => ReturnType<typeof Bun.spawn>;
+  p2pEnabled?: boolean;
+  stunUrls?: readonly string[];
+  peerConnectionFactory?: (iceServers: readonly string[]) => TerminalPeerConnection;
+  setTimer?: typeof setTimeout;
+  clearTimer?: typeof clearTimeout;
 }
 
 function hash(value: string): string {
@@ -227,6 +290,8 @@ export function terminalAccessIsLoopback(
 export class TerminalSessionService {
   readonly capability: TerminalCapability;
   readonly enabled: boolean;
+  readonly p2pEnabled: boolean;
+  readonly stunUrls: readonly string[];
   readonly websocket: Bun.WebSocketHandler<TerminalSocketData>;
 
   private readonly dependencies: TerminalDependencies;
@@ -241,12 +306,22 @@ export class TerminalSessionService {
   private readonly starts = new Map<string, Promise<void>>();
   private readonly terminalFactory: (options: Bun.TerminalOptions) => Bun.Terminal;
   private readonly terminalSpawner: NonNullable<TerminalSessionServiceOptions["terminalSpawner"]>;
+  private readonly peerConnectionFactory: NonNullable<
+    TerminalSessionServiceOptions["peerConnectionFactory"]
+  >;
+  private readonly setTimer: typeof setTimeout;
+  private readonly clearTimer: typeof clearTimeout;
   private serverConfiguration: Promise<void> | null = null;
   private serverConfigured = false;
   private closed = false;
 
   constructor(options: TerminalSessionServiceOptions) {
     this.enabled = options.enabled;
+    this.p2pEnabled = options.p2pEnabled ?? false;
+    if (this.p2pEnabled && !this.enabled) {
+      throw new Error("Terminal P2P requires terminal access to be enabled");
+    }
+    this.stunUrls = [...(options.stunUrls ?? DEFAULT_STUN_URLS)];
     this.dependencies = options.dependencies ?? probeDependencies();
     this.capability = capabilityFor(
       options.enabled,
@@ -272,6 +347,12 @@ export class TerminalSessionService {
         env: spawnOptions.env,
         terminal: spawnOptions.terminal,
       }));
+    this.peerConnectionFactory = options.peerConnectionFactory ?? ((iceServers) =>
+      new RTCPeerConnection({
+        iceServers: iceServers.map((urls) => ({ urls })),
+      }) as unknown as TerminalPeerConnection);
+    this.setTimer = options.setTimer ?? setTimeout;
+    this.clearTimer = options.clearTimer ?? clearTimeout;
     this.websocket = {
       data: {} as TerminalSocketData,
       maxPayloadLength: 64 * 1024,
@@ -527,6 +608,13 @@ export class TerminalSessionService {
       expiresAt: new Date(expiresAt).toISOString(),
       protocol: TERMINAL_PROTOCOL,
       session: await this.status(repositoryId),
+      ...(this.p2pEnabled
+        ? { webRtc: {
+            iceServers: this.stunUrls.map((urls) => ({ urls })),
+            negotiationTimeoutMs: TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS,
+            leaseRenewIntervalMs: TERMINAL_P2P_LEASE_RENEW_INTERVAL_MS,
+          } }
+        : {}),
     };
   }
 
@@ -557,7 +645,7 @@ export class TerminalSessionService {
     ) {
       throw new HttpError(403, "terminal_ticket_invalid", "The terminal connection ticket is invalid or expired");
     }
-    const { expiresAt: _expiresAt, host: _host, origin: _origin, ...data } = ticket;
+    const { expiresAt: _expiresAt, ...data } = ticket;
     return data;
   }
 
@@ -566,6 +654,422 @@ export class TerminalSessionService {
     value: unknown,
   ): void {
     socket.sendText(JSON.stringify(value), false);
+  }
+
+  private sendDataChannelJson(channel: TerminalDataChannel, value: unknown): void {
+    channel.send(JSON.stringify(value));
+  }
+
+  private disposeWebRtc(attachment: TerminalAttachment): void {
+    const state = attachment.webRtc;
+    attachment.webRtc = null;
+    attachment.transport = "websocket";
+    if (attachment.leaseTimer !== null) {
+      this.clearTimer(attachment.leaseTimer);
+      attachment.leaseTimer = null;
+    }
+    attachment.leaseExpiresAt = null;
+    if (!state) return;
+    if (state.negotiationTimer !== null) this.clearTimer(state.negotiationTimer);
+    try {
+      state.channel?.close();
+    } catch {
+      // A failed SCTP association may already have closed the channel.
+    }
+    void state.peer.close().catch(() => undefined);
+  }
+
+  private destroyAttachment(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    closeSocket?: { code: number; reason: string },
+  ): void {
+    if (this.attachments.get(repositoryId) === attachment) {
+      this.attachments.delete(repositoryId);
+    }
+    this.disposeWebRtc(attachment);
+    if (closeSocket) attachment.socket.close(closeSocket.code, closeSocket.reason);
+    try {
+      attachment.terminal.close();
+    } catch {
+      // The PTY can already be closed after its exit callback.
+    }
+    try {
+      attachment.process.kill();
+    } catch {
+      // The detached tmux client may already have exited.
+    }
+  }
+
+  private sendWebSocketOutput(attachment: TerminalAttachment, bytes: Buffer<ArrayBuffer>): void {
+    const sent = attachment.socket.sendBinary(bytes, false);
+    if (sent === 0) {
+      attachment.socket.close(1013, "terminal_backpressure");
+    }
+  }
+
+  private failActiveP2p(repositoryId: string, attachment: TerminalAttachment, reason: string): void {
+    if (this.attachments.get(repositoryId) !== attachment) return;
+    this.destroyAttachment(repositoryId, attachment, {
+      code: TERMINAL_P2P_FAILED_CLOSE_CODE,
+      reason,
+    });
+  }
+
+  private fallbackNegotiation(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    message: string,
+  ): void {
+    if (this.attachments.get(repositoryId) !== attachment) return;
+    const buffered = attachment.webRtc?.outputBuffer ?? [];
+    this.disposeWebRtc(attachment);
+    this.sendJson(attachment.socket, { type: "webrtc-unavailable", message });
+    for (const bytes of buffered) this.sendWebSocketOutput(attachment, bytes);
+  }
+
+  private routeTerminalOutput(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    source: Uint8Array<ArrayBufferLike>,
+  ): void {
+    if (this.attachments.get(repositoryId) !== attachment) return;
+    const bytes = Buffer.from(source) as Buffer<ArrayBuffer>;
+    if (attachment.transport === "websocket") {
+      this.sendWebSocketOutput(attachment, bytes);
+      return;
+    }
+    const state = attachment.webRtc;
+    if (!state) {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_state_lost");
+      return;
+    }
+    if (attachment.transport === "switching") {
+      if (state.outputBufferBytes + bytes.byteLength > MAX_TERMINAL_TRANSPORT_BUFFER_BYTES) {
+        this.fallbackNegotiation(
+          repositoryId,
+          attachment,
+          "The direct-path handoff exceeded its output buffer.",
+        );
+        return;
+      }
+      state.outputBuffer.push(bytes);
+      state.outputBufferBytes += bytes.byteLength;
+      return;
+    }
+    const channel = state.channel;
+    if (
+      !channel ||
+      channel.readyState !== "open" ||
+      channel.bufferedAmount + bytes.byteLength > MAX_TERMINAL_TRANSPORT_BUFFER_BYTES
+    ) {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_backpressure");
+      return;
+    }
+    try {
+      channel.send(bytes);
+    } catch {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_send_failed");
+    }
+  }
+
+  private validDataChannel(channel: TerminalDataChannel): boolean {
+    return channel.label === TERMINAL_DATA_CHANNEL_LABEL &&
+      channel.protocol === TERMINAL_DATA_CHANNEL_PROTOCOL &&
+      channel.ordered === true &&
+      channel.maxRetransmits == null &&
+      channel.maxPacketLifeTime == null;
+  }
+
+  private validateOffer(value: unknown): { type: "offer"; sdp: string } {
+    if (!value || typeof value !== "object") {
+      throw new Error("The WebRTC offer is missing.");
+    }
+    const offer = value as { type?: unknown; sdp?: unknown };
+    if (offer.type !== "offer" || typeof offer.sdp !== "string") {
+      throw new Error("The WebRTC offer is malformed.");
+    }
+    if (Buffer.byteLength(offer.sdp, "utf8") > MAX_TERMINAL_CONTROL_BYTES) {
+      throw new Error("The WebRTC offer is too large.");
+    }
+    const mediaLines = offer.sdp.split(/\r?\n/).filter((line) => line.startsWith("m="));
+    if (mediaLines.length !== 1 || !mediaLines[0]?.startsWith("m=application ")) {
+      throw new Error("Only an application DataChannel is allowed.");
+    }
+    return { type: "offer", sdp: offer.sdp };
+  }
+
+  private scheduleLeaseExpiry(repositoryId: string, attachment: TerminalAttachment): void {
+    if (attachment.leaseTimer !== null) this.clearTimer(attachment.leaseTimer);
+    const expiresAt = attachment.leaseExpiresAt;
+    if (expiresAt === null) return;
+    attachment.leaseTimer = this.setTimer(() => {
+      attachment.leaseTimer = null;
+      if (this.attachments.get(repositoryId) !== attachment) return;
+      if (attachment.leaseExpiresAt !== null && attachment.leaseExpiresAt > this.now()) {
+        this.scheduleLeaseExpiry(repositoryId, attachment);
+        return;
+      }
+      this.destroyAttachment(repositoryId, attachment, {
+        code: TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
+        reason: "terminal_lease_expired",
+      });
+    }, Math.max(0, expiresAt - this.now()));
+  }
+
+  private activateWebRtc(repositoryId: string, attachment: TerminalAttachment): void {
+    const state = attachment.webRtc;
+    const channel = state?.channel;
+    if (
+      this.attachments.get(repositoryId) !== attachment ||
+      attachment.transport !== "switching" ||
+      !state ||
+      !channel ||
+      channel.readyState !== "open"
+    ) {
+      this.fallbackNegotiation(repositoryId, attachment, "The direct path was not ready.");
+      return;
+    }
+    if (state.negotiationTimer !== null) {
+      this.clearTimer(state.negotiationTimer);
+      state.negotiationTimer = null;
+    }
+    attachment.transport = "webrtc";
+    attachment.leaseExpiresAt = this.now() + TERMINAL_P2P_LEASE_TTL_MS;
+    this.scheduleLeaseExpiry(repositoryId, attachment);
+    try {
+      this.sendDataChannelJson(channel, {
+        type: "ready",
+        transport: "webrtc",
+        leaseExpiresAt: new Date(attachment.leaseExpiresAt).toISOString(),
+      });
+      for (const bytes of state.outputBuffer) {
+        if (channel.bufferedAmount + bytes.byteLength > MAX_TERMINAL_TRANSPORT_BUFFER_BYTES) {
+          throw new Error("terminal_p2p_backpressure");
+        }
+        channel.send(bytes);
+      }
+      state.outputBuffer = [];
+      state.outputBufferBytes = 0;
+    } catch {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_handoff_failed");
+    }
+  }
+
+  private handleTransportControl(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    control: Record<string, unknown>,
+    transport: "websocket" | "webrtc",
+  ): boolean {
+    if (control.type === "ping") {
+      const { id } = control;
+      if (!Number.isSafeInteger(id) || (id as number) < 1) return false;
+      if (transport === "websocket") {
+        this.sendJson(attachment.socket, { type: "pong", id });
+      } else {
+        const channel = attachment.webRtc?.channel;
+        if (!channel) return false;
+        this.sendDataChannelJson(channel, { type: "pong", id });
+      }
+      return true;
+    }
+    if (control.type !== "resize") return false;
+    const { cols, rows } = control;
+    if (typeof cols !== "number" || typeof rows !== "number" || !validDimensions(cols, rows)) {
+      return false;
+    }
+    attachment.terminal.resize(cols, rows);
+    return true;
+  }
+
+  private handleDataChannelMessage(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    state: TerminalWebRtcState,
+    message: string | Buffer<ArrayBufferLike>,
+  ): void {
+    if (
+      this.attachments.get(repositoryId) !== attachment ||
+      attachment.webRtc !== state ||
+      attachment.transport !== "webrtc"
+    ) return;
+    if (typeof message !== "string") {
+      if (message.byteLength > MAX_TERMINAL_TRANSPORT_BUFFER_BYTES) {
+        this.failActiveP2p(repositoryId, attachment, "terminal_p2p_message_too_large");
+        return;
+      }
+      attachment.terminal.write(message);
+      return;
+    }
+    if (Buffer.byteLength(message, "utf8") > MAX_TERMINAL_CONTROL_BYTES) {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_control_too_large");
+      return;
+    }
+    try {
+      const control = JSON.parse(message) as Record<string, unknown>;
+      if (!control || typeof control !== "object" ||
+        !this.handleTransportControl(repositoryId, attachment, control, "webrtc")) {
+        throw new Error("invalid control");
+      }
+    } catch {
+      this.failActiveP2p(repositoryId, attachment, "terminal_p2p_control_invalid");
+    }
+  }
+
+  private acceptDataChannel(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    state: TerminalWebRtcState,
+    channel: TerminalDataChannel,
+  ): void {
+    if (
+      this.attachments.get(repositoryId) !== attachment ||
+      attachment.webRtc !== state ||
+      state.channel
+    ) {
+      channel.close();
+      return;
+    }
+    if (!this.validDataChannel(channel)) {
+      channel.close();
+      this.fallbackNegotiation(
+        repositoryId,
+        attachment,
+        "The direct terminal channel did not match the required reliable protocol.",
+      );
+      return;
+    }
+    state.channel = channel;
+    channel.onMessage.subscribe((message) => {
+      this.handleDataChannelMessage(repositoryId, attachment, state, message);
+    });
+    channel.error.subscribe(() => {
+      if (attachment.webRtc !== state) return;
+      if (attachment.transport === "webrtc") {
+        this.failActiveP2p(repositoryId, attachment, "terminal_p2p_channel_failed");
+      } else {
+        this.fallbackNegotiation(repositoryId, attachment, "The direct terminal channel failed.");
+      }
+    });
+    const opened = () => {
+      if (
+        this.attachments.get(repositoryId) !== attachment ||
+        attachment.webRtc !== state ||
+        attachment.transport !== "websocket"
+      ) return;
+      attachment.transport = "switching";
+      this.sendJson(attachment.socket, { type: "webrtc-switch" });
+    };
+    channel.stateChanged.subscribe((readyState) => {
+      if (attachment.webRtc !== state) return;
+      if (readyState === "open") {
+        opened();
+      } else if (readyState === "closed") {
+        if (attachment.transport === "webrtc") {
+          this.failActiveP2p(repositoryId, attachment, "terminal_p2p_channel_closed");
+        } else {
+          this.fallbackNegotiation(repositoryId, attachment, "The direct terminal channel closed.");
+        }
+      }
+    });
+    if (channel.readyState === "open") opened();
+  }
+
+  private async negotiateWebRtc(
+    repositoryId: string,
+    attachment: TerminalAttachment,
+    rawOffer: unknown,
+  ): Promise<void> {
+    if (!this.p2pEnabled) {
+      this.sendJson(attachment.socket, {
+        type: "webrtc-unavailable",
+        message: "Direct terminal transport is disabled on this server.",
+      });
+      return;
+    }
+    if (attachment.webRtc) {
+      this.sendJson(attachment.socket, {
+        type: "webrtc-unavailable",
+        message: "A direct-path negotiation is already running.",
+      });
+      return;
+    }
+    let offer: { type: "offer"; sdp: string };
+    try {
+      offer = this.validateOffer(rawOffer);
+    } catch (error) {
+      this.sendJson(attachment.socket, {
+        type: "webrtc-unavailable",
+        message: (error as Error).message,
+      });
+      return;
+    }
+    let peer: TerminalPeerConnection;
+    try {
+      peer = this.peerConnectionFactory(this.stunUrls);
+    } catch (error) {
+      this.sendJson(attachment.socket, {
+        type: "webrtc-unavailable",
+        message: (error as Error).message,
+      });
+      return;
+    }
+    const state: TerminalWebRtcState = {
+      peer,
+      channel: null,
+      negotiationTimer: null,
+      outputBuffer: [],
+      outputBufferBytes: 0,
+    };
+    attachment.webRtc = state;
+    state.negotiationTimer = this.setTimer(() => {
+      if (attachment.webRtc === state && attachment.transport !== "webrtc") {
+        this.fallbackNegotiation(
+          repositoryId,
+          attachment,
+          "No direct path was found within 10 seconds.",
+        );
+      }
+    }, TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS);
+    peer.onDataChannel.subscribe((channel) => {
+      this.acceptDataChannel(repositoryId, attachment, state, channel);
+    });
+    peer.connectionStateChange.subscribe((connectionState) => {
+      if (attachment.webRtc !== state) return;
+      if (connectionState !== "failed" && connectionState !== "closed" &&
+        connectionState !== "disconnected") return;
+      if (attachment.transport === "webrtc") {
+        this.failActiveP2p(repositoryId, attachment, "terminal_p2p_connection_lost");
+      } else if (attachment.webRtc === state) {
+        this.fallbackNegotiation(repositoryId, attachment, "The direct path could not connect.");
+      }
+    });
+    try {
+      await peer.setRemoteDescription(offer);
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      if (this.attachments.get(repositoryId) !== attachment || attachment.webRtc !== state) return;
+      const localDescription = peer.localDescription;
+      if (!localDescription || localDescription.type !== "answer") {
+        throw new Error("The WebRTC answer could not be created.");
+      }
+      if (Buffer.byteLength(localDescription.sdp, "utf8") > MAX_TERMINAL_CONTROL_BYTES) {
+        throw new Error("The WebRTC answer is too large.");
+      }
+      const answerControl = {
+        type: "webrtc-answer",
+        answer: localDescription,
+      };
+      if (Buffer.byteLength(JSON.stringify(answerControl), "utf8") > MAX_TERMINAL_CONTROL_BYTES) {
+        throw new Error("The WebRTC answer control message is too large.");
+      }
+      this.sendJson(attachment.socket, answerControl);
+    } catch (error) {
+      if (attachment.webRtc === state) {
+        this.fallbackNegotiation(repositoryId, attachment, (error as Error).message);
+      }
+    }
   }
 
   private openSocket(socket: Bun.ServerWebSocket<TerminalSocketData>): void {
@@ -583,14 +1087,10 @@ export class TerminalSessionService {
       return;
     }
     if (existing) {
-      existing.socket.close(4001, "taken_over");
-      existing.terminal.close();
-      try {
-        existing.process.kill();
-      } catch {
-        // The detached tmux client may already have exited.
-      }
-      this.attachments.delete(data.repositoryId);
+      this.destroyAttachment(data.repositoryId, existing, {
+        code: 4001,
+        reason: "taken_over",
+      });
     }
 
     let terminal: Bun.Terminal | null = null;
@@ -601,8 +1101,10 @@ export class TerminalSessionService {
         rows: data.rows,
         name: "xterm-256color",
         data: (_pty, bytes) => {
-          const sent = socket.sendBinary(bytes, false);
-          if (sent === 0) socket.close(1013, "terminal_backpressure");
+          const current = this.attachments.get(data.repositoryId);
+          if (current?.socket === socket) {
+            this.routeTerminalOutput(data.repositoryId, current, bytes);
+          }
         },
         exit: () => {
           const current = this.attachments.get(data.repositoryId);
@@ -632,14 +1134,22 @@ export class TerminalSessionService {
         terminal,
         process: subprocess,
         clientId: data.clientId,
+        host: data.host,
+        origin: data.origin,
+        transport: "websocket",
+        webRtc: null,
+        leaseExpiresAt: null,
+        leaseTimer: null,
       };
       this.attachments.set(data.repositoryId, attachment);
       void subprocess.exited.then((exitCode) => {
         const current = this.attachments.get(data.repositoryId);
         if (current !== attachment) return;
-        this.attachments.delete(data.repositoryId);
         this.sendJson(socket, { type: "exit", exitCode });
-        socket.close(1000, "terminal_process_exited");
+        this.destroyAttachment(data.repositoryId, attachment, {
+          code: 1000,
+          reason: "terminal_process_exited",
+        });
       });
       this.sendJson(socket, {
         type: "ready",
@@ -681,11 +1191,18 @@ export class TerminalSessionService {
     const attachment = this.attachments.get(socket.data.repositoryId);
     if (!attachment || attachment.socket !== socket) return;
     if (typeof message !== "string") {
-      attachment.terminal.write(message);
+      if (attachment.transport !== "webrtc") attachment.terminal.write(message);
       return;
     }
-    if (message.length > 4_096) {
-      socket.close(1009, "terminal_control_too_large");
+    if (Buffer.byteLength(message, "utf8") > MAX_TERMINAL_CONTROL_BYTES) {
+      if (message.includes("\"webrtc-offer\"")) {
+        this.sendJson(socket, {
+          type: "webrtc-unavailable",
+          message: "The WebRTC offer is too large.",
+        });
+      } else {
+        socket.close(1009, "terminal_control_too_large");
+      }
       return;
     }
     let control: unknown;
@@ -699,51 +1216,57 @@ export class TerminalSessionService {
       socket.close(1003, "terminal_control_invalid");
       return;
     }
-    const controlType = (control as { type?: unknown }).type;
-    if (controlType === "ping") {
-      const { id } = control as { id?: unknown };
-      if (!Number.isSafeInteger(id) || (id as number) < 1) {
-        socket.close(1003, "terminal_control_invalid");
-        return;
-      }
-      this.sendJson(socket, { type: "pong", id });
+    const typedControl = control as Record<string, unknown>;
+    if (typedControl.type === "webrtc-offer") {
+      void this.negotiateWebRtc(socket.data.repositoryId, attachment, typedControl.offer);
       return;
     }
-    if (controlType !== "resize") {
+    if (typedControl.type === "webrtc-activate") {
+      this.activateWebRtc(socket.data.repositoryId, attachment);
+      return;
+    }
+    if (
+      attachment.transport === "webrtc" ||
+      !this.handleTransportControl(socket.data.repositoryId, attachment, typedControl, "websocket")
+    ) {
       socket.close(1003, "terminal_control_invalid");
-      return;
     }
-    const { cols, rows } = control as { cols: number; rows: number };
-    if (!validDimensions(cols, rows)) {
-      socket.close(1008, "terminal_size_invalid");
-      return;
+  }
+
+  renewLease(
+    repositoryId: string,
+    request: TerminalLeaseRequest,
+    binding: { host: string; origin: string },
+  ): TerminalLeaseResponse {
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(request.clientId)) {
+      throw new HttpError(400, "terminal_client_invalid", "Terminal client ID is invalid");
     }
-    attachment.terminal.resize(cols, rows);
+    const attachment = this.attachments.get(repositoryId);
+    if (!attachment || attachment.transport !== "webrtc") {
+      throw new HttpError(409, "terminal_p2p_inactive", "No direct terminal attachment is active");
+    }
+    if (
+      attachment.clientId !== request.clientId ||
+      attachment.host !== binding.host ||
+      attachment.origin !== binding.origin
+    ) {
+      throw new HttpError(403, "terminal_lease_forbidden", "The terminal lease does not match this controller");
+    }
+    attachment.leaseExpiresAt = this.now() + TERMINAL_P2P_LEASE_TTL_MS;
+    this.scheduleLeaseExpiry(repositoryId, attachment);
+    return { expiresAt: new Date(attachment.leaseExpiresAt).toISOString() };
   }
 
   private closeSocket(socket: Bun.ServerWebSocket<TerminalSocketData>): void {
     const attachment = this.attachments.get(socket.data.repositoryId);
     if (!attachment || attachment.socket !== socket) return;
-    this.attachments.delete(socket.data.repositoryId);
-    attachment.terminal.close();
-    try {
-      attachment.process.kill();
-    } catch {
-      // The tmux client may already have exited.
-    }
+    this.destroyAttachment(socket.data.repositoryId, attachment);
   }
 
   private closeAttachment(repositoryId: string, code: number, reason: string): void {
     const attachment = this.attachments.get(repositoryId);
     if (!attachment) return;
-    this.attachments.delete(repositoryId);
-    attachment.socket.close(code, reason);
-    attachment.terminal.close();
-    try {
-      attachment.process.kill();
-    } catch {
-      // The tmux client may already have exited.
-    }
+    this.destroyAttachment(repositoryId, attachment, { code, reason });
   }
 
   async end(repositoryId: string): Promise<TerminalEndResponse> {

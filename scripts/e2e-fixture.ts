@@ -1,4 +1,5 @@
 import { resolve, sep } from "node:path";
+import { RTCPeerConnection, type RTCDataChannel } from "werift";
 
 import {
 	API_ROUTES,
@@ -24,6 +25,7 @@ import {
 	type StageFilesRequest,
 	type TerminalAttachmentRequest,
 	TERMINAL_ENDED_CLOSE_CODE,
+	TERMINAL_P2P_FAILED_CLOSE_CODE,
 } from "../src/shared/contracts.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
@@ -36,6 +38,7 @@ let terminalRunning = false;
 let terminalAttachmentCount = 0;
 let terminalSocketConnections = 0;
 let terminalTicketCounter = 0;
+let terminalP2pConnections = 0;
 const terminalInputs: string[] = [];
 const terminalResizes: Array<{ cols: number; rows: number }> = [];
 
@@ -48,6 +51,107 @@ interface FixtureTerminalSocketData {
 
 const terminalTickets = new Map<string, FixtureTerminalSocketData>();
 let terminalController: Bun.ServerWebSocket<FixtureTerminalSocketData> | null = null;
+
+interface FixtureP2pState {
+	peer: RTCPeerConnection;
+	channel: RTCDataChannel | null;
+	socket: Bun.ServerWebSocket<FixtureTerminalSocketData>;
+	active: boolean;
+}
+
+let terminalP2p: FixtureP2pState | null = null;
+
+function closeTerminalP2p(): void {
+	const state = terminalP2p;
+	terminalP2p = null;
+	if (!state) return;
+	try {
+		state.channel?.close();
+	} catch {
+		// The deterministic peer may already have closed its SCTP association.
+	}
+	void state.peer.close().catch(() => undefined);
+}
+
+function handleTerminalControl(
+	control: { type?: string; id?: number; cols?: number; rows?: number },
+	send: (value: string) => void,
+): void {
+	if (control.type === "ping" && Number.isSafeInteger(control.id)) {
+		send(JSON.stringify({ type: "pong", id: control.id }));
+		return;
+	}
+	if (
+		control.type === "resize" &&
+		Number.isSafeInteger(control.cols) &&
+		Number.isSafeInteger(control.rows)
+	) {
+		terminalResizes.push({ cols: control.cols!, rows: control.rows! });
+	}
+}
+
+async function negotiateTerminalP2p(
+	socket: Bun.ServerWebSocket<FixtureTerminalSocketData>,
+	offer: { type: "offer"; sdp: string },
+): Promise<void> {
+	closeTerminalP2p();
+	const peer = new RTCPeerConnection({ iceServers: [] });
+	const state: FixtureP2pState = { peer, channel: null, socket, active: false };
+	terminalP2p = state;
+	terminalP2pConnections += 1;
+	peer.onDataChannel.subscribe((channel) => {
+		if (
+			terminalP2p !== state ||
+			channel.label !== "couchview-terminal" ||
+			channel.protocol !== "couchview-terminal-data-v1" ||
+			!channel.ordered
+		) {
+			channel.close();
+			return;
+		}
+		state.channel = channel;
+		channel.onMessage.subscribe((message) => {
+			if (terminalP2p !== state || !state.active) return;
+			if (typeof message === "string") {
+				try {
+					handleTerminalControl(JSON.parse(message), (value) => channel.send(value));
+				} catch {
+					// The deterministic fixture ignores malformed control frames.
+				}
+				return;
+			}
+			terminalInputs.push(new TextDecoder().decode(message));
+			channel.send(message);
+		});
+		const switchTransport = () => {
+			if (terminalP2p === state && !state.active) {
+				socket.send(JSON.stringify({ type: "webrtc-switch" }));
+			}
+		};
+		channel.stateChanged.subscribe((channelState) => {
+			if (channelState === "open") switchTransport();
+		});
+		if (channel.readyState === "open") switchTransport();
+	});
+	try {
+		await peer.setRemoteDescription(offer);
+		const answer = await peer.createAnswer();
+		await peer.setLocalDescription(answer);
+		if (terminalP2p !== state || !peer.localDescription) return;
+		socket.send(JSON.stringify({
+			type: "webrtc-answer",
+			answer: peer.localDescription,
+		}));
+	} catch {
+		if (terminalP2p === state) {
+			closeTerminalP2p();
+			socket.send(JSON.stringify({
+				type: "webrtc-unavailable",
+				message: "The deterministic direct path could not connect.",
+			}));
+		}
+	}
+}
 
 const repository = {
 	id: "fixture-repository",
@@ -433,6 +537,7 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 	websocket: {
 		open(socket) {
 			if (terminalController && terminalController !== socket) {
+				closeTerminalP2p();
 				terminalController.close(4001, "taken_over");
 			}
 			terminalController = socket;
@@ -456,28 +561,42 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 						id?: number;
 						cols?: number;
 						rows?: number;
+						offer?: { type: "offer"; sdp: string };
 					};
-					if (control.type === "ping" && Number.isSafeInteger(control.id)) {
-						socket.send(JSON.stringify({ type: "pong", id: control.id }));
+					if (control.type === "webrtc-offer" && control.offer) {
+						void negotiateTerminalP2p(socket, control.offer);
 						return;
 					}
-					if (
-						control.type === "resize" &&
-						Number.isSafeInteger(control.cols) &&
-						Number.isSafeInteger(control.rows)
-					) {
-						terminalResizes.push({ cols: control.cols!, rows: control.rows! });
+					if (control.type === "webrtc-activate") {
+						const state = terminalP2p;
+						if (state?.socket === socket && state.channel?.readyState === "open") {
+							state.active = true;
+							state.channel.send(JSON.stringify({
+								type: "ready",
+								transport: "webrtc",
+								leaseExpiresAt: new Date(Date.now() + 120_000).toISOString(),
+							}));
+						}
+						return;
+					}
+					if (!terminalP2p?.active) {
+						handleTerminalControl(control, (value) => socket.send(value));
 					}
 				} catch {
 					// The deterministic fixture ignores malformed control frames.
 				}
 				return;
 			}
-			terminalInputs.push(new TextDecoder().decode(message));
-			socket.send(message);
+			if (!terminalP2p?.active) {
+				terminalInputs.push(new TextDecoder().decode(message));
+				socket.send(message);
+			}
 		},
 		close(socket) {
-			if (terminalController === socket) terminalController = null;
+			if (terminalController === socket) {
+				terminalController = null;
+				closeTerminalP2p();
+			}
 		},
 	},
 	async fetch(request, bunServer) {
@@ -600,6 +719,8 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 				socketConnections: terminalSocketConnections,
 				inputs: terminalInputs,
 				resizes: terminalResizes,
+				p2pActive: terminalP2p?.active ?? false,
+				p2pConnections: terminalP2pConnections,
 			});
 		}
 
@@ -771,16 +892,25 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			comments.splice(0);
 			packageRuns = [];
 			operationRevision = "fixture-operation-1";
+			closeTerminalP2p();
 			terminalController?.close(1000, "fixture_reset");
 			terminalController = null;
 			terminalRunning = false;
 			terminalAttachmentCount = 0;
 			terminalSocketConnections = 0;
 			terminalTicketCounter = 0;
+			terminalP2pConnections = 0;
 			terminalInputs.splice(0);
 			terminalResizes.splice(0);
 			terminalTickets.clear();
 			return json({ reset: true });
+		}
+
+		if (url.pathname === "/api/e2e/terminal/p2p/fail" && request.method === "POST") {
+			const controller = terminalController;
+			closeTerminalP2p();
+			controller?.close(TERMINAL_P2P_FAILED_CLOSE_CODE, "terminal_p2p_fixture_failed");
+			return json({ failed: true });
 		}
 
 		if (nestedPath === "terminal/attachments" && request.method === "POST") {
@@ -815,12 +945,29 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 					running: true,
 					controllerConnected: terminalController !== null,
 				},
+				webRtc: {
+					iceServers: [],
+					negotiationTimeoutMs: 10_000,
+					leaseRenewIntervalMs: 30_000,
+				},
 			}, 201);
+		}
+
+		if (nestedPath === "terminal/lease" && request.method === "POST") {
+			return terminalP2p?.active
+				? json({ expiresAt: new Date(Date.now() + 120_000).toISOString() })
+				: json({
+						error: {
+							code: "terminal_p2p_inactive",
+							message: "No direct fixture terminal is active",
+						},
+					}, 409);
 		}
 
 		if (nestedPath === "terminal/end" && request.method === "POST") {
 			terminalRunning = false;
 			terminalTickets.clear();
+			closeTerminalP2p();
 			terminalController?.close(TERMINAL_ENDED_CLOSE_CODE, "terminal_ended");
 			terminalController = null;
 			return json({ status: "ended" });

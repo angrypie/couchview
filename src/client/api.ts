@@ -39,6 +39,8 @@ import {
   type TerminalAttachmentRequest,
   type TerminalAttachmentResponse,
   type TerminalEndResponse,
+  type TerminalLeaseRequest,
+  type TerminalLeaseResponse,
   type TerminalSessionStatus,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
@@ -195,6 +197,19 @@ export const api = {
   ) {
     return request<TerminalAttachmentResponse>(
       API_ROUTES.terminalAttachments(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  renewTerminalLease(
+    repositoryId: string,
+    body: TerminalLeaseRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<TerminalLeaseResponse>(
+      API_ROUTES.terminalLease(repositoryId),
       { method: "POST", body: JSON.stringify(body), signal },
       csrfToken,
     );

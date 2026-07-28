@@ -467,7 +467,8 @@ textarea:focus-visible,
   white-space: nowrap;
 }
 
-.terminal-connection {
+.terminal-connection,
+.terminal-transport {
   flex: 0 0 auto;
   padding: 1px 5px;
   border-radius: 999px;
@@ -481,6 +482,21 @@ textarea:focus-visible,
 .terminal-connection.connected {
   color: var(--green);
   background: var(--green-bg);
+}
+
+.terminal-transport.direct {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.terminal-transport.finding {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.terminal-transport.fallback {
+  color: var(--yellow);
+  background: var(--yellow-bg);
 }
 
 .terminal-connection.error,

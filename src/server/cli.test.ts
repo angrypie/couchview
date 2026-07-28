@@ -5,6 +5,7 @@ import path from "node:path";
 
 import {
   parseCli,
+  parseTerminalStunUrls,
   replaceStaticBuild,
   restartCapability,
   restartRunningServer,
@@ -20,6 +21,8 @@ const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
 const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
 const initialTerminal = Bun.env.COUCHVIEW_TERMINAL;
+const initialTerminalP2p = Bun.env.COUCHVIEW_TERMINAL_P2P;
+const initialTerminalStun = Bun.env.COUCHVIEW_TERMINAL_STUN;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
@@ -44,6 +47,12 @@ function restoreEnvironment() {
 
   if (initialTerminal === undefined) delete Bun.env.COUCHVIEW_TERMINAL;
   else Bun.env.COUCHVIEW_TERMINAL = initialTerminal;
+
+  if (initialTerminalP2p === undefined) delete Bun.env.COUCHVIEW_TERMINAL_P2P;
+  else Bun.env.COUCHVIEW_TERMINAL_P2P = initialTerminalP2p;
+
+  if (initialTerminalStun === undefined) delete Bun.env.COUCHVIEW_TERMINAL_STUN;
+  else Bun.env.COUCHVIEW_TERMINAL_STUN = initialTerminalStun;
 
   if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
   else Bun.env.XDG_DATA_HOME = initialDataHome;
@@ -78,6 +87,8 @@ describe("parseCli", () => {
     delete Bun.env.COUCH_REVIEW_HOST;
     delete Bun.env.PORT;
     delete Bun.env.COUCHVIEW_TERMINAL;
+    delete Bun.env.COUCHVIEW_TERMINAL_P2P;
+    delete Bun.env.COUCHVIEW_TERMINAL_STUN;
   });
 
   afterEach(restoreEnvironment);
@@ -88,6 +99,8 @@ describe("parseCli", () => {
       host: "127.0.0.1",
       port: 4173,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
   });
 
@@ -97,6 +110,8 @@ describe("parseCli", () => {
       host: "127.0.0.1",
       port: 4173,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
   });
 
@@ -106,12 +121,16 @@ describe("parseCli", () => {
       host: "127.0.0.1",
       port: 5199,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
     expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
       root: path.resolve("/tmp/project"),
       host: "127.0.0.1",
       port: 6001,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
   });
 
@@ -125,12 +144,16 @@ describe("parseCli", () => {
       host: "192.168.1.25",
       port: 4888,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
     expect(parseCli(["--repo", "flag-project", "--host", "0.0.0.0", "--port", "4999"])).toEqual({
       root: path.resolve("flag-project"),
       host: "0.0.0.0",
       port: 4999,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
   });
 
@@ -143,6 +166,8 @@ describe("parseCli", () => {
       host: "127.0.0.1",
       port: 4173,
       terminalMode: "auto",
+      terminalP2pMode: "auto",
+      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
     });
   });
 
@@ -217,6 +242,48 @@ describe("parseCli", () => {
     Bun.env.COUCHVIEW_TERMINAL = "sometimes";
     expect(() => parseCli([])).toThrow("COUCHVIEW_TERMINAL must be 1 or 0");
   });
+
+  test("keeps terminal P2P opt-in and gives flags precedence over the environment", () => {
+    expect(parseCli([]).terminalP2pMode).toBe("auto");
+    Bun.env.COUCHVIEW_TERMINAL_P2P = "1";
+    expect(parseCli([]).terminalP2pMode).toBe("enabled");
+    expect(parseCli(["--disable-terminal-p2p"]).terminalP2pMode).toBe("disabled");
+    Bun.env.COUCHVIEW_TERMINAL_P2P = "0";
+    expect(parseCli(["--enable-terminal-p2p"]).terminalP2pMode).toBe("enabled");
+    expect(() => parseCli([
+      "--enable-terminal-p2p",
+      "--disable-terminal-p2p",
+    ])).toThrow("cannot be used together");
+    Bun.env.COUCHVIEW_TERMINAL_P2P = "sometimes";
+    expect(() => parseCli([])).toThrow("COUCHVIEW_TERMINAL_P2P must be 1 or 0");
+  });
+
+  test("validates one to four STUN-only URLs", () => {
+    expect(parseTerminalStunUrls(undefined)).toEqual([
+      "stun:stun.cloudflare.com:3478",
+    ]);
+    expect(parseTerminalStunUrls(
+      "stun:one.example, stun:two.example:5349, stun:[2001:db8::1]:3478",
+    )).toEqual([
+      "stun:one.example",
+      "stun:two.example:5349",
+      "stun:[2001:db8::1]:3478",
+    ]);
+    for (const invalid of [
+      "",
+      "turn:relay.example:3478",
+      "https://stun.example",
+      "stun:bad host",
+      "stun:-invalid.example",
+      "stun:invalid..example",
+      "stun:one.example,,stun:two.example",
+      "stun:example.com:0",
+      "stun:example.com:65536",
+      "stun:a,stun:b,stun:c,stun:d,stun:e",
+    ]) {
+      expect(() => parseTerminalStunUrls(invalid)).toThrow();
+    }
+  });
 });
 
 describe("restartCapability", () => {
@@ -247,7 +314,7 @@ describe("server supervisor", () => {
     const listeners = new Map<string, () => void>();
 
     const exitCode = await superviseServer(
-      ["--repo", "/tmp/project", "--port", "4999"],
+      ["--repo", "/tmp/project", "--port", "4999", "--enable-terminal-p2p"],
       {
         spawn(command, options) {
           commands.push(command);
@@ -268,11 +335,12 @@ describe("server supervisor", () => {
 
     expect(exitCode).toBe(0);
     expect(commands).toHaveLength(2);
-    expect(commands[0]?.slice(-4)).toEqual([
+    expect(commands[0]?.slice(-5)).toEqual([
       "--repo",
       "/tmp/project",
       "--port",
       "4999",
+      "--enable-terminal-p2p",
     ]);
     expect(environments[0]?.COUCHVIEW_SUPERVISED_WORKER).toBe("1");
     expect(environments[1]?.COUCHVIEW_SUPERVISED_WORKER).toBe("1");
@@ -425,6 +493,8 @@ describe("multi-project CLI startup", () => {
     delete Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
     delete Bun.env.ALLOWED_ORIGINS;
     delete Bun.env.COUCHVIEW_TERMINAL;
+    delete Bun.env.COUCHVIEW_TERMINAL_P2P;
+    delete Bun.env.COUCHVIEW_TERMINAL_STUN;
     delete Bun.env.COUCHVIEW_DISABLE_REUSE;
     delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
     const dataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-data-"));
@@ -502,6 +572,8 @@ describe("multi-project CLI startup", () => {
           port: app.port,
           accessOrigins: app.accessOrigins,
           terminalEnabled: app.terminalSessions.enabled,
+          terminalP2pEnabled: app.terminalSessions.p2pEnabled,
+          terminalStunUrls: [...app.terminalSessions.stunUrls],
         });
       }
       return app.fetch(request);
@@ -558,6 +630,8 @@ describe("multi-project CLI startup", () => {
           port: app.port,
           accessOrigins: app.accessOrigins,
           terminalEnabled: app.terminalSessions.enabled,
+          terminalP2pEnabled: app.terminalSessions.p2pEnabled,
+          terminalStunUrls: [...app.terminalSessions.stunUrls],
         });
       }
       return app.fetch(request);
@@ -663,6 +737,56 @@ describe("multi-project CLI startup", () => {
       ["--repo", secondRoot, "--port", String(port), "--disable-terminal"],
       runtime,
     )).rejects.toThrow("terminal access enabled");
+  });
+
+  test("requires terminal access for P2P and reports the privacy boundary when enabled", async () => {
+    const disabledRoot = await repositoryFixture("p2p-terminal-disabled");
+    await expect(startServer([
+      "--repo",
+      disabledRoot,
+      "--port",
+      String(freePort()),
+      "--disable-terminal",
+      "--enable-terminal-p2p",
+    ], runtime)).rejects.toThrow("Terminal P2P requires terminal access");
+
+    const enabledRoot = await repositoryFixture("p2p-enabled");
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...values: unknown[]) => warnings.push(values.join(" "));
+    try {
+      const result = await startServer([
+        "--repo",
+        enabledRoot,
+        "--port",
+        String(freePort()),
+        "--enable-terminal-p2p",
+      ], runtime);
+      if (!result.app || !result.stop) throw new Error("CLI unexpectedly reused a server");
+      expect(result.app.terminalSessions.p2pEnabled).toBe(true);
+      expect(result.app.terminalSessions.stunUrls).toEqual([
+        "stun:stun.cloudflare.com:3478",
+      ]);
+      expect(warnings.join("\n")).toContain("peer");
+      expect(warnings.join("\n")).toContain("bypass Cloudflare");
+      result.stop();
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test("rejects running-server reuse when explicit P2P policy conflicts", async () => {
+    const firstRoot = await repositoryFixture("p2p-owner");
+    const secondRoot = await repositoryFixture("p2p-client");
+    const port = freePort();
+    await runningApp(firstRoot, port);
+    await expect(startServer([
+      "--repo",
+      secondRoot,
+      "--port",
+      String(port),
+      "--enable-terminal-p2p",
+    ], runtime)).rejects.toThrow("terminal P2P disabled");
   });
 
   test("adds a second project to a compatible server, then reports duplicates", async () => {

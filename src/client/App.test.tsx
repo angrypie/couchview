@@ -579,13 +579,15 @@ describe("Couchview app", () => {
       if (url.pathname === "/api/instance" && method === "GET") {
         return Response.json({
           service: "couchview",
-          protocolVersion: 3,
+          protocolVersion: 4,
           version: "0.1.0",
           instanceId: "fixture-instance",
           bindHost: "127.0.0.1",
           port: 4173,
           accessOrigins: ["http://127.0.0.1:4173"],
           terminalEnabled: terminalAvailable,
+          terminalP2pEnabled: false,
+          terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
         });
       }
       if (url.pathname === "/api/repositories") {
