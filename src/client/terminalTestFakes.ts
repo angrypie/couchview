@@ -1,5 +1,8 @@
 import type { TerminalRendererConfig } from "./typographyPreferences.ts";
-import type { BrowserTerminalWriteProfile } from "./ghosttyTerminal.ts";
+import type {
+  BrowserTerminalPreviewRenderer,
+  BrowserTerminalWriteProfile,
+} from "./ghosttyTerminal.ts";
 
 interface RendererOptions {
   container: HTMLElement;
@@ -21,6 +24,13 @@ export const rendererState = {
   writes: [] as Uint8Array[],
 };
 
+export const previewRendererState = {
+  calls: 0,
+  configs: [] as TerminalRendererConfig[],
+  disposed: 0,
+  container: null as HTMLElement | null,
+};
+
 export function resetRendererState(): void {
   rendererState.calls = 0;
   rendererState.configs.length = 0;
@@ -32,6 +42,30 @@ export function resetRendererState(): void {
   rendererState.options = null;
   rendererState.pendingCanvasRenders.length = 0;
   rendererState.writes.length = 0;
+  previewRendererState.calls = 0;
+  previewRendererState.configs.length = 0;
+  previewRendererState.disposed = 0;
+  previewRendererState.container = null;
+}
+
+export async function terminalPreviewRendererFactory(options: {
+  container: HTMLElement;
+  config: TerminalRendererConfig;
+}): Promise<BrowserTerminalPreviewRenderer> {
+  previewRendererState.calls += 1;
+  previewRendererState.configs.push(options.config);
+  previewRendererState.container = options.container;
+  const canvas = document.createElement("canvas");
+  options.container.appendChild(canvas);
+  return {
+    async updateConfig(config) {
+      previewRendererState.configs.push(config);
+    },
+    dispose() {
+      previewRendererState.disposed += 1;
+      canvas.remove();
+    },
+  };
 }
 
 export async function terminalRendererFactory(options: RendererOptions) {

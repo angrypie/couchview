@@ -116,6 +116,19 @@ test.describe("mobile fixture review", () => {
     await expect(terminalCard.getByLabel("lualine preview")).toContainText("NORMAL");
     await expect(terminalCard.getByLabel("lualine preview")).toContainText("");
     await expect(terminalCard.getByLabel("tmux status preview")).toContainText("nvim *");
+    const terminalPreview = terminalCard.getByTestId("terminal-typography-preview");
+    await expect(terminalPreview).toHaveAttribute("data-renderer", "ghostty-web");
+    const terminalPreviewCanvas = terminalPreview.locator("canvas");
+    await expect(terminalPreviewCanvas).toBeVisible({ timeout: 15_000 });
+    await expect.poll(() => terminalPreviewCanvas.evaluate(
+      (canvas) => {
+        const terminalCanvas = canvas as HTMLCanvasElement;
+        return terminalCanvas.height * terminalCanvas.width;
+      },
+    )).toBeGreaterThan(0);
+    const initialTerminalPreview = await terminalPreviewCanvas.evaluate(
+      (canvas) => (canvas as HTMLCanvasElement).toDataURL(),
+    );
     await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("min", "-5");
     await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
     await diffCard.getByRole("button", { name: /^System monospace/ }).click();
@@ -140,6 +153,9 @@ test.describe("mobile fixture review", () => {
     await setRangeValue(terminalCard.getByLabel("Font size"), 18);
     await setRangeValue(terminalCard.getByLabel("Cell height adjustment"), 4);
     await setRangeValue(terminalCard.getByLabel("Cell width adjustment"), -5);
+    await expect.poll(() => terminalPreviewCanvas.evaluate(
+      (canvas) => (canvas as HTMLCanvasElement).toDataURL(),
+    )).not.toBe(initialTerminalPreview);
     const applyTerminal = terminalCard.getByRole("button", {
       name: "Apply terminal changes",
     });

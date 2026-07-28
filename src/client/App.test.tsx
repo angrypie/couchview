@@ -8,9 +8,11 @@ import type {
 } from "../shared/contracts.ts";
 import {
   FakeTerminalWebSocket,
+  previewRendererState,
   rendererState,
   resetFakeTerminalWebSockets,
   resetRendererState,
+  terminalPreviewRendererFactory,
   terminalRendererFactory,
 } from "./terminalTestFakes.ts";
 import {
@@ -28,6 +30,7 @@ mock.module("virtual:pwa-register/react", () => ({
 
 mock.module("./ghosttyTerminal.ts", () => ({
   createBrowserTerminal: terminalRendererFactory,
+  createBrowserTerminalPreview: terminalPreviewRendererFactory,
 }));
 
 if (!GlobalRegistrator.isRegistered) {
@@ -1029,6 +1032,11 @@ describe("Couchview app", () => {
     const terminalCard = within(settings)
       .getByRole("heading", { name: "Terminal" })
       .closest("section")!;
+    await waitFor(() => expect(previewRendererState.calls).toBe(1));
+    expect(within(terminalCard).getByTestId("terminal-typography-preview")
+      .getAttribute("data-renderer")).toBe("ghostty-web");
+    expect(within(terminalCard).getByTestId("terminal-typography-preview")
+      .querySelector("canvas")).toBeTruthy();
     fireEvent.change(within(diffCard).getByLabelText("Line height adjustment"), {
       target: { value: "3.5" },
     });
@@ -1127,8 +1135,12 @@ describe("Couchview app", () => {
 
     expect(within(diffCard).getByTestId("diff-typography-preview").style.fontFamily)
       .toStartWith("ui-monospace");
-    expect(within(terminalCard).getByTestId("terminal-typography-preview").style.fontFamily)
-      .toStartWith("ui-monospace");
+    await waitFor(() => expect(previewRendererState.configs.at(-1)).toMatchObject({
+      fontFamily: "system",
+      fontSize: 18,
+      cellHeightAdjustment: 4,
+      cellWidthAdjustment: -5,
+    }));
     expect(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)).toBeNull();
     const defaultTerminal = {
       fontFamily: "iosevka",

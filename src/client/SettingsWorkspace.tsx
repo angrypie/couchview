@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   RotateCcw,
@@ -6,6 +6,8 @@ import {
   SquareTerminal,
   Type,
 } from "lucide-react";
+
+import { GhosttyTerminalPreview } from "./GhosttyTerminalPreview.tsx";
 
 import {
   codeFontStack,
@@ -46,21 +48,6 @@ function ColumnRuler({ testId }: { testId: string }) {
     >
       {COLUMN_RULER}
     </div>
-  );
-}
-
-function PowerlineSegment({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className: string;
-}) {
-  return (
-    <span className={`powerline-segment ${className}`}>
-      <span className="powerline-copy">{children}</span>
-      <span aria-hidden="true" className="powerline-symbol"></span>
-    </span>
   );
 }
 
@@ -204,11 +191,6 @@ export function SettingsPage({
     diffDraft.fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER +
       diffDraft.lineHeightAdjustment,
   );
-  const terminalLineHeight = Math.max(
-    4,
-    terminalDraft.fontSize + terminalDraft.cellHeightAdjustment,
-  );
-
   return (
     <section aria-label="Settings" className="settings-workspace">
       <header className="settings-toolbar">
@@ -380,35 +362,7 @@ export function SettingsPage({
               {...TYPOGRAPHY_LIMITS.terminal.cellWidthAdjustment}
             />
 
-            <div
-              className="typography-preview terminal-typography-preview"
-              data-testid="terminal-typography-preview"
-              style={{
-                "--preview-terminal-background": "#1e1e2e",
-                fontFamily: codeFontStack(terminalDraft.fontFamily),
-                fontSize: `${terminalDraft.fontSize}px`,
-                letterSpacing: `${terminalDraft.cellWidthAdjustment}px`,
-                lineHeight: `${terminalLineHeight}px`,
-              } as CSSProperties}
-            >
-              <ColumnRuler testId="terminal-column-ruler" />
-              <div className="terminal-preview-command"><b>❯</b> nvim ~/.config/nvim/init.lua</div>
-              <div aria-label="lualine preview" className="preview-lualine">
-                <div className="powerline-group">
-                  <PowerlineSegment className="powerline-mode">NORMAL</PowerlineSegment>
-                  <PowerlineSegment className="powerline-file">settings.lua</PowerlineSegment>
-                </div>
-                <span className="lualine-location">utf-8&nbsp; 3:18</span>
-              </div>
-              <div aria-label="tmux status preview" className="preview-tmuxline">
-                <PowerlineSegment className="tmux-index">0</PowerlineSegment>
-                <PowerlineSegment className="tmux-window">bun</PowerlineSegment>
-                <PowerlineSegment className="tmux-index">1</PowerlineSegment>
-                <PowerlineSegment className="tmux-window active">nvim *</PowerlineSegment>
-                <PowerlineSegment className="tmux-index">2</PowerlineSegment>
-                <PowerlineSegment className="tmux-window">fish -</PowerlineSegment>
-              </div>
-            </div>
+            <GhosttyTerminalPreview preferences={terminalDraft} />
             <button
               className="text-button settings-reset"
               onClick={() => setTerminalDraft(DEFAULT_TYPOGRAPHY_PREFERENCES.terminal)}
