@@ -9,10 +9,17 @@ import {
   replaceStaticBuild,
   restartCapability,
   restartRunningServer,
+  runCli,
   SUPERVISOR_RESTART_EXIT_CODE,
   startServer,
   superviseServer,
 } from "./cli.ts";
+import {
+  CLI_VERSION,
+  CliPromptInterrupted,
+  type CompletionShell,
+  type InteractivePrompter,
+} from "./cliCommand.ts";
 import { createCouchviewApp, type CouchviewApp } from "./server.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
@@ -104,15 +111,10 @@ describe("parseCli", () => {
     });
   });
 
-  test("accepts a positional repository path", () => {
-    expect(parseCli(["fixtures/example"])).toEqual({
-      root: path.resolve("fixtures/example"),
-      host: "127.0.0.1",
-      port: 4173,
-      terminalMode: "auto",
-      terminalP2pMode: "auto",
-      terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
-    });
+  test("requires repository paths to use --repo", () => {
+    expect(() => parseCli(["fixtures/example"])).toThrow(
+      "Repository paths must follow the 'serve' command or '--repo'",
+    );
   });
 
   test("accepts --repo and --port in either order", () => {
@@ -205,9 +207,9 @@ describe("parseCli", () => {
     },
   );
 
-  test("rejects multiple competing repository arguments", () => {
+  test("rejects positional and competing repository arguments", () => {
     expect(() => parseCli(["one", "two"])).toThrow(
-      "Repository path may only be provided once",
+      "Repository paths must follow the 'serve' command or '--repo'",
     );
     expect(() => parseCli(["--repo", "one", "two"])).toThrow(
       "Repository path may only be provided once",
@@ -283,6 +285,171 @@ describe("parseCli", () => {
     ]) {
       expect(() => parseTerminalStunUrls(invalid)).toThrow();
     }
+  });
+});
+
+describe("CLI entrypoint", () => {
+  function entrypointRuntime(prompter?: InteractivePrompter) {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const supervised: string[][] = [];
+    const started: string[][] = [];
+    const restarted: string[][] = [];
+    const installed: CompletionShell[] = [];
+    return {
+      stdout,
+      stderr,
+      supervised,
+      started,
+      restarted,
+      installed,
+      runtime: {
+        stdout(message: string) {
+          stdout.push(message);
+        },
+        stderr(message: string) {
+          stderr.push(message);
+        },
+        async supervise(argv: string[]) {
+          supervised.push(argv);
+          return 0;
+        },
+        async start(argv: string[]) {
+          started.push(argv);
+        },
+        async restart(argv: string[]) {
+          restarted.push(argv);
+        },
+        async installCompletion(shell: CompletionShell) {
+          installed.push(shell);
+          return "/tmp/couchview.fish";
+        },
+        createPrompter() {
+          return prompter ?? {
+            isTTY: false,
+            question: async () => "",
+            error() {},
+            close() {},
+          };
+        },
+        supervisedWorker: false,
+      },
+    };
+  }
+
+  test("prints help, version, and completion without starting server work", async () => {
+    const help = entrypointRuntime();
+    expect(await runCli(["--help"], help.runtime)).toBe(0);
+    expect(help.stdout.join("\n")).toContain("Usage:");
+    expect(help.supervised).toEqual([]);
+    expect(help.started).toEqual([]);
+    expect(help.restarted).toEqual([]);
+
+    const version = entrypointRuntime();
+    expect(await runCli(["--version"], version.runtime)).toBe(0);
+    expect(version.stdout).toEqual([`couchview ${CLI_VERSION}`]);
+
+    const completion = entrypointRuntime();
+    expect(await runCli(["completion", "bash"], completion.runtime)).toBe(0);
+    expect(completion.stdout.join("\n")).toContain("complete -F _couchview couchview");
+    expect(completion.supervised).toEqual([]);
+
+    const install = entrypointRuntime();
+    expect(await runCli(["completion", "fish", "--install"], install.runtime)).toBe(0);
+    expect(install.installed).toEqual(["fish"]);
+    expect(install.stdout).toEqual([
+      "Installed Fish completion at /tmp/couchview.fish.",
+    ]);
+    expect(install.supervised).toEqual([]);
+  });
+
+  test("dispatches explicit serve and restart commands with their command names removed", async () => {
+    const serve = entrypointRuntime();
+    expect(await runCli([
+      "serve",
+      ".",
+      "-p",
+      "5000",
+    ], serve.runtime)).toBe(0);
+    expect(serve.supervised).toEqual([["--repo=.", "--port", "5000"]]);
+
+    const restart = entrypointRuntime();
+    expect(await runCli(["restart", "-H", "localhost", "-p", "5000"], restart.runtime)).toBe(0);
+    expect(restart.restarted).toEqual([["-H", "localhost", "-p", "5000"]]);
+  });
+
+  test("reports usage errors with suggestions and exit code 2", async () => {
+    const invocation = entrypointRuntime();
+    expect(await runCli(["--hep"], invocation.runtime)).toBe(2);
+    expect(invocation.stderr.join("\n")).toContain("Did you mean '--help'");
+    expect(invocation.stderr.join("\n")).toContain("couchview help serve");
+    expect(invocation.supervised).toEqual([]);
+
+    const invalidPort = entrypointRuntime();
+    expect(await runCli(["--port", "nope"], invalidPort.runtime)).toBe(2);
+    expect(invalidPort.stderr.join("\n")).toContain("Port must be between 1 and 65535");
+    expect(invalidPort.supervised).toEqual([]);
+  });
+
+  test("resolves interactive values once before launching the supervisor", async () => {
+    const questions: string[] = [];
+    let closed = false;
+    const answers = ["p2p"];
+    const prompter: InteractivePrompter = {
+      isTTY: true,
+      async question(message) {
+        questions.push(message);
+        return answers.shift() ?? "";
+      },
+      error() {},
+      close() {
+        closed = true;
+      },
+    };
+    const invocation = entrypointRuntime(prompter);
+
+    expect(await runCli([
+      "serve",
+      "--interactive",
+      "--repo",
+      ".",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "5000",
+    ], invocation.runtime)).toBe(0);
+
+    expect(questions).toHaveLength(1);
+    expect(closed).toBe(true);
+    expect(invocation.supervised).toEqual([[
+      "--repo",
+      path.resolve("."),
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "5000",
+      "--enable-terminal",
+      "--enable-terminal-p2p",
+    ]]);
+  });
+
+  test("does not hang non-TTY automation and returns 130 when prompts are cancelled", async () => {
+    const nonTty = entrypointRuntime();
+    expect(await runCli(["--interactive"], nonTty.runtime)).toBe(2);
+    expect(nonTty.stderr.join("\n")).toContain("requires an attached terminal");
+    expect(nonTty.supervised).toEqual([]);
+
+    const cancelled = entrypointRuntime({
+      isTTY: true,
+      async question() {
+        throw new CliPromptInterrupted();
+      },
+      error() {},
+      close() {},
+    });
+    expect(await runCli(["--interactive"], cancelled.runtime)).toBe(130);
+    expect(cancelled.stderr).toEqual(["Interactive setup was cancelled."]);
+    expect(cancelled.supervised).toEqual([]);
   });
 });
 

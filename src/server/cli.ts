@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { randomUUID } from "node:crypto";
-import { rename, rm } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,21 @@ import {
   type RestartCapability,
   type RestartResponse,
 } from "../shared/contracts.ts";
+import {
+  CLI_VERSION,
+  CliPromptInterrupted,
+  CliUsageError,
+  type CompletionShell,
+  createInteractivePrompter,
+  fishCompletionPath,
+  type InteractivePrompter,
+  parseCliInvocation,
+  parseRestartArguments,
+  parseServeArguments,
+  promptForServeArguments,
+  renderCliHelp,
+  renderCompletion,
+} from "./cliCommand.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import {
@@ -78,6 +93,17 @@ interface SupervisorRuntime {
   spawn(command: string[], options: SupervisorSpawnOptions): SupervisedChild;
   onSignal(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
   offSignal(signal: "SIGINT" | "SIGTERM", listener: () => void): void;
+}
+
+interface RunCliRuntime {
+  supervise(argv: string[]): Promise<number>;
+  start(argv: string[]): Promise<unknown>;
+  restart(argv: string[]): Promise<unknown>;
+  installCompletion(shell: CompletionShell): Promise<string>;
+  createPrompter(): InteractivePrompter;
+  stdout(message: string): void;
+  stderr(message: string): void;
+  supervisedWorker: boolean;
 }
 
 const restartDelayMs = 250;
@@ -204,9 +230,23 @@ export async function replaceStaticBuild(
 }
 
 export function parseCli(argv: string[]): CliOptions {
-  let root = Bun.env.COUCHVIEW_ROOT ?? Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
-  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
-  let port = Number(Bun.env.PORT ?? 4173);
+  return parseCliState(argv).options;
+}
+
+function parseCliState(argv: string[]): {
+  options: CliOptions;
+  parsed: ReturnType<typeof parseServeArguments>;
+} {
+  const parsed = parseServeArguments(argv);
+  const root = parsed.repo ??
+    Bun.env.COUCHVIEW_ROOT ??
+    Bun.env.COUCH_REVIEW_ROOT ??
+    process.cwd();
+  const host = parsed.host ??
+    Bun.env.COUCHVIEW_HOST ??
+    Bun.env.COUCH_REVIEW_HOST ??
+    "127.0.0.1";
+  const port = Number(parsed.port ?? Bun.env.PORT ?? 4173);
   const terminalEnvironment = Bun.env.COUCHVIEW_TERMINAL;
   let environmentTerminalMode: TerminalMode = "auto";
   if (terminalEnvironment !== undefined) {
@@ -214,7 +254,6 @@ export function parseCli(argv: string[]): CliOptions {
     else if (terminalEnvironment === "0") environmentTerminalMode = "disabled";
     else throw new Error("COUCHVIEW_TERMINAL must be 1 or 0");
   }
-  let terminalFlag: Exclude<TerminalMode, "auto"> | null = null;
   const terminalP2pEnvironment = Bun.env.COUCHVIEW_TERMINAL_P2P;
   let environmentTerminalP2pMode: TerminalP2pMode = "auto";
   if (terminalP2pEnvironment !== undefined) {
@@ -223,63 +262,21 @@ export function parseCli(argv: string[]): CliOptions {
     else throw new Error("COUCHVIEW_TERMINAL_P2P must be 1 or 0");
   }
   const terminalStunUrls = parseTerminalStunUrls(Bun.env.COUCHVIEW_TERMINAL_STUN);
-  let terminalP2pFlag: Exclude<TerminalP2pMode, "auto"> | null = null;
-  let explicitRoot = false;
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--repo") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error("Repository path is required");
-      if (explicitRoot) throw new Error("Repository path may only be provided once");
-      root = value;
-      explicitRoot = true;
-      index += 1;
-    } else if (argument === "--port") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error("Port must be between 1 and 65535");
-      port = Number(value);
-      index += 1;
-    } else if (argument === "--host") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error("Host is required");
-      host = value;
-      index += 1;
-    } else if (argument === "--enable-terminal" || argument === "--disable-terminal") {
-      const mode = argument === "--enable-terminal" ? "enabled" : "disabled";
-      if (terminalFlag && terminalFlag !== mode) {
-        throw new Error("--enable-terminal and --disable-terminal cannot be used together");
-      }
-      terminalFlag = mode;
-    } else if (
-      argument === "--enable-terminal-p2p" ||
-      argument === "--disable-terminal-p2p"
-    ) {
-      const mode = argument === "--enable-terminal-p2p" ? "enabled" : "disabled";
-      if (terminalP2pFlag && terminalP2pFlag !== mode) {
-        throw new Error(
-          "--enable-terminal-p2p and --disable-terminal-p2p cannot be used together",
-        );
-      }
-      terminalP2pFlag = mode;
-    } else if (argument && !argument.startsWith("-")) {
-      if (explicitRoot) throw new Error("Repository path may only be provided once");
-      root = argument;
-      explicitRoot = true;
-    } else {
-      throw new Error(`Unknown option: ${argument}`);
-    }
-  }
   if (!root) throw new Error("Repository path is required");
+  if (!host) throw new Error("Host is required");
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
   }
   return {
-    root: path.resolve(root),
-    host: normalizeBindHost(host),
-    port,
-    terminalMode: terminalFlag ?? environmentTerminalMode,
-    terminalP2pMode: terminalP2pFlag ?? environmentTerminalP2pMode,
-    terminalStunUrls,
+    parsed,
+    options: {
+      root: path.resolve(root),
+      host: normalizeBindHost(host),
+      port,
+      terminalMode: parsed.terminalMode ?? environmentTerminalMode,
+      terminalP2pMode: parsed.terminalP2pMode ?? environmentTerminalP2pMode,
+      terminalStunUrls,
+    },
   };
 }
 
@@ -317,24 +314,13 @@ export function parseTerminalStunUrls(value: string | undefined): string[] {
 }
 
 function parseRestartCli(argv: string[]): RestartCliOptions {
-  let host = Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
-  let port = Number(Bun.env.PORT ?? 4173);
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === "--port") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error("Port must be between 1 and 65535");
-      port = Number(value);
-      index += 1;
-    } else if (argument === "--host") {
-      const value = argv[index + 1];
-      if (!value || value.startsWith("--")) throw new Error("Host is required");
-      host = value;
-      index += 1;
-    } else {
-      throw new Error(`Unknown restart option: ${argument}`);
-    }
-  }
+  const parsed = parseRestartArguments(argv);
+  const host = parsed.host ??
+    Bun.env.COUCHVIEW_HOST ??
+    Bun.env.COUCH_REVIEW_HOST ??
+    "127.0.0.1";
+  const port = Number(parsed.port ?? Bun.env.PORT ?? 4173);
+  if (!host) throw new Error("Host is required");
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
   }
@@ -712,9 +698,9 @@ export async function startServer(
     fetch: runtimeOverrides.fetch ?? globalThis.fetch,
     serve: runtimeOverrides.serve ?? Bun.serve,
   };
-  const options = parseCli(argv);
+  const { options, parsed } = parseCliState(argv);
   const explicitHost =
-    argv.includes("--host") ||
+    parsed.explicit.host ||
     Bun.env.COUCHVIEW_HOST !== undefined ||
     Bun.env.COUCH_REVIEW_HOST !== undefined;
   const reuseEnabled =
@@ -977,20 +963,146 @@ export async function startServer(
   return { app, server, stop } as const;
 }
 
-if (import.meta.main) {
-  const argv = process.argv.slice(2);
-  const restarting = argv[0] === "restart";
-  const command = restarting
-    ? restartRunningServer(argv.slice(1))
-    : Bun.env[supervisedWorkerEnvironment] === "1"
-      ? startServer(argv)
-      : superviseServer(argv).then((exitCode) => {
-          process.exitCode = exitCode;
-        });
-  command.catch((error) => {
-    console.error(
-      `Couchview could not ${restarting ? "restart" : "start"}: ${(error as Error).message}`,
+function validateInteractivePort(value: string): number {
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Port must be between 1 and 65535");
+  }
+  return port;
+}
+
+function validateServeInvocation(argv: string[]): CliOptions {
+  try {
+    return parseCli(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    throw new CliUsageError((error as Error).message, "serve");
+  }
+}
+
+function validateRestartInvocation(argv: string[]): RestartCliOptions {
+  try {
+    return parseRestartCli(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    throw new CliUsageError((error as Error).message, "restart");
+  }
+}
+
+async function installCompletion(shell: CompletionShell): Promise<string> {
+  if (shell !== "fish") {
+    throw new CliUsageError(
+      "Automatic completion installation currently supports Fish only.",
+      "completion",
     );
-    process.exitCode = 1;
+  }
+  const destination = fishCompletionPath();
+  const temporary = `${destination}.tmp-${randomUUID()}`;
+  await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+  try {
+    await writeFile(temporary, `${renderCompletion(shell)}\n`, { mode: 0o600 });
+    await rename(temporary, destination);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+  return destination;
+}
+
+export async function runCli(
+  argv = process.argv.slice(2),
+  runtimeOverrides: Partial<RunCliRuntime> = {},
+): Promise<number> {
+  const runtime: RunCliRuntime = {
+    supervise: runtimeOverrides.supervise ?? superviseServer,
+    start: runtimeOverrides.start ?? startServer,
+    restart: runtimeOverrides.restart ?? restartRunningServer,
+    installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
+    createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
+    stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
+    stderr: runtimeOverrides.stderr ?? ((message) => process.stderr.write(`${message}\n`)),
+    supervisedWorker: runtimeOverrides.supervisedWorker ??
+      Bun.env[supervisedWorkerEnvironment] === "1",
+  };
+  let action = argv[0] === "restart" ? "restart" : "start";
+  try {
+    const invocation = parseCliInvocation(argv);
+    if (invocation.kind === "help") {
+      runtime.stdout(renderCliHelp(invocation.command));
+      return 0;
+    }
+    if (invocation.kind === "version") {
+      runtime.stdout(`couchview ${CLI_VERSION}`);
+      return 0;
+    }
+    if (invocation.kind === "completion") {
+      if (invocation.install) {
+        action = "install completion";
+        const destination = await runtime.installCompletion(invocation.shell);
+        runtime.stdout(`Installed Fish completion at ${destination}.`);
+        return 0;
+      }
+      runtime.stdout(renderCompletion(invocation.shell));
+      return 0;
+    }
+    if (invocation.kind === "restart") {
+      action = "restart";
+      validateRestartInvocation(invocation.argv);
+      await runtime.restart(invocation.argv);
+      return 0;
+    }
+
+    let serveArgv = invocation.argv;
+    const options = validateServeInvocation(serveArgv);
+    if (invocation.parsed.interactive) {
+      const prompter = runtime.createPrompter();
+      try {
+        serveArgv = await promptForServeArguments(
+          invocation.parsed,
+          options,
+          prompter,
+          {
+            root(value) {
+              if (!value) throw new Error("Repository path is required");
+              return path.resolve(value);
+            },
+            host(value) {
+              if (!value) throw new Error("Host is required");
+              return normalizeBindHost(value);
+            },
+            port: validateInteractivePort,
+          },
+        );
+      } finally {
+        prompter.close();
+      }
+      validateServeInvocation(serveArgv);
+    }
+
+    if (runtime.supervisedWorker) {
+      await runtime.start(serveArgv);
+      return 0;
+    }
+    return await runtime.supervise(serveArgv);
+  } catch (error) {
+    if (error instanceof CliPromptInterrupted) {
+      runtime.stderr(error.message);
+      return 130;
+    }
+    if (error instanceof CliUsageError) {
+      const help = error.helpCommand
+        ? `couchview help ${error.helpCommand}`
+        : "couchview --help";
+      runtime.stderr(`error: ${error.message}\nTry '${help}' for more information.`);
+      return 2;
+    }
+    runtime.stderr(`Couchview could not ${action}: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+if (import.meta.main) {
+  void runCli().then((exitCode) => {
+    process.exitCode = exitCode;
   });
 }

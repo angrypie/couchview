@@ -42,6 +42,64 @@ Open the project-specific URL printed by the command, such as `http://127.0.0.1:
 
 Run `couchview` inside another Git project while that endpoint is active to add it to the same server. The command prints whether the project was added, repeats its URL, and exits. Click the repository name in the app to switch projects; the selected repository is stored in `?repo=...`, so browser history and separate tabs can keep independent projects open. Use another `--port` when intentionally running a different Couchview version or server instance.
 
+### Command-line help and completion
+
+`couchview` remains the shortest way to serve the current repository, while the
+explicit `serve` command or `--repo` flag selects another repository. Bare paths
+such as `couchview ../project` are rejected, keeping command completion distinct
+from path completion. Conventional short options and inline values are supported:
+
+```sh
+couchview serve -r /absolute/path/to/project -H 127.0.0.1 -p 4173
+couchview serve /absolute/path/to/project --port 4173
+couchview --repo=/absolute/path/to/project --port=4173
+```
+
+Use built-in help for the complete option, environment, and security reference:
+
+```sh
+couchview --help
+couchview help serve
+couchview restart --help
+couchview --version
+```
+
+For a guided launch, `-i` or `--interactive` prompts only for settings that were
+not already supplied. It requires an attached terminal, so automated invocations
+never wait for input:
+
+```sh
+couchview --interactive
+couchview serve --interactive --repo /absolute/path/to/project
+```
+
+Shell completion is generated on stdout by default. Fish can install and update
+its completion file automatically in the standard per-user completion directory,
+without editing `config.fish`:
+
+```fish
+couchview completion fish --install
+```
+
+Fish discovers that file automatically in new and existing shells. For dynamic
+setup, or for zsh and bash, add the matching command to the shell profile to
+complete commands, options, shell names, and repository directories only after
+`serve` or a repository flag:
+
+```sh
+# zsh (~/.zshrc; compinit must be loaded before the generated script)
+autoload -Uz compinit && compinit
+source <(couchview completion zsh)
+
+# bash (~/.bashrc)
+source <(couchview completion bash)
+
+# fish alternative (~/.config/fish/config.fish)
+couchview completion fish | source
+```
+
+Run `couchview help completion` to print these setup examples again.
+
 ### Open it from a phone
 
 To use Couchview from a phone on the same network, explicitly bind it to all IPv4 interfaces:

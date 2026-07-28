@@ -131,6 +131,11 @@ test.describe("desktop tmux terminal", () => {
         latestDimensions.rows,
       );
     };
+    const horizontalCanvasCoverage = () => terminalSurface.evaluate((surface) => {
+      const canvas = surface.querySelector("canvas");
+      if (!canvas) return 0;
+      return canvas.getBoundingClientRect().width / surface.getBoundingClientRect().width;
+    });
     await terminalSurface.click();
     const initialCellHeight = await cellHeight();
     const inputBeforeFontChange = (await state()).inputs.join("");
@@ -150,6 +155,17 @@ test.describe("desktop tmux terminal", () => {
     );
     await expect.poll(cellHeight).toBe(initialCellHeight);
     expect((await state()).inputs.join("")).toBe(inputBeforeFontChange);
+
+    // Every font change lands immediately, while ghostty-web suppresses
+    // overlapping fit calls. The final metrics must still be reconciled after
+    // a rapid burst instead of leaving a shrunken canvas until reconnect.
+    for (let index = 0; index < 6; index += 1) {
+      await page.keyboard.press(`${primaryModifier}+-`);
+    }
+    await expect.poll(horizontalCanvasCoverage).toBeGreaterThan(0.95);
+    await page.keyboard.press(`${primaryModifier}+0`);
+    await expect.poll(cellHeight).toBe(initialCellHeight);
+    await expect.poll(horizontalCanvasCoverage).toBeGreaterThan(0.95);
 
     await page.keyboard.down("u");
     await expect(terminalSurface).toHaveAttribute("contenteditable", "false");

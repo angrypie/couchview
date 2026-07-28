@@ -45,6 +45,7 @@ interface CreateBrowserTerminalPreviewOptions {
 let initialization: Promise<import("ghostty-web").Ghostty> | null = null;
 const encoder = new TextEncoder();
 const BUNDLED_TEXT_FONT_FAMILY = "Iosevka";
+const FONT_RESIZE_SETTLE_MS = 75;
 
 async function loadGhostty() {
   const ghostty = await import("ghostty-web");
@@ -108,6 +109,26 @@ function applyTerminalAdjustedMetrics(
   // and guarded until upstream exposes line-height and letter-spacing options.
   (renderer as unknown as { metrics: typeof adjustedMetrics }).metrics = adjustedMetrics;
   renderer.resize(terminal.cols, terminal.rows);
+  renderTerminalBuffer(terminal);
+}
+
+function renderTerminalBuffer(
+  terminal: import("ghostty-web").Terminal,
+  forceAll = true,
+): void {
+  const renderer = terminal.renderer;
+  const wasmTerm = terminal.wasmTerm;
+  if (!renderer || !wasmTerm) return;
+  const { scrollbarOpacity } = terminal as unknown as {
+    scrollbarOpacity: number;
+  };
+  renderer.render(
+    wasmTerm,
+    forceAll,
+    terminal.viewportY,
+    terminal,
+    scrollbarOpacity,
+  );
 }
 
 function terminalPreviewContent(cols: number, rows: number): string {
@@ -251,6 +272,7 @@ export async function createBrowserTerminal(
   let hostWriteDepth = 0;
   let pendingCanvasRenders: BrowserTerminalWriteProfile[] | null = null;
   let keySubscription: { dispose(): void } | null = null;
+  let fontRefitTimer: number | null = null;
   const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
     keySubscription?.dispose();
     keySubscription = null;
@@ -294,6 +316,13 @@ export async function createBrowserTerminal(
       terminal.options.fontSize = fontSize;
       applyAdjustedMetrics();
       fitAddon.fit();
+      if (fontRefitTimer !== null) window.clearTimeout(fontRefitTimer);
+      // ghostty-web 0.4 ignores fit calls for 50ms after it resizes. Reconcile
+      // once a hotkey burst settles so the final font metrics fill the surface.
+      fontRefitTimer = window.setTimeout(() => {
+        fontRefitTimer = null;
+        fitAddon.fit();
+      }, FONT_RESIZE_SETTLE_MS);
       terminal.focus();
     },
   });
@@ -318,21 +347,9 @@ export async function createBrowserTerminal(
         }
         profile?.onWriteComplete();
         echoPaintController.renderFirstOutput(() => {
-          const renderer = terminal.renderer;
-          const wasmTerm = terminal.wasmTerm;
-          if (!renderer || !wasmTerm) return;
           // ghostty-web#179 ships this behavior on main, but 0.4.0 predates it.
           // Keep this adapter local until the next upstream release is available.
-          const { scrollbarOpacity } = terminal as unknown as {
-            scrollbarOpacity: number;
-          };
-          renderer.render(
-            wasmTerm,
-            false,
-            terminal.viewportY,
-            terminal,
-            scrollbarOpacity,
-          );
+          renderTerminalBuffer(terminal, false);
         });
       } catch (error) {
         if (pendingCanvasRenders && profile) {
@@ -351,6 +368,7 @@ export async function createBrowserTerminal(
     },
     dispose() {
       disposeFontShortcuts();
+      if (fontRefitTimer !== null) window.clearTimeout(fontRefitTimer);
       disposeKeyRepeat();
       echoPaintController.reset();
       dataSubscription.dispose();
