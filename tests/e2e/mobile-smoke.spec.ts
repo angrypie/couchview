@@ -120,8 +120,8 @@ test.describe("mobile fixture review", () => {
     await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
     await diffCard.getByRole("button", { name: /^System monospace/ }).click();
     await setRangeValue(diffCard.getByLabel("Font size"), 14);
-    await setRangeValue(diffCard.getByLabel("Line height"), 1.8);
-    await setRangeValue(diffCard.getByLabel("Letter spacing"), 0.4);
+    await setRangeValue(diffCard.getByLabel("Line height adjustment"), 3.5);
+    await setRangeValue(diffCard.getByLabel("Width adjustment"), 0.4);
     const applyDiff = diffCard.getByRole("button", {
       name: "Apply diff changes",
     });
@@ -185,8 +185,8 @@ test.describe("mobile fixture review", () => {
     await expect(reloadedDiff.getByRole("button", { name: /^System monospace/ }))
       .toHaveAttribute("aria-pressed", "true");
     await expect(reloadedDiff.getByLabel("Font size")).toHaveValue("14");
-    await expect(reloadedDiff.getByLabel("Line height")).toHaveValue("1.8");
-    await expect(reloadedDiff.getByLabel("Letter spacing")).toHaveValue("0.4");
+    await expect(reloadedDiff.getByLabel("Line height adjustment")).toHaveValue("3.5");
+    await expect(reloadedDiff.getByLabel("Width adjustment")).toHaveValue("0.4");
     await expect(reloadedTerminal.getByRole("button", { name: /^System monospace/ }))
       .toHaveAttribute("aria-pressed", "true");
     await expect(reloadedTerminal.getByLabel("Font size")).toHaveValue("18");

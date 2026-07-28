@@ -695,11 +695,21 @@ export class TerminalSessionService {
       socket.close(1003, "terminal_control_invalid");
       return;
     }
-    if (
-      !control ||
-      typeof control !== "object" ||
-      (control as { type?: unknown }).type !== "resize"
-    ) {
+    if (!control || typeof control !== "object") {
+      socket.close(1003, "terminal_control_invalid");
+      return;
+    }
+    const controlType = (control as { type?: unknown }).type;
+    if (controlType === "ping") {
+      const { id } = control as { id?: unknown };
+      if (!Number.isSafeInteger(id) || (id as number) < 1) {
+        socket.close(1003, "terminal_control_invalid");
+        return;
+      }
+      this.sendJson(socket, { type: "pong", id });
+      return;
+    }
+    if (controlType !== "resize") {
       socket.close(1003, "terminal_control_invalid");
       return;
     }

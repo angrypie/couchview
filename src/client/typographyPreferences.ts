@@ -5,8 +5,8 @@ export type CodeFontFamily = "iosevka" | "system";
 export interface DiffTypographyPreferences {
   fontFamily: CodeFontFamily;
   fontSize: number;
-  lineHeight: number;
-  letterSpacing: number;
+  lineHeightAdjustment: number;
+  widthAdjustment: number;
 }
 
 export interface TerminalTypographyPreferences {
@@ -45,8 +45,8 @@ interface NumericLimit {
 export const TYPOGRAPHY_LIMITS = {
   diff: {
     fontSize: { min: 9, max: 24, step: 1 },
-    lineHeight: { min: 1.1, max: 2, step: 0.05 },
-    letterSpacing: { min: -1, max: 2, step: 0.1 },
+    lineHeightAdjustment: { min: -5, max: 5, step: 0.5 },
+    widthAdjustment: { min: -1, max: 2, step: 0.1 },
   },
   terminal: {
     fontSize: { min: 8, max: 32, step: 1 },
@@ -55,18 +55,20 @@ export const TYPOGRAPHY_LIMITS = {
   },
 } as const;
 
+export const DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER = 1.55;
+
 export const DEFAULT_TYPOGRAPHY_PREFERENCES: TypographyPreferences = {
   diff: {
     fontFamily: "iosevka",
     fontSize: 11,
-    lineHeight: 1.55,
-    letterSpacing: 0,
+    lineHeightAdjustment: 0,
+    widthAdjustment: 0,
   },
   terminal: {
     fontFamily: "iosevka",
     fontSize: 15,
-    cellHeightAdjustment: 1,
-    cellWidthAdjustment: -1,
+    cellHeightAdjustment: 0,
+    cellWidthAdjustment: 0,
   },
 };
 
@@ -124,30 +126,36 @@ export function normalizeTypographyPreferences(value: unknown): TypographyPrefer
   const candidate = value && typeof value === "object"
     ? value as Partial<TypographyPreferences>
     : {};
-  const diff: Partial<DiffTypographyPreferences> =
-    candidate.diff && typeof candidate.diff === "object" ? candidate.diff : {};
+  const diff: Partial<DiffTypographyPreferences> & {
+    letterSpacing?: unknown;
+    lineHeight?: unknown;
+  } = candidate.diff && typeof candidate.diff === "object" ? candidate.diff : {};
   const terminal: Partial<TerminalTypographyPreferences> =
     candidate.terminal && typeof candidate.terminal === "object"
     ? candidate.terminal
     : {};
   const defaults = DEFAULT_TYPOGRAPHY_PREFERENCES;
+  const diffFontSize = boundedNumber(
+    diff.fontSize,
+    defaults.diff.fontSize,
+    TYPOGRAPHY_LIMITS.diff.fontSize,
+  );
+  const legacyLineHeightAdjustment = typeof diff.lineHeight === "number"
+    ? diffFontSize * (diff.lineHeight - DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER)
+    : undefined;
   return {
     diff: {
       fontFamily: fontFamily(diff.fontFamily, defaults.diff.fontFamily),
-      fontSize: boundedNumber(
-        diff.fontSize,
-        defaults.diff.fontSize,
-        TYPOGRAPHY_LIMITS.diff.fontSize,
+      fontSize: diffFontSize,
+      lineHeightAdjustment: boundedNumber(
+        diff.lineHeightAdjustment ?? legacyLineHeightAdjustment,
+        defaults.diff.lineHeightAdjustment,
+        TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment,
       ),
-      lineHeight: boundedNumber(
-        diff.lineHeight,
-        defaults.diff.lineHeight,
-        TYPOGRAPHY_LIMITS.diff.lineHeight,
-      ),
-      letterSpacing: boundedNumber(
-        diff.letterSpacing,
-        defaults.diff.letterSpacing,
-        TYPOGRAPHY_LIMITS.diff.letterSpacing,
+      widthAdjustment: boundedNumber(
+        diff.widthAdjustment ?? diff.letterSpacing,
+        defaults.diff.widthAdjustment,
+        TYPOGRAPHY_LIMITS.diff.widthAdjustment,
       ),
     },
     terminal: {

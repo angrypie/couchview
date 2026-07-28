@@ -24,6 +24,7 @@ import type {
   FileDiff,
   ReviewComment,
 } from "../shared/contracts.ts";
+import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 import { formatCommentReference } from "./commentExport.ts";
 import {
   adaptFileDiff,
@@ -102,8 +103,8 @@ interface DiffViewerProps {
   diff: FileDiff;
   fontFamily: string;
   fontSize: number;
-  letterSpacing: number;
-  lineHeight: number;
+  lineHeightAdjustment: number;
+  widthAdjustment: number;
   lineNumbersVisible: boolean;
   lineWrapEnabled: boolean;
   selectedRange: SelectedLineRange | null;
@@ -237,8 +238,8 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
       diff,
       fontFamily,
       fontSize,
-      letterSpacing,
-      lineHeight: lineHeightMultiplier,
+      lineHeightAdjustment,
+      widthAdjustment,
       lineNumbersVisible,
       lineWrapEnabled,
       onCommentClick,
@@ -275,7 +276,10 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
       () => commentAnnotationsVersion(comments, diff.fileId, diff.contentRevision),
       [comments, diff.contentRevision, diff.fileId],
     );
-    const lineHeight = fontSize * lineHeightMultiplier;
+    const lineHeight = Math.max(
+      4,
+      fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER + lineHeightAdjustment,
+    );
 
     const items = useMemo<CodeViewItem<CommentAnnotationMetadata>[]>(() => {
       if (!adapted.value) return [];
@@ -398,20 +402,20 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
             fontFamily,
             fontSize,
             lineHeight,
-            letterSpacing,
+            widthAdjustment,
           );
         },
       }),
       [
         fontFamily,
         fontSize,
-        letterSpacing,
         lineHeight,
-        lineHeightMultiplier,
+        lineHeightAdjustment,
         lineNumbersVisible,
         lineWrapEnabled,
         onIdentifierClick,
         onLineNumberClick,
+        widthAdjustment,
       ],
     );
 
@@ -482,7 +486,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(
             "--diffs-font-family": fontFamily,
             "--diffs-font-size": `${fontSize}px`,
             "--diffs-line-height": `${lineHeight}px`,
-            "--diffs-letter-spacing": `${letterSpacing}px`,
+            "--diffs-letter-spacing": `${widthAdjustment}px`,
             WebkitTextSizeAdjust: "100%",
             textSizeAdjust: "100%",
           } as CSSProperties}

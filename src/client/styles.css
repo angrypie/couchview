@@ -531,21 +531,111 @@ textarea:focus-visible,
   right: max(10px, env(safe-area-inset-right));
   bottom: max(10px, env(safe-area-inset-bottom));
   z-index: 1;
-  max-width: calc(100% - 20px);
-  padding: 4px 7px;
-  border: 1px solid rgb(148 163 184 / 24%);
-  border-radius: 5px;
+  width: min(390px, calc(100% - 20px));
+  padding: 11px;
+  border: 1px solid rgb(148 163 184 / 30%);
+  border-radius: 9px;
   overflow: hidden;
   color: #cbd5e1;
-  background: rgb(15 23 42 / 88%);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  background: rgb(15 23 42 / 94%);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 38%);
+  backdrop-filter: blur(10px);
   font-family: var(--code-font-family);
-  font-size: 9px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.25;
+  line-height: 1.35;
   pointer-events: none;
+}
+
+.terminal-latency-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.terminal-latency-heading strong {
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.terminal-latency-heading span {
+  padding: 2px 5px;
+  border-radius: 99px;
+  color: #86efac;
+  background: rgb(22 101 52 / 42%);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.terminal-latency-grid {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.terminal-latency-grid > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgb(148 163 184 / 16%);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: rgb(30 41 59 / 58%);
+}
+
+.terminal-latency-grid span {
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-overflow: ellipsis;
+  text-transform: uppercase;
   white-space: nowrap;
+}
+
+.terminal-latency-grid strong {
+  color: #f8fafc;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.terminal-latency-grid small,
+.terminal-latency-note {
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.terminal-latency-breakdown {
+  margin-top: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: #dbeafe;
+  background: rgb(30 64 175 / 18%);
+}
+
+.terminal-latency-note {
+  display: block;
+  margin-top: 6px;
+}
+
+@media (max-width: 430px) {
+  .terminal-latency-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .terminal-latency-grid > div {
+    padding-block: 6px;
+  }
+
+  .terminal-latency-grid strong {
+    font-size: 15px;
+  }
 }
 
 .terminal-overlay {

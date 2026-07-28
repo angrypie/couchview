@@ -3828,8 +3828,8 @@ export function App() {
             diff={diff}
             fontFamily={codeFontStack(typographyPreferences.diff.fontFamily)}
             fontSize={fontSize}
-            letterSpacing={typographyPreferences.diff.letterSpacing}
-            lineHeight={typographyPreferences.diff.lineHeight}
+            lineHeightAdjustment={typographyPreferences.diff.lineHeightAdjustment}
+            widthAdjustment={typographyPreferences.diff.widthAdjustment}
             lineNumbersVisible={lineNumbersVisible}
             lineWrapEnabled={lineWrapEnabled}
             onCommentClick={openInlineComment}

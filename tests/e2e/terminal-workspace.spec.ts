@@ -48,6 +48,9 @@ test.describe("desktop tmux terminal", () => {
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
       timeout: 15_000,
     });
+    await expect(workspace.getByRole("button", { name: "Debug" }))
+      .toHaveAttribute("aria-pressed", "false");
+    await expect(workspace.getByTestId("terminal-latency-overlay")).toHaveCount(0);
     await expect(page.locator(".terminal-surface")).toHaveCSS(
       "caret-color",
       "rgba(0, 0, 0, 0)",
@@ -197,7 +200,7 @@ test.describe("desktop tmux terminal", () => {
   test("measures an isolated printable key through the echoed Ghostty canvas render", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/?terminalLatency=1");
     await page.getByRole("button", { name: "Open tmux terminal" }).click();
 
     const workspace = page.getByRole("region", { name: "tmux terminal" });
@@ -205,12 +208,25 @@ test.describe("desktop tmux terminal", () => {
       timeout: 15_000,
     });
     const debug = workspace.getByRole("button", { name: "Debug" });
-    await expect(debug).toHaveAttribute("aria-pressed", "false");
-    await debug.click();
     await expect(debug).toHaveAttribute("aria-pressed", "true");
     await expect(page).toHaveURL(/(?:\?|&)terminalLatency=1(?:&|$)/);
     const overlay = workspace.getByTestId("terminal-latency-overlay");
-    await expect(overlay).toHaveText("Waiting for a clean echoed key…");
+    await expect(overlay).toContainText("Key → canvas");
+    await expect(overlay).toContainText("Server round trip");
+    const networkMetric = overlay.locator(".terminal-latency-grid > div").filter({
+      hasText: "Server round trip",
+    });
+    await expect(networkMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
+
+    await debug.click();
+    await expect(debug).toHaveAttribute("aria-pressed", "false");
+    await expect(overlay).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (
+      new URL(window.location.href).searchParams.get("terminalLatency")
+    ))).toBeNull();
+    await debug.click();
+    await expect(debug).toHaveAttribute("aria-pressed", "true");
+    const resumedOverlay = workspace.getByTestId("terminal-latency-overlay");
     const canvas = workspace.locator("canvas");
     const canvasHash = () => canvas.evaluate((element) => {
       const canvasElement = element as HTMLCanvasElement;
@@ -235,9 +251,11 @@ test.describe("desktop tmux terminal", () => {
     const before = await canvasHash();
     await page.keyboard.press("x");
 
-    await expect(overlay).toHaveText(
-      /^Key→canvas \d+\.\d ms · p50 \d+\.\d · p95 \d+\.\d · n=1$/,
-    );
+    const keyMetric = resumedOverlay.locator(".terminal-latency-grid > div").filter({
+      hasText: "Key → canvas",
+    });
+    await expect(keyMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
+    await expect(keyMetric.locator("small")).toContainText("n=1");
     expect(await canvasHash()).not.toBe(before);
   });
 
@@ -247,8 +265,8 @@ test.describe("desktop tmux terminal", () => {
         diff: {
           fontFamily: "system",
           fontSize: 11,
-          lineHeight: 1.55,
-          letterSpacing: 0,
+          lineHeightAdjustment: 0,
+          widthAdjustment: 0,
         },
         terminal: {
           fontFamily: "system",

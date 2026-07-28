@@ -9,6 +9,7 @@ import {
 
 import {
   codeFontStack,
+  DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
   DEFAULT_TYPOGRAPHY_PREFERENCES,
   TYPOGRAPHY_LIMITS,
   type CodeFontFamily,
@@ -151,8 +152,8 @@ function diffTypographyEqual(
 ): boolean {
   return left.fontFamily === right.fontFamily &&
     left.fontSize === right.fontSize &&
-    left.lineHeight === right.lineHeight &&
-    left.letterSpacing === right.letterSpacing;
+    left.lineHeightAdjustment === right.lineHeightAdjustment &&
+    left.widthAdjustment === right.widthAdjustment;
 }
 
 function terminalTypographyEqual(
@@ -177,8 +178,8 @@ export function SettingsPage({
   }, [
     preferences.diff.fontFamily,
     preferences.diff.fontSize,
-    preferences.diff.letterSpacing,
-    preferences.diff.lineHeight,
+    preferences.diff.lineHeightAdjustment,
+    preferences.diff.widthAdjustment,
   ]);
   useEffect(() => {
     setTerminalDraft(preferences.terminal);
@@ -198,7 +199,11 @@ export function SettingsPage({
   };
   const applyDiff = () => onChange({ ...preferences, diff: diffDraft });
   const applyTerminal = () => onChange({ ...preferences, terminal: terminalDraft });
-  const diffLineHeight = diffDraft.fontSize * diffDraft.lineHeight;
+  const diffLineHeight = Math.max(
+    4,
+    diffDraft.fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER +
+      diffDraft.lineHeightAdjustment,
+  );
   const terminalLineHeight = Math.max(
     4,
     terminalDraft.fontSize + terminalDraft.cellHeightAdjustment,
@@ -273,22 +278,22 @@ export function SettingsPage({
               {...TYPOGRAPHY_LIMITS.diff.fontSize}
             />
             <TypographySlider
-              description="Controls the vertical distance from one code row to the next."
-              format={(value) => `${value.toFixed(2)}×`}
-              id="diff-line-height"
-              label="Line height"
-              onChange={(lineHeight) => updateDiff({ lineHeight })}
-              value={diffDraft.lineHeight}
-              {...TYPOGRAPHY_LIMITS.diff.lineHeight}
+              description="Adds pixels to or removes pixels from the original diff row height."
+              format={signedPixels}
+              id="diff-line-height-adjustment"
+              label="Line height adjustment"
+              onChange={(lineHeightAdjustment) => updateDiff({ lineHeightAdjustment })}
+              value={diffDraft.lineHeightAdjustment}
+              {...TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment}
             />
             <TypographySlider
-              description="Adds or removes horizontal space between characters."
+              description="Adds pixels to or removes pixels from the original character width."
               format={signedPixels}
-              id="diff-letter-spacing"
-              label="Letter spacing"
-              onChange={(letterSpacing) => updateDiff({ letterSpacing })}
-              value={diffDraft.letterSpacing}
-              {...TYPOGRAPHY_LIMITS.diff.letterSpacing}
+              id="diff-width-adjustment"
+              label="Width adjustment"
+              onChange={(widthAdjustment) => updateDiff({ widthAdjustment })}
+              value={diffDraft.widthAdjustment}
+              {...TYPOGRAPHY_LIMITS.diff.widthAdjustment}
             />
 
             <div
@@ -297,7 +302,7 @@ export function SettingsPage({
               style={{
                 fontFamily: codeFontStack(diffDraft.fontFamily),
                 fontSize: `${diffDraft.fontSize}px`,
-                letterSpacing: `${diffDraft.letterSpacing}px`,
+                letterSpacing: `${diffDraft.widthAdjustment}px`,
                 lineHeight: `${diffLineHeight}px`,
               }}
             >

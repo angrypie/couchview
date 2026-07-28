@@ -395,6 +395,11 @@ describe("persistent tmux sessions", () => {
     expect(firstSocket.sent.map((value) => JSON.parse(value))).toContainEqual(
       expect.objectContaining({ type: "ready" }),
     );
+    service.websocket.message!(firstSocket, JSON.stringify({ type: "ping", id: 7 }));
+    expect(firstSocket.sent.map((value) => JSON.parse(value))).toContainEqual({
+      type: "pong",
+      id: 7,
+    });
 
     await expect(service.issueAttachment(
       "repo",

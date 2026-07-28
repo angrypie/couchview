@@ -137,6 +137,7 @@ describe("TerminalWorkspace", () => {
     expect(screen.queryByTestId("terminal-latency-overlay")).toBeNull();
     expect(screen.getByRole("button", { name: "Debug" }).getAttribute("aria-pressed"))
       .toBe("false");
+    expect(rendererState.latencyKeyHandler).toBeNull();
     expect(socket.protocols).toEqual([
       "couchview-terminal-v1",
       "couchview-ticket.ticket-1",
@@ -146,6 +147,8 @@ describe("TerminalWorkspace", () => {
       socket.emitMessage(JSON.stringify({ type: "ready", profileId: "tmux" }));
     });
     expect(screen.getByText("Connected")).toBeTruthy();
+    expect(socket.sent.some((value) => typeof value === "string" && value.includes('"type":"ping"')))
+      .toBe(false);
     const bytes = new Uint8Array([0x1b, 0x5b, 0x32, 0x4a]);
     await act(async () => socket.emitMessage(bytes.buffer));
     expect(rendererState.writes).toHaveLength(1);
@@ -173,7 +176,7 @@ describe("TerminalWorkspace", () => {
     expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
   });
 
-  test("toggles latency debugging live and mirrors it into the current URL", async () => {
+  test("keeps the Debug control visible while gating diagnostics behind its flag", async () => {
     render(<TerminalWorkspace {...defaultProps()} />);
 
     await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
@@ -181,12 +184,21 @@ describe("TerminalWorkspace", () => {
     await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
     const debug = screen.getByRole("button", { name: "Debug" });
 
+    expect(debug.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("terminal-latency-overlay")).toBeNull();
+    expect(rendererState.latencyKeyHandler).toBeNull();
+    expect(socket.sent.some((value) => typeof value === "string" && value.includes('"type":"ping"')))
+      .toBe(false);
+
     fireEvent.click(debug);
     expect(debug.getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByTestId("terminal-latency-overlay").textContent)
-      .toBe("Waiting for a clean echoed key…");
+      .toContain("Key → canvas");
     expect(new URL(window.location.href).searchParams.get("terminalLatency")).toBe("1");
     expect(rendererState.latencyKeyHandler).not.toBeNull();
+    await waitFor(() => expect(
+      socket.sent.some((value) => typeof value === "string" && value.includes('"type":"ping"')),
+    ).toBe(true));
     expect(rendererState.calls).toBe(1);
     expect(FakeTerminalWebSocket.instances).toHaveLength(1);
 
@@ -207,8 +219,17 @@ describe("TerminalWorkspace", () => {
     const socket = FakeTerminalWebSocket.instances[0]!;
     await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
     const overlay = screen.getByTestId("terminal-latency-overlay");
-    expect(overlay.textContent).toBe("Waiting for a clean echoed key…");
+    expect(overlay.textContent).toContain("Waiting…");
+    expect(overlay.textContent).toContain("Server round trip");
     await waitFor(() => expect(rendererState.latencyKeyHandler).not.toBeNull());
+
+    const ping = socket.sent
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => JSON.parse(value) as { type?: string; id?: number })
+      .find((control) => control.type === "ping");
+    expect(ping?.id).toBeNumber();
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "pong", id: ping!.id })));
+    expect(overlay.textContent).toMatch(/Server round trip\d+\.\d ms/);
 
     await act(async () => {
       rendererState.latencyKeyHandler!(new KeyboardEvent("keydown", { key: "x" }));
@@ -218,12 +239,12 @@ describe("TerminalWorkspace", () => {
 
     await act(async () => socket.emitMessage(new TextEncoder().encode("x").buffer));
     expect(rendererState.pendingCanvasRenders).toHaveLength(1);
-    expect(overlay.textContent).toBe("Waiting for a clean echoed key…");
+    expect(overlay.textContent).toContain("Waiting…");
 
     await act(async () => rendererState.pendingCanvasRenders.shift()?.());
-    expect(overlay.textContent).toMatch(
-      /^Key→canvas \d+\.\d ms · p50 \d+\.\d · p95 \d+\.\d · n=1$/,
-    );
+    expect(overlay.textContent).toMatch(/Key → canvas\d+\.\d ms/);
+    expect(overlay.textContent).toMatch(/p50 \d+\.\d · p95 \d+\.\d · n=1/);
+    expect(overlay.textContent).toContain("Median RTT is ~");
   });
 
   test("reattaches each new renderer after rapid typography changes while hidden", async () => {

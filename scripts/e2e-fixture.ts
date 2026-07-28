@@ -453,9 +453,14 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 				try {
 					const control = JSON.parse(message) as {
 						type?: string;
+						id?: number;
 						cols?: number;
 						rows?: number;
 					};
+					if (control.type === "ping" && Number.isSafeInteger(control.id)) {
+						socket.send(JSON.stringify({ type: "pong", id: control.id }));
+						return;
+					}
 					if (
 						control.type === "resize" &&
 						Number.isSafeInteger(control.cols) &&

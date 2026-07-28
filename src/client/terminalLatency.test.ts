@@ -4,6 +4,7 @@ import {
   eligibleTerminalLatencyKey,
   normalizedTerminalKeyTimestamp,
   TerminalLatencyTracker,
+  TerminalRoundTripTracker,
   terminalLatencyEnabled,
   type TerminalLatencyKeyEvent,
 } from "./terminalLatency.ts";
@@ -131,5 +132,29 @@ describe("terminal key-to-canvas latency", () => {
       p95Ms: 40,
       sampleCount: 3,
     });
+  });
+
+  test("tracks bounded server round trips and ignores stale or mismatched pongs", () => {
+    const tracker = new TerminalRoundTripTracker({ historyLimit: 2, sampleTimeoutMs: 100 });
+    expect(tracker.start(1, 0)).toBe(true);
+    expect(tracker.start(2, 10)).toBe(false);
+    expect(tracker.pong(2, 20)).toBeNull();
+    expect(tracker.pong(1, 30)?.lastMs).toBe(30);
+
+    expect(tracker.start(2, 40)).toBe(true);
+    expect(tracker.pong(2, 60)?.p50Ms).toBe(20);
+    expect(tracker.start(3, 70)).toBe(true);
+    expect(tracker.pong(3, 110)).toEqual({
+      lastMs: 40,
+      p50Ms: 20,
+      p95Ms: 40,
+      sampleCount: 2,
+    });
+
+    expect(tracker.start(4, 200)).toBe(true);
+    expect(tracker.start(5, 301)).toBe(true);
+    expect(tracker.pong(4, 310)).toBeNull();
+    tracker.reset();
+    expect(tracker.summary()).toBeNull();
   });
 });

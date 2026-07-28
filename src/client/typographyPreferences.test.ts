@@ -23,13 +23,24 @@ class MemoryStorage {
 }
 
 describe("browser typography preferences", () => {
+  test("uses zero height and width adjustments by default", () => {
+    expect(DEFAULT_TYPOGRAPHY_PREFERENCES.diff).toMatchObject({
+      lineHeightAdjustment: 0,
+      widthAdjustment: 0,
+    });
+    expect(DEFAULT_TYPOGRAPHY_PREFERENCES.terminal).toMatchObject({
+      cellHeightAdjustment: 0,
+      cellWidthAdjustment: 0,
+    });
+  });
+
   test("normalizes independently bounded diff and terminal settings", () => {
     expect(normalizeTypographyPreferences({
       diff: {
         fontFamily: "comic-sans",
         fontSize: 200,
-        lineHeight: 0,
-        letterSpacing: 0.36,
+        lineHeightAdjustment: -20,
+        widthAdjustment: 0.36,
       },
       terminal: {
         fontFamily: "system",
@@ -41,8 +52,8 @@ describe("browser typography preferences", () => {
       diff: {
         fontFamily: "iosevka",
         fontSize: 24,
-        lineHeight: 1.1,
-        letterSpacing: 0.4,
+        lineHeightAdjustment: -5,
+        widthAdjustment: 0.4,
       },
       terminal: {
         fontFamily: "system",
@@ -50,6 +61,22 @@ describe("browser typography preferences", () => {
         cellHeightAdjustment: 16,
         cellWidthAdjustment: -5,
       },
+    });
+  });
+
+  test("migrates multiplier and letter-spacing diff preferences to adjustments", () => {
+    expect(normalizeTypographyPreferences({
+      diff: {
+        fontFamily: "system",
+        fontSize: 14,
+        lineHeight: 1.8,
+        letterSpacing: 0.4,
+      },
+    }).diff).toEqual({
+      fontFamily: "system",
+      fontSize: 14,
+      lineHeightAdjustment: 3.5,
+      widthAdjustment: 0.4,
     });
   });
 

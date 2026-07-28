@@ -22,6 +22,7 @@ import {
 } from "./ghosttyTerminal.ts";
 import {
   TerminalLatencyTracker,
+  TerminalRoundTripTracker,
   terminalLatencyEnabled,
   type TerminalLatencySummary,
 } from "./terminalLatency.ts";
@@ -53,6 +54,7 @@ interface TerminalWorkspaceProps {
 }
 
 const clientStorageKey = "couchview:terminal-client-id";
+const LATENCY_PING_INTERVAL_MS = 2_000;
 
 function terminalClientId(): string {
   const existing = window.sessionStorage.getItem(clientStorageKey);
@@ -109,9 +111,11 @@ export function TerminalWorkspace({
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const [rendererRetryNonce, setRendererRetryNonce] = useState(0);
   const [ending, setEnding] = useState(false);
-  const debugAvailableRef = useRef(terminalLatencyEnabled(window.location.search));
-  const [latencyEnabled, setLatencyEnabled] = useState(debugAvailableRef.current);
+  const [latencyEnabled, setLatencyEnabled] = useState(
+    terminalLatencyEnabled(window.location.search),
+  );
   const [latencySummary, setLatencySummary] = useState<TerminalLatencySummary | null>(null);
+  const [roundTripSummary, setRoundTripSummary] = useState<TerminalLatencySummary | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<BrowserTerminalRenderer | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -122,8 +126,13 @@ export function TerminalWorkspace({
   const latencyEnabledRef = useRef(latencyEnabled);
   latencyEnabledRef.current = latencyEnabled;
   const latencyTrackerRef = useRef<TerminalLatencyTracker | null>(null);
+  const roundTripTrackerRef = useRef<TerminalRoundTripTracker | null>(null);
+  const pingSequenceRef = useRef(0);
   if (latencyEnabled && !latencyTrackerRef.current) {
     latencyTrackerRef.current = new TerminalLatencyTracker();
+  }
+  if (latencyEnabled && !roundTripTrackerRef.current) {
+    roundTripTrackerRef.current = new TerminalRoundTripTracker();
   }
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -219,7 +228,9 @@ export function TerminalWorkspace({
   useEffect(() => {
     const tracker = latencyTrackerRef.current;
     tracker?.reset();
+    roundTripTrackerRef.current?.reset();
     setLatencySummary(null);
+    setRoundTripSummary(null);
     rendererRef.current?.setLatencyKeyHandler(
       latencyEnabled && tracker
         ? (event) => tracker.keyEvent(event, window.performance.now())
@@ -282,9 +293,20 @@ export function TerminalWorkspace({
             const control = JSON.parse(event.data) as {
               type?: string;
               code?: string;
+              id?: number;
               message?: string;
             };
-            if (control.type === "ready") {
+            if (
+              control.type === "pong" &&
+              Number.isSafeInteger(control.id) &&
+              latencyEnabledRef.current
+            ) {
+              const summary = roundTripTrackerRef.current?.pong(
+                control.id!,
+                window.performance.now(),
+              );
+              if (summary) setRoundTripSummary(summary);
+            } else if (control.type === "ready") {
               reconnectAttemptRef.current = 0;
               setConnectionState("connected");
               setConnectionError(null);
@@ -373,6 +395,27 @@ export function TerminalWorkspace({
   ]);
 
   useEffect(() => {
+    const tracker = roundTripTrackerRef.current;
+    tracker?.reset();
+    setRoundTripSummary(null);
+    if (!latencyEnabled || connectionState !== "connected" || !tracker) return;
+
+    const ping = () => {
+      const socket = socketRef.current;
+      if (socket?.readyState !== WebSocket.OPEN) return;
+      const id = ++pingSequenceRef.current;
+      if (!tracker.start(id, window.performance.now())) return;
+      socket.send(JSON.stringify({ type: "ping", id }));
+    };
+    ping();
+    const interval = window.setInterval(ping, LATENCY_PING_INTERVAL_MS);
+    return () => {
+      window.clearInterval(interval);
+      tracker.cancelPending();
+    };
+  }, [connectionState, latencyEnabled, rendererGeneration]);
+
+  useEffect(() => {
     if (!active || !rendererReady) return;
     const frame = window.requestAnimationFrame(() => {
       rendererRef.current?.fit();
@@ -440,11 +483,24 @@ export function TerminalWorkspace({
   }, []);
 
   const toggleLatencyProfiler = useCallback(() => {
-    if (!debugAvailableRef.current) return;
-    setLatencyEnabled((enabled) => !enabled);
-  }, []);
+    const nextEnabled = !latencyEnabled;
+    const url = new URL(window.location.href);
+    if (nextEnabled) {
+      url.searchParams.set("terminalLatency", "1");
+    } else {
+      url.searchParams.delete("terminalLatency");
+    }
+    window.history.replaceState(window.history.state, "", url);
+    setLatencyEnabled(nextEnabled);
+  }, [latencyEnabled]);
 
   const connectionLabel = `${stateLabel(connectionState)}${safeMode ? " · Safe Mode" : ""}`;
+  const estimatedNetworkShare = latencySummary && roundTripSummary && latencySummary.p50Ms > 0
+    ? Math.min(100, Math.round((roundTripSummary.p50Ms / latencySummary.p50Ms) * 100))
+    : null;
+  const estimatedRemainder = latencySummary && roundTripSummary
+    ? Math.max(0, latencySummary.p50Ms - roundTripSummary.p50Ms)
+    : null;
 
   return (
     <section
@@ -466,16 +522,14 @@ export function TerminalWorkspace({
           <span className={`terminal-connection ${connectionState}`}>{connectionLabel}</span>
         </div>
         <div className="terminal-toolbar-actions">
-          {debugAvailableRef.current && (
-            <button
-              aria-pressed={latencyEnabled}
-              className={`terminal-toolbar-button${latencyEnabled ? " active" : ""}`}
-              onClick={toggleLatencyProfiler}
-              type="button"
-            >
-              <Bug size={15} /> Debug
-            </button>
-          )}
+          <button
+            aria-pressed={latencyEnabled}
+            className={`terminal-toolbar-button${latencyEnabled ? " active" : ""}`}
+            onClick={toggleLatencyProfiler}
+            type="button"
+          >
+            <Bug size={15} /> Debug
+          </button>
           <button
             className="terminal-toolbar-button danger"
             disabled={ending || connectionState === "ended"}
@@ -491,13 +545,42 @@ export function TerminalWorkspace({
         <div className="terminal-surface" ref={containerRef} />
         {latencyEnabled && (
           <div
-            aria-label="Terminal key-to-canvas latency"
+            aria-label="Terminal latency diagnostics"
             className="terminal-latency-overlay"
             data-testid="terminal-latency-overlay"
           >
-            {latencySummary
-              ? `Key→canvas ${latencySummary.lastMs.toFixed(1)} ms · p50 ${latencySummary.p50Ms.toFixed(1)} · p95 ${latencySummary.p95Ms.toFixed(1)} · n=${latencySummary.sampleCount}`
-              : "Waiting for a clean echoed key…"}
+            <div className="terminal-latency-heading">
+              <strong>Terminal latency</strong>
+              <span>live</span>
+            </div>
+            <div className="terminal-latency-grid">
+              <div>
+                <span>Key → canvas</span>
+                <strong>{latencySummary ? `${latencySummary.lastMs.toFixed(1)} ms` : "Waiting…"}</strong>
+                <small>
+                  {latencySummary
+                    ? `p50 ${latencySummary.p50Ms.toFixed(1)} · p95 ${latencySummary.p95Ms.toFixed(1)} · n=${latencySummary.sampleCount}`
+                    : "Type one clean printable key"}
+                </small>
+              </div>
+              <div>
+                <span>Server round trip</span>
+                <strong>{roundTripSummary ? `${roundTripSummary.lastMs.toFixed(1)} ms` : "Measuring…"}</strong>
+                <small>
+                  {roundTripSummary
+                    ? `p50 ${roundTripSummary.p50Ms.toFixed(1)} · p95 ${roundTripSummary.p95Ms.toFixed(1)} · n=${roundTripSummary.sampleCount}`
+                    : "WebSocket ping every 2 seconds"}
+                </small>
+              </div>
+            </div>
+            <div className="terminal-latency-breakdown">
+              {estimatedNetworkShare === null || estimatedRemainder === null
+                ? "Network share appears after both measurements are available."
+                : `Median RTT is ~${estimatedNetworkShare}% of key→canvas; estimated tmux, app, parsing, and frame time is ${estimatedRemainder.toFixed(1)} ms.`}
+            </div>
+            <small className="terminal-latency-note">
+              RTT approximates the combined outbound and return network portion.
+            </small>
           </div>
         )}
         {(!capability.available || connectionState !== "connected") && (

@@ -14,6 +14,7 @@ import {
   terminalRendererFactory,
 } from "./terminalTestFakes.ts";
 import {
+  DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
   TYPOGRAPHY_STORAGE_KEY,
   type TypographyPreferences,
 } from "./typographyPreferences.ts";
@@ -44,8 +45,8 @@ interface MockDiffViewerProps {
   diff: FileDiff;
   fontFamily: string;
   fontSize: number;
-  letterSpacing: number;
-  lineHeight: number;
+  lineHeightAdjustment: number;
+  widthAdjustment: number;
   lineNumbersVisible: boolean;
   lineWrapEnabled: boolean;
   onCommentClick(comment: ReviewComment): void;
@@ -60,8 +61,8 @@ mock.module("./DiffViewer.tsx", () => ({
       diff,
       fontFamily,
       fontSize,
-      letterSpacing,
-      lineHeight,
+      lineHeightAdjustment,
+      widthAdjustment,
       lineNumbersVisible,
       lineWrapEnabled,
       onCommentClick,
@@ -90,8 +91,8 @@ mock.module("./DiffViewer.tsx", () => ({
         style={{
           fontFamily,
           fontSize: `${fontSize}px`,
-          letterSpacing: `${letterSpacing}px`,
-          lineHeight: `${fontSize * lineHeight}px`,
+          letterSpacing: `${widthAdjustment}px`,
+          lineHeight: `${fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER + lineHeightAdjustment}px`,
         }}
       >
         {diff.hunks.flatMap((hunk) =>
@@ -1028,8 +1029,8 @@ describe("Couchview app", () => {
     const terminalCard = within(settings)
       .getByRole("heading", { name: "Terminal" })
       .closest("section")!;
-    fireEvent.change(within(diffCard).getByLabelText("Line height"), {
-      target: { value: "1.8" },
+    fireEvent.change(within(diffCard).getByLabelText("Line height adjustment"), {
+      target: { value: "3.5" },
     });
     fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
       target: { value: "16" },
@@ -1106,10 +1107,10 @@ describe("Couchview app", () => {
     fireEvent.change(within(diffCard).getByLabelText("Font size"), {
       target: { value: "14" },
     });
-    fireEvent.change(within(diffCard).getByLabelText("Line height"), {
-      target: { value: "1.8" },
+    fireEvent.change(within(diffCard).getByLabelText("Line height adjustment"), {
+      target: { value: "3.5" },
     });
-    fireEvent.change(within(diffCard).getByLabelText("Letter spacing"), {
+    fireEvent.change(within(diffCard).getByLabelText("Width adjustment"), {
       target: { value: "0.4" },
     });
 
@@ -1132,8 +1133,8 @@ describe("Couchview app", () => {
     const defaultTerminal = {
       fontFamily: "iosevka",
       fontSize: 15,
-      cellHeightAdjustment: 1,
-      cellWidthAdjustment: -1,
+      cellHeightAdjustment: 0,
+      cellWidthAdjustment: 0,
     } as const;
     const applyDiff = within(diffCard).getByRole("button", {
       name: "Apply diff changes",
@@ -1151,8 +1152,8 @@ describe("Couchview app", () => {
     expect(diffApplied.diff).toEqual({
       fontFamily: "system",
       fontSize: 14,
-      lineHeight: 1.8,
-      letterSpacing: 0.4,
+      lineHeightAdjustment: 3.5,
+      widthAdjustment: 0.4,
     });
     expect(diffApplied.terminal).toEqual(defaultTerminal);
 
