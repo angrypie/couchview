@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   API_ROUTES,
   CSRF_HEADER,
+  remoteBridgeOriginAccessIdIsValid,
   type ApiErrorBody,
   type BootstrapResponse,
   type InstanceResponse,
@@ -66,6 +67,7 @@ interface CliOptions {
   remoteBridgeP2pMode: RemoteBridgeP2pMode;
   remoteBridgeStunUrls: string[];
   remoteBridgePort: number;
+  remoteBridgeOriginAccess: string;
 }
 
 interface RunningRegistration {
@@ -115,7 +117,7 @@ interface RunCliRuntime {
   pairBridge(options: {
     origin: string;
     code: string;
-    cloudflareAccess: boolean;
+    originAccess: string;
   }): Promise<RemoteBridgeProfile>;
   proxyBridge(profileId: string): Promise<number>;
   installCompletion(shell: CompletionShell): Promise<string>;
@@ -299,6 +301,14 @@ function parseCliState(argv: string[]): {
     Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN,
   );
   const remoteBridgePort = Number(Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT ?? 22);
+  const environmentRemoteBridgeOriginAccess =
+    Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS ?? "auto";
+  if (environmentRemoteBridgeOriginAccess !== "auto" &&
+    !remoteBridgeOriginAccessIdIsValid(environmentRemoteBridgeOriginAccess)) {
+    throw new Error(
+      "COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS must be auto or a lowercase provider ID",
+    );
+  }
   if (!root) throw new Error("Repository path is required");
   if (!host) throw new Error("Host is required");
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -325,6 +335,8 @@ function parseCliState(argv: string[]): {
         parsed.remoteBridgeP2pMode ?? environmentRemoteBridgeP2pMode,
       remoteBridgeStunUrls,
       remoteBridgePort,
+      remoteBridgeOriginAccess:
+        parsed.remoteBridgeOriginAccess ?? environmentRemoteBridgeOriginAccess,
     },
   };
 }
@@ -431,10 +443,10 @@ async function fetchWithTimeout(
   }
 }
 
-function isInstanceResponse(value: unknown): value is InstanceResponse {
-  if (!value || typeof value !== "object") return false;
+function parseInstanceResponse(value: unknown): InstanceResponse | null {
+  if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<InstanceResponse>;
-  return candidate.service === "couchview" &&
+  const valid = candidate.service === "couchview" &&
     typeof candidate.protocolVersion === "number" &&
     typeof candidate.version === "string" &&
     typeof candidate.instanceId === "string" &&
@@ -450,7 +462,14 @@ function isInstanceResponse(value: unknown): value is InstanceResponse {
     typeof candidate.remoteBridgeP2pEnabled === "boolean" &&
     Array.isArray(candidate.remoteBridgeStunUrls) &&
     candidate.remoteBridgeStunUrls.every((url) => typeof url === "string") &&
-    typeof candidate.remoteBridgeTargetPort === "number";
+    typeof candidate.remoteBridgeTargetPort === "number" &&
+    (candidate.remoteBridgeOriginAccess === undefined ||
+      typeof candidate.remoteBridgeOriginAccess === "string");
+  if (!valid) return null;
+  return {
+    ...candidate,
+    remoteBridgeOriginAccess: candidate.remoteBridgeOriginAccess ?? "auto",
+  } as InstanceResponse;
 }
 
 async function responseError(response: Response): Promise<string> {
@@ -563,8 +582,10 @@ export async function restartRunningServer(
   if (!instanceResponse.ok) {
     throw new Error(`The service at ${origin} is not a compatible Couchview server`);
   }
-  const rawInstance: unknown = await instanceResponse.json().catch(() => null);
-  if (!isInstanceResponse(rawInstance)) {
+  const rawInstance = parseInstanceResponse(
+    await instanceResponse.json().catch(() => null),
+  );
+  if (!rawInstance) {
     throw new Error(`The service at ${origin} is not a compatible Couchview server`);
   }
   if (rawInstance.protocolVersion !== INSTANCE_PROTOCOL_VERSION) {
@@ -601,9 +622,11 @@ export async function restartRunningServer(
       runtime.fetch,
     );
     if (!candidateResponse?.ok) continue;
-    const candidate: unknown = await candidateResponse.json().catch(() => null);
+    const candidate = parseInstanceResponse(
+      await candidateResponse.json().catch(() => null),
+    );
     if (
-      isInstanceResponse(candidate) &&
+      candidate &&
       candidate.protocolVersion === INSTANCE_PROTOCOL_VERSION &&
       candidate.instanceId !== rawInstance.instanceId
     ) {
@@ -632,8 +655,10 @@ async function registerWithRunningServer(
       `Port ${options.port} is occupied by a service that is not a compatible Couchview server`,
     );
   }
-  const rawInstance: unknown = await instanceResponse.json().catch(() => null);
-  if (!isInstanceResponse(rawInstance)) {
+  const rawInstance = parseInstanceResponse(
+    await instanceResponse.json().catch(() => null),
+  );
+  if (!rawInstance) {
     throw new Error(
       `Port ${options.port} is occupied by a service that is not a compatible Couchview server`,
     );
@@ -716,6 +741,14 @@ async function registerWithRunningServer(
   ) {
     throw new Error(
       `Couchview is already using port ${options.port} with a different loopback SSH port; stop it or choose another port`,
+    );
+  }
+  if (
+    options.remoteBridgeOriginAccess !== "auto" &&
+    options.remoteBridgeOriginAccess !== rawInstance.remoteBridgeOriginAccess
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with native bridge origin access '${rawInstance.remoteBridgeOriginAccess}'; stop it or choose another port`,
     );
   }
 
@@ -894,6 +927,7 @@ export async function startServer(
       p2pEnabled: remoteBridgeP2pEnabled,
       stunUrls: options.remoteBridgeStunUrls,
       targetPort: options.remoteBridgePort,
+      originAccess: options.remoteBridgeOriginAccess,
     },
     restart: {
       ...capability,
@@ -1205,7 +1239,7 @@ export async function runCli(
       const profile = await runtime.pairBridge({
         origin: invocation.origin,
         code: invocation.code,
-        cloudflareAccess: invocation.cloudflareAccess,
+        originAccess: invocation.originAccess,
       });
       runtime.stdout(`Paired '${profile.deviceLabel}' as SSH host ${profile.sshAlias}.`);
       runtime.stdout(`Open in Zed: ${remoteBridgeZedUrl(profile)}`);

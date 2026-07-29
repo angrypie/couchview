@@ -93,10 +93,15 @@ export const TERMINAL_DATA_CHANNEL_LABEL = "couchview-terminal";
 export const TERMINAL_DATA_CHANNEL_PROTOCOL = "couchview-terminal-data-v1";
 export const REMOTE_BRIDGE_PROTOCOL = "couchview-remote-bridge-v1";
 export const REMOTE_BRIDGE_TICKET_PREFIX = "couchview-bridge-ticket.";
+export const REMOTE_BRIDGE_DEVICE_TOKEN_HEADER = "x-couchview-bridge-token";
 export const REMOTE_BRIDGE_DATA_CHANNEL_LABEL = "couchview-remote-bridge";
 export const REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL = "couchview-remote-bridge-data-v1";
 export const REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE = 4014;
 export const REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE = 4015;
+export const REMOTE_BRIDGE_NO_ORIGIN_ACCESS = "none";
+export function remoteBridgeOriginAccessIdIsValid(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z][a-z0-9-]{0,63}$/.test(value);
+}
 
 export type ChangeKind =
   | "added"
@@ -178,6 +183,7 @@ export interface InstanceResponse {
   remoteBridgeP2pEnabled: boolean;
   remoteBridgeStunUrls: string[];
   remoteBridgeTargetPort: number;
+  remoteBridgeOriginAccess: string;
 }
 
 export interface RestartCapability {
@@ -302,7 +308,7 @@ export interface RemoteBridgeProfile {
   deviceLabel: string;
   sshAlias: string;
   username: string;
-  cloudflareAccess: boolean;
+  originAccess: string;
 }
 
 export interface RemoteBridgeTicketRequest {

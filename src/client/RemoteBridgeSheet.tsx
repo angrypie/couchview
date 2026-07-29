@@ -222,8 +222,8 @@ export function RemoteBridgeSheet({
               </strong>
               <span>
                 {capability.p2pEnabled
-                  ? "Cloudflare carries authentication, signaling, and automatic fallback."
-                  : "IDE traffic stays on the authenticated Couchview WebSocket."}
+                  ? "The configured origin carries signaling and automatic fallback."
+                  : "IDE traffic stays on the Couchview origin WebSocket."}
               </span>
             </div>
           </div>

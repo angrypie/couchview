@@ -21,6 +21,7 @@ import {
   type InteractivePrompter,
 } from "./cliCommand.ts";
 import { createCouchviewApp, type CouchviewApp } from "./server.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
 const initialHost = Bun.env.COUCHVIEW_HOST;
@@ -34,6 +35,7 @@ const initialRemoteBridge = Bun.env.COUCHVIEW_REMOTE_BRIDGE;
 const initialRemoteBridgeP2p = Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P;
 const initialRemoteBridgeStun = Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN;
 const initialRemoteBridgePort = Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT;
+const initialRemoteBridgeOriginAccess = Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
@@ -77,6 +79,12 @@ function restoreEnvironment() {
   if (initialRemoteBridgePort === undefined) delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT;
   else Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT = initialRemoteBridgePort;
 
+  if (initialRemoteBridgeOriginAccess === undefined) {
+    delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS;
+  } else {
+    Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS = initialRemoteBridgeOriginAccess;
+  }
+
   if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
   else Bun.env.XDG_DATA_HOME = initialDataHome;
 
@@ -116,6 +124,7 @@ describe("parseCli", () => {
     delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P;
     delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN;
     delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT;
+    delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS;
   });
 
   afterEach(restoreEnvironment);
@@ -132,6 +141,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
   });
 
@@ -153,6 +163,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
     expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
       root: path.resolve("/tmp/project"),
@@ -165,6 +176,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
   });
 
@@ -184,6 +196,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
     expect(parseCli(["--repo", "flag-project", "--host", "0.0.0.0", "--port", "4999"])).toEqual({
       root: path.resolve("flag-project"),
@@ -196,6 +209,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
   });
 
@@ -214,6 +228,7 @@ describe("parseCli", () => {
       remoteBridgeP2pMode: "auto",
       remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
   });
 
@@ -309,6 +324,7 @@ describe("parseCli", () => {
       remoteBridgeMode: "auto",
       remoteBridgeP2pMode: "auto",
       remoteBridgePort: 22,
+      remoteBridgeOriginAccess: "auto",
     });
     Bun.env.COUCHVIEW_REMOTE_BRIDGE = "1";
     Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P = "1";
@@ -321,10 +337,19 @@ describe("parseCli", () => {
     expect(parseCli([
       "--disable-remote-bridge",
       "--disable-remote-bridge-p2p",
+      "--remote-bridge-origin-access",
+      "private-relay",
     ])).toMatchObject({
       remoteBridgeMode: "disabled",
       remoteBridgeP2pMode: "disabled",
+      remoteBridgeOriginAccess: "private-relay",
     });
+    Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS = "custom-gateway";
+    expect(parseCli([]).remoteBridgeOriginAccess).toBe("custom-gateway");
+    expect(() => parseCli([
+      "--remote-bridge-origin-access",
+      "Invalid_Provider",
+    ])).toThrow("lowercase letters");
     Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT = "70000";
     expect(() => parseCli([])).toThrow("COUCHVIEW_REMOTE_BRIDGE_PORT");
   });
@@ -365,7 +390,7 @@ describe("CLI entrypoint", () => {
     const started: string[][] = [];
     const restarted: string[][] = [];
     const installed: CompletionShell[] = [];
-    const bridgePairs: Array<{ origin: string; code: string; cloudflareAccess: boolean }> = [];
+    const bridgePairs: Array<{ origin: string; code: string; originAccess: string }> = [];
     const bridgeProxies: string[] = [];
     return {
       stdout,
@@ -396,7 +421,7 @@ describe("CLI entrypoint", () => {
         async pairBridge(options: {
           origin: string;
           code: string;
-          cloudflareAccess: boolean;
+          originAccess: string;
         }) {
           bridgePairs.push(options);
           return {
@@ -410,7 +435,7 @@ describe("CLI entrypoint", () => {
             deviceLabel: "MacBook Air",
             sshAlias: "couchview-project-one",
             username: "mini-user",
-            cloudflareAccess: options.cloudflareAccess,
+            originAccess: options.originAccess,
           };
         },
         async proxyBridge(profileId: string) {
@@ -484,12 +509,13 @@ describe("CLI entrypoint", () => {
       "https://review.example.com",
       "--code",
       "c".repeat(43),
-      "--cloudflare-access",
+      "--origin-access",
+      CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     ], pairing.runtime)).toBe(0);
     expect(pairing.bridgePairs).toEqual([{
       origin: "https://review.example.com",
       code: "c".repeat(43),
-      cloudflareAccess: true,
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     }]);
     expect(pairing.stdout.join("\n")).toContain("Open in Zed: zed://ssh/");
     expect(pairing.stdout.join("\n")).not.toContain("t".repeat(43));
@@ -885,6 +911,7 @@ describe("multi-project CLI startup", () => {
     expect(restartRequests).toBe(1);
     expect(result.previous.instanceId).toBe(app.instanceId);
     expect(result.replacement.instanceId).toBe(replacementId);
+    expect(result.replacement.remoteBridgeOriginAccess).toBe("auto");
   });
 
   test("falls back to browser restart authentication for a pre-control server", async () => {
@@ -934,6 +961,7 @@ describe("multi-project CLI startup", () => {
           remoteBridgeP2pEnabled: app.remoteBridge.p2pEnabled,
           remoteBridgeStunUrls: [...app.remoteBridge.stunUrls],
           remoteBridgeTargetPort: app.remoteBridge.targetPort,
+          remoteBridgeOriginAccess: app.remoteBridgeOriginAccess,
         });
       }
       return app.fetch(request);

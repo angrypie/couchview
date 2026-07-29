@@ -8,7 +8,10 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
   API_ROUTES,
   CSRF_HEADER,
+  REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
+  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
   REMOTE_BRIDGE_PROTOCOL,
+  remoteBridgeOriginAccessIdIsValid,
   type ApiErrorBody,
   type ApiErrorDiagnostic,
   type BootstrapResponse,
@@ -47,6 +50,9 @@ import {
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import {
+  CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
+} from "./cloudflareAccess.ts";
+import {
   CodexCommitMessageService,
   type CommitMessageGenerator,
 } from "./commitMessage.ts";
@@ -72,6 +78,10 @@ const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
 export const INSTANCE_PROTOCOL_VERSION = 5;
 export const APP_VERSION = packageJson.version;
+
+function remoteBridgeDeviceToken(request: Request): string | null {
+  return request.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER) ?? bearerToken(request);
+}
 
 export interface CouchviewAppOptions {
   root: string;
@@ -103,6 +113,7 @@ export interface CouchviewAppOptions {
     p2pEnabled?: boolean;
     stunUrls?: string[];
     targetPort?: number;
+    originAccess?: string;
   };
   remoteBridgeService?: RemoteBridgeService;
 }
@@ -117,6 +128,7 @@ export interface CouchviewApp {
   codex: CodexAppServerService;
   terminalSessions: TerminalSessionService;
   remoteBridge: RemoteBridgeService;
+  remoteBridgeOriginAccess: string;
   websocket: Bun.WebSocketHandler<CouchviewSocketData>;
   database: StateDatabase;
   csrfToken: string;
@@ -474,6 +486,18 @@ export async function createCouchviewApp(
     stunUrls: options.remoteBridge?.stunUrls,
     targetPort: options.remoteBridge?.targetPort,
   });
+  const remoteBridgeOriginAccess = options.remoteBridge?.originAccess ?? "auto";
+  if (remoteBridgeOriginAccess !== "auto" &&
+    !remoteBridgeOriginAccessIdIsValid(remoteBridgeOriginAccess)) {
+    remoteBridge.close();
+    terminalSessions.close();
+    commitMessages.close();
+    codex.close();
+    packageCommands.close();
+    repositories.close();
+    database.close();
+    throw new Error("The native bridge origin-access provider is invalid");
+  }
   const streams = new Set<StreamState>();
   const subscriptions = new Map<string, () => void>();
   let defaultRepositoryId: string | null = initial.repository.id;
@@ -693,6 +717,7 @@ export async function createCouchviewApp(
         remoteBridgeP2pEnabled: remoteBridge.p2pEnabled,
         remoteBridgeStunUrls: [...remoteBridge.stunUrls],
         remoteBridgeTargetPort: remoteBridge.targetPort,
+        remoteBridgeOriginAccess,
       };
       return json(response);
     }
@@ -836,7 +861,11 @@ export async function createCouchviewApp(
           input,
           {
             origin: normalizeOrigin(origin),
-            cloudflareAccess: request.headers.has("cf-access-jwt-assertion"),
+            originAccess: remoteBridgeOriginAccess === "auto"
+              ? request.headers.has("cf-access-jwt-assertion")
+                ? CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID
+                : REMOTE_BRIDGE_NO_ORIGIN_ACCESS
+              : remoteBridgeOriginAccess,
           },
         ),
         { status: 201 },
@@ -856,7 +885,7 @@ export async function createCouchviewApp(
         remoteBridge.issueTicket(
           repositoryId,
           repository.root,
-          bearerToken(request),
+          remoteBridgeDeviceToken(request),
           input,
           {
             host: normalizeRequestHost(
@@ -872,7 +901,7 @@ export async function createCouchviewApp(
       return json(
         remoteBridge.renewLease(
           repositoryId,
-          bearerToken(request),
+          remoteBridgeDeviceToken(request),
           input,
           {
             host: normalizeRequestHost(
@@ -1477,6 +1506,7 @@ export async function createCouchviewApp(
     codex,
     terminalSessions,
     remoteBridge,
+    remoteBridgeOriginAccess,
     websocket,
     database,
     csrfToken,

@@ -7,6 +7,8 @@ import path from "node:path";
 import {
   REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
   REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
+  REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
+  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
   REMOTE_BRIDGE_PROTOCOL,
   type RemoteBridgeProfile,
 } from "../shared/contracts.ts";
@@ -19,6 +21,7 @@ import {
   storeRemoteBridgeProfile,
   type RemoteBridgeClientRuntime,
 } from "./remoteBridgeClient.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -46,7 +49,7 @@ function profile(overrides: Partial<RemoteBridgeProfile> = {}): RemoteBridgeProf
     deviceLabel: "MacBook Air",
     sshAlias: "couchview-project-one-11111111",
     username: "mini-user",
-    cloudflareAccess: true,
+    originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     ...overrides,
   };
 }
@@ -188,16 +191,21 @@ describe("native bridge client configuration", () => {
       {
         origin: "https://review.example.com",
         code: "c".repeat(43),
-        cloudflareAccess: true,
+        originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
       },
       {
         paths,
         executableCommand: "'/opt/couchview'",
-        cloudflareAccessToken: async (_origin, options) => {
-          accessCalls += 1;
-          accessLoginModes.push(options?.allowLogin ?? false);
-          return "access.jwt.token";
-        },
+        originAccessProviders: [{
+          id: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
+          createSession: () => ({
+            requestHeaders: async (options) => {
+              accessCalls += 1;
+              accessLoginModes.push(options?.interactive ?? false);
+              return { "cf-access-token": "access.jwt.token" };
+            },
+          }),
+        }],
         fetch: (async (input, init) => {
           const request = new Request(input, init);
           requests.push(request);
@@ -212,7 +220,7 @@ describe("native bridge client configuration", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.headers.get("cf-access-token")).toBe("access.jwt.token");
     expect(await requests[0]?.json()).toEqual({ code: "c".repeat(43) });
-    expect(await readRemoteBridgeConfig(paths)).toEqual({ version: 1, profiles: [profile()] });
+    expect(await readRemoteBridgeConfig(paths)).toEqual({ version: 2, profiles: [profile()] });
     expect((await stat(paths.configFile)).mode & 0o777).toBe(0o600);
     expect((await stat(paths.managedSshConfigFile)).mode & 0o777).toBe(0o600);
     expect((await stat(paths.sshDirectory)).mode & 0o777).toBe(0o700);
@@ -243,12 +251,57 @@ describe("native bridge client configuration", () => {
     expect((await readRemoteBridgeConfig(paths)).profiles[0]?.deviceLabel).toBe("Renamed Air");
     expect((await readFile(paths.sshConfigFile, "utf8")).match(/couchview_config/g)).toHaveLength(1);
   });
+
+  test("migrates Cloudflare-specific version-one profiles to origin-access providers", async () => {
+    const { paths } = await fixturePaths();
+    await mkdir(paths.configDirectory, { recursive: true });
+    const { originAccess: _originAccess, ...legacyProfile } = profile();
+    await writeFile(paths.configFile, JSON.stringify({
+      version: 1,
+      profiles: [{ ...legacyProfile, cloudflareAccess: true }],
+    }));
+
+    expect(await readRemoteBridgeConfig(paths)).toEqual({
+      version: 2,
+      profiles: [profile()],
+    });
+  });
+
+  test("pairs directly over a LAN origin without any origin-access adapter", async () => {
+    const { paths } = await fixturePaths();
+    const requests: Request[] = [];
+    const directProfile = profile({
+      origin: "http://mini.local:4173",
+      originAccess: REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
+    });
+    const result = await pairRemoteBridge(
+      {
+        origin: "http://mini.local:4173",
+        code: "c".repeat(43),
+        originAccess: REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
+      },
+      {
+        paths,
+        executableCommand: "couchview",
+        originAccessProviders: [],
+        fetch: (async (input, init) => {
+          const request = new Request(input, init);
+          requests.push(request);
+          return Response.json(directProfile, { status: 201 });
+        }) as typeof globalThis.fetch,
+      },
+    );
+
+    expect(result.originAccess).toBe(REMOTE_BRIDGE_NO_ORIGIN_ACCESS);
+    expect(requests[0]?.headers.has("authorization")).toBe(false);
+    expect(requests[0]?.headers.has("cf-access-token")).toBe(false);
+  });
 });
 
 describe("native bridge ProxyCommand", () => {
-  test("pipes SSH bytes over authenticated WebSocket fallback without exposing the device token", async () => {
+  test("composes a custom origin-access adapter with Couchview device authentication", async () => {
     const { paths } = await fixturePaths();
-    await storeRemoteBridgeProfile(profile(), {
+    await storeRemoteBridgeProfile(profile({ originAccess: "private-relay" }), {
       paths,
       executableCommand: "couchview",
     });
@@ -264,10 +317,15 @@ describe("native bridge ProxyCommand", () => {
       stdin: input as unknown as NodeJS.ReadableStream,
       stdout: output as unknown as NodeJS.WritableStream & { writableLength?: number },
       stderr: (message) => errors.push(message),
-      cloudflareAccessToken: async (_origin, options) => {
-        accessLoginModes.push(options?.allowLogin ?? false);
-        return "access.jwt.token";
-      },
+      originAccessProviders: [{
+        id: "private-relay",
+        createSession: () => ({
+          requestHeaders: async (options) => {
+            accessLoginModes.push(options?.interactive ?? false);
+            return { authorization: "Bearer relay-access-token" };
+          },
+        }),
+      }],
       fetch: (async (rawInput, init) => {
         const request = new Request(rawInput, init);
         requests.push(request);
@@ -306,12 +364,14 @@ describe("native bridge ProxyCommand", () => {
     activeSocket.close(1000, "remote_bridge_target_closed");
     expect(await proxy).toBe(0);
 
-    expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${profile().deviceToken}`);
-    expect(requests[0]?.headers.get("cf-access-token")).toBe("access.jwt.token");
-    expect(accessLoginModes).toEqual([false]);
+    expect(requests[0]?.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER)).toBe(
+      profile().deviceToken,
+    );
+    expect(requests[0]?.headers.get("authorization")).toBe("Bearer relay-access-token");
+    expect(accessLoginModes).toEqual([false, false]);
     expect(JSON.stringify(socketOptions)).not.toContain(profile().deviceToken);
     expect(socketOptions).toMatchObject({
-      headers: { "cf-access-token": "access.jwt.token" },
+      headers: { authorization: "Bearer relay-access-token" },
     });
     expect(socketOptions).toMatchObject({
       protocols: [
@@ -324,7 +384,7 @@ describe("native bridge ProxyCommand", () => {
 
   test("switches SSH traffic losslessly to the reliable WebRTC channel", async () => {
     const { paths } = await fixturePaths();
-    await storeRemoteBridgeProfile(profile({ cloudflareAccess: false }), {
+    await storeRemoteBridgeProfile(profile({ originAccess: REMOTE_BRIDGE_NO_ORIGIN_ACCESS }), {
       paths,
       executableCommand: "couchview",
     });

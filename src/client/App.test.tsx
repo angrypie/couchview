@@ -601,6 +601,7 @@ describe("Couchview app", () => {
           remoteBridgeP2pEnabled: remoteBridgeAvailable,
           remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
           remoteBridgeTargetPort: 22,
+          remoteBridgeOriginAccess: "auto",
         });
       }
       if (url.pathname === "/api/repositories") {
@@ -631,7 +632,7 @@ describe("Couchview app", () => {
       if (nestedPath === "remote-bridge/pairings" && method === "POST") {
         return Response.json({
           command:
-            "couchview bridge pair --url 'https://review.example.com' --code 'pairing-code' --cloudflare-access",
+            "couchview bridge pair --url 'https://review.example.com' --code 'pairing-code' --origin-access 'cloudflare-access'",
           expiresAt: "2099-07-29T12:05:00.000Z",
           sshAlias: "couchview-fixture-new-device",
         }, { status: 201 });

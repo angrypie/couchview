@@ -7,6 +7,7 @@ import {
   REMOTE_BRIDGE_PROTOCOL,
   REMOTE_BRIDGE_TICKET_PREFIX,
 } from "../shared/contracts.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 import { StateDatabase } from "./database.ts";
 import {
   RemoteBridgeService,
@@ -218,7 +219,10 @@ function pair(service: RemoteBridgeService) {
   const pairing = service.createPairing(
     { id: "repo-one", name: "Project One", root: "/projects/one" },
     { label: "MacBook Air" },
-    { origin: "https://review.example.com", cloudflareAccess: true },
+    {
+      origin: "https://review.example.com",
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
+    },
   );
   const code = /--code '([^']+)'/.exec(pairing.command)?.[1];
   if (!code) throw new Error("Pairing command did not contain a code");
@@ -282,14 +286,14 @@ describe("native remote bridge authorization", () => {
   test("uses one-use pairing codes, hashed device credentials, and bound tickets", () => {
     const { database, service } = serviceFixture();
     const { pairing, profile } = pair(service);
-    expect(pairing.command).toContain("--cloudflare-access");
+    expect(pairing.command).toContain("--origin-access 'cloudflare-access'");
     expect(profile).toMatchObject({
       origin: "https://review.example.com",
       repositoryId: "repo-one",
       repositoryRoot: "/projects/one",
       deviceLabel: "MacBook Air",
       username: "mini-user",
-      cloudflareAccess: true,
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     });
     expect(service.listDevices("repo-one").devices[0]).not.toHaveProperty("deviceToken");
     expect(() => service.claimPairing({ code: "a".repeat(43) })).toThrow(

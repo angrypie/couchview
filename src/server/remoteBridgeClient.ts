@@ -18,14 +18,26 @@ import {
   API_ROUTES,
   REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
   REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
+  REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
+  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
   REMOTE_BRIDGE_PROTOCOL,
   REMOTE_BRIDGE_TICKET_PREFIX,
+  remoteBridgeOriginAccessIdIsValid,
   type ApiErrorBody,
   type RemoteBridgeProfile,
   type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
+import {
+  CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
+  cloudflareOriginAccessProvider,
+} from "./cloudflareAccess.ts";
+import {
+  remoteBridgeOriginAccessSession,
+  type RemoteBridgeOriginAccessProvider,
+  type RemoteBridgeOriginAccessSession,
+} from "./remoteBridgeOriginAccess.ts";
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 const MAX_TRANSPORT_BUFFER_BYTES = 1024 * 1024;
 const MAX_STREAM_FRAME_BYTES = 32 * 1024;
@@ -48,19 +60,13 @@ export interface RemoteBridgePaths {
 export interface PairRemoteBridgeOptions {
   origin: string;
   code: string;
-  cloudflareAccess: boolean;
-}
-
-export interface CloudflareAccessTokenOptions {
-  allowLogin?: boolean;
-}
-
-interface CloudflareTokenState {
-  value: string | null;
+  originAccess: string;
 }
 
 export interface RemoteBridgeClientRuntime {
+  /** HTTP control-plane connector; replaceable by a compatible relay adapter. */
   fetch: typeof globalThis.fetch;
+  /** WebSocket signaling/fallback connector; replaceable by a compatible relay adapter. */
   createWebSocket(
     url: string,
     options: Bun.WebSocketOptions,
@@ -68,10 +74,7 @@ export interface RemoteBridgeClientRuntime {
   createPeerConnection(
     iceServers: readonly { urls: string }[],
   ): RTCPeerConnection;
-  cloudflareAccessToken(
-    origin: string,
-    options?: CloudflareAccessTokenOptions,
-  ): Promise<string>;
+  originAccessProviders: readonly RemoteBridgeOriginAccessProvider[];
   paths: RemoteBridgePaths;
   executableCommand: string;
   stdin: NodeJS.ReadableStream;
@@ -140,15 +143,35 @@ function profileIsValid(value: unknown): value is RemoteBridgeProfile {
     /^[A-Za-z0-9][A-Za-z0-9-]{0,79}$/.test(profile.sshAlias) &&
     typeof profile.username === "string" &&
     /^[A-Za-z0-9._-]{1,255}$/.test(profile.username) &&
-    typeof profile.cloudflareAccess === "boolean";
+    remoteBridgeOriginAccessIdIsValid(profile.originAccess);
 }
 
-function validateProfile(value: unknown): RemoteBridgeProfile {
-  if (!profileIsValid(value)) {
+function normalizeProfile(
+  value: unknown,
+  originAccessOverride?: string,
+): RemoteBridgeProfile | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const legacyCloudflareAccess = candidate.cloudflareAccess;
+  const originAccess = originAccessOverride ?? candidate.originAccess ?? (
+    typeof legacyCloudflareAccess === "boolean"
+      ? legacyCloudflareAccess
+        ? CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID
+        : REMOTE_BRIDGE_NO_ORIGIN_ACCESS
+      : undefined
+  );
+  const normalized: Record<string, unknown> = { ...candidate, originAccess };
+  delete normalized.cloudflareAccess;
+  if (!profileIsValid(normalized)) return null;
+  return { ...normalized, origin: normalizeOrigin(normalized.origin) };
+}
+
+function validateProfile(value: unknown, originAccessOverride?: string): RemoteBridgeProfile {
+  const profile = normalizeProfile(value, originAccessOverride);
+  if (!profile) {
     throw new Error("The Couchview server returned an invalid remote bridge profile");
   }
-  const origin = normalizeOrigin(value.origin);
-  return { ...value, origin };
+  return profile;
 }
 
 function emptyConfig(): RemoteBridgeConfigFile {
@@ -172,17 +195,18 @@ export async function readRemoteBridgeConfig(
   if (!parsed || typeof parsed !== "object") {
     throw new Error(`The Couchview remote bridge config is invalid: ${paths.configFile}`);
   }
-  const candidate = parsed as Partial<RemoteBridgeConfigFile>;
-  if (
-    candidate.version !== CONFIG_VERSION ||
-    !Array.isArray(candidate.profiles) ||
-    !candidate.profiles.every(profileIsValid)
-  ) {
+  const candidate = parsed as { version?: unknown; profiles?: unknown };
+  if ((candidate.version !== 1 && candidate.version !== CONFIG_VERSION) ||
+    !Array.isArray(candidate.profiles)) {
+    throw new Error(`The Couchview remote bridge config is invalid: ${paths.configFile}`);
+  }
+  const profiles = candidate.profiles.map((profile) => normalizeProfile(profile));
+  if (profiles.some((profile) => profile === null)) {
     throw new Error(`The Couchview remote bridge config is invalid: ${paths.configFile}`);
   }
   return {
     version: CONFIG_VERSION,
-    profiles: candidate.profiles.map(validateProfile),
+    profiles: profiles as RemoteBridgeProfile[],
   };
 }
 
@@ -312,70 +336,6 @@ async function fetchWithTimeout(
   }
 }
 
-async function readCloudflareAccessToken(
-  cloudflared: string,
-  origin: string,
-): Promise<{ token: string; detail: string | undefined; valid: boolean }> {
-  const child = Bun.spawn(
-    [cloudflared, "access", "token", `-app=${origin}`],
-    {
-      stdin: "inherit",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 2 * 60_000,
-    },
-  );
-  const [exitCode, stdout, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-  ]);
-  const token = stdout.trim();
-  return {
-    token,
-    detail: stderr.trim().split("\n")[0]?.slice(0, 240),
-    valid: exitCode === 0 && Boolean(token) && token.length <= 32_768 && !/\s/.test(token),
-  };
-}
-
-export async function cloudflareAccessToken(
-  origin: string,
-  options: CloudflareAccessTokenOptions = {},
-): Promise<string> {
-  const cloudflared = Bun.which("cloudflared");
-  if (!cloudflared) {
-    throw new Error(
-      "cloudflared is required for this Access-protected Couchview bridge; install it and try again",
-    );
-  }
-  const normalizedOrigin = normalizeOrigin(origin);
-  let attempt = await readCloudflareAccessToken(cloudflared, normalizedOrigin);
-  if (!attempt.valid && options.allowLogin) {
-    process.stderr.write(
-      `Cloudflare Access sign-in required for ${normalizedOrigin}. Complete it in the browser.\n`,
-    );
-    const login = Bun.spawn(
-      [cloudflared, "access", "login", "--quiet", normalizedOrigin],
-      {
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-        timeout: 5 * 60_000,
-      },
-    );
-    if (await login.exited !== 0) {
-      throw new Error("Cloudflare Access login failed");
-    }
-    attempt = await readCloudflareAccessToken(cloudflared, normalizedOrigin);
-  }
-  if (!attempt.valid) {
-    throw new Error(
-      `Cloudflare Access authentication failed${attempt.detail ? `: ${attempt.detail}` : ""}`,
-    );
-  }
-  return attempt.token;
-}
-
 function defaultRuntime(): RemoteBridgeClientRuntime {
   const BunWebSocket = WebSocket as unknown as new (
     url: string,
@@ -387,32 +347,13 @@ function defaultRuntime(): RemoteBridgeClientRuntime {
     createPeerConnection: (iceServers) => new RTCPeerConnection({
       iceServers: iceServers.map(({ urls }) => ({ urls })),
     }),
-    cloudflareAccessToken,
+    originAccessProviders: [cloudflareOriginAccessProvider()],
     paths: resolveRemoteBridgePaths(),
     executableCommand: defaultExecutableCommand(),
     stdin: process.stdin,
     stdout: process.stdout,
     stderr: (message) => process.stderr.write(`${message}\n`),
   };
-}
-
-async function accessHeaders(
-  origin: string,
-  enabled: boolean,
-  state: CloudflareTokenState,
-  runtime: RemoteBridgeClientRuntime,
-  options: {
-    allowLogin?: boolean;
-    force?: boolean;
-  } = {},
-): Promise<Record<string, string>> {
-  if (!enabled) return {};
-  if (!state.value || options.force) {
-    state.value = await runtime.cloudflareAccessToken(origin, {
-      allowLogin: options.allowLogin ?? false,
-    });
-  }
-  return { "cf-access-token": state.value };
 }
 
 export async function pairRemoteBridge(
@@ -424,14 +365,12 @@ export async function pairRemoteBridge(
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(options.code)) {
     throw new Error("The Couchview remote bridge pairing code is invalid");
   }
-  const tokenState: CloudflareTokenState = { value: null };
-  const headers = await accessHeaders(
+  const originAccess = remoteBridgeOriginAccessSession(
+    options.originAccess,
     origin,
-    options.cloudflareAccess,
-    tokenState,
-    runtime,
-    { allowLogin: true },
+    runtime.originAccessProviders,
   );
+  const headers = await originAccess.requestHeaders({ interactive: true });
   const response = await fetchWithTimeout(
     runtime.fetch,
     `${origin}${API_ROUTES.remoteBridgeClaim}`,
@@ -445,7 +384,7 @@ export async function pairRemoteBridge(
     },
   );
   if (!response.ok) throw new Error(await responseError(response));
-  const profile = validateProfile(await response.json());
+  const profile = validateProfile(await response.json(), options.originAccess);
   if (profile.origin !== origin) {
     throw new Error("The Couchview server returned a profile for a different origin");
   }
@@ -481,29 +420,29 @@ async function authenticatedBridgeRequest(
   profile: RemoteBridgeProfile,
   pathname: string,
   body: unknown,
-  tokenState: CloudflareTokenState,
+  originAccess: RemoteBridgeOriginAccessSession,
   runtime: RemoteBridgeClientRuntime,
 ): Promise<Response> {
   const perform = async (forceAccessRefresh: boolean): Promise<Response> => {
-    const headers = await accessHeaders(
-      profile.origin,
-      profile.cloudflareAccess,
-      tokenState,
-      runtime,
-      { force: forceAccessRefresh },
+    const headers = new Headers(
+      await originAccess.requestHeaders({ refresh: forceAccessRefresh }),
     );
+    // Version-one servers read the device credential from Authorization. Keep
+    // that fallback when a gateway provider does not own the header itself.
+    if (!headers.has("authorization")) {
+      headers.set("authorization", `Bearer ${profile.deviceToken}`);
+    }
+    headers.set(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER, profile.deviceToken);
+    headers.set("content-type", "application/json");
     return fetchWithTimeout(runtime.fetch, `${profile.origin}${pathname}`, {
       method: "POST",
-      headers: {
-        ...headers,
-        authorization: `Bearer ${profile.deviceToken}`,
-        "content-type": "application/json",
-      },
+      headers,
       body: JSON.stringify(body),
     });
   };
   let response = await perform(false);
-  if (profile.cloudflareAccess && (response.status === 401 || response.status === 403)) {
+  if (profile.originAccess !== REMOTE_BRIDGE_NO_ORIGIN_ACCESS &&
+    (response.status === 401 || response.status === 403)) {
     response = await perform(true);
   }
   return response;
@@ -544,19 +483,17 @@ export async function runRemoteBridgeProxy(
 ): Promise<number> {
   const runtime = { ...defaultRuntime(), ...runtimeOverrides };
   const profile = await loadProfile(profileId, runtime.paths);
-  const accessTokenState: CloudflareTokenState = { value: null };
-  await accessHeaders(
+  const originAccess = remoteBridgeOriginAccessSession(
+    profile.originAccess,
     profile.origin,
-    profile.cloudflareAccess,
-    accessTokenState,
-    runtime,
+    runtime.originAccessProviders,
   );
   const connectionId = randomUUID();
   const ticketResponse = await authenticatedBridgeRequest(
     profile,
     API_ROUTES.remoteBridgeTickets(profile.repositoryId),
     { connectionId },
-    accessTokenState,
+    originAccess,
     runtime,
   );
   if (!ticketResponse.ok) throw new Error(await responseError(ticketResponse));
@@ -565,12 +502,7 @@ export async function runRemoteBridgeProxy(
     throw new Error("The Couchview server returned an invalid bridge ticket");
   }
   const ticket = rawTicket;
-  const wsHeaders = await accessHeaders(
-    profile.origin,
-    profile.cloudflareAccess,
-    accessTokenState,
-    runtime,
-  );
+  const wsHeaders = await originAccess.requestHeaders();
   const socket = runtime.createWebSocket(webSocketUrl(profile), {
     protocols: [REMOTE_BRIDGE_PROTOCOL, `${REMOTE_BRIDGE_TICKET_PREFIX}${ticket.ticket}`],
     headers: wsHeaders,
@@ -771,7 +703,7 @@ export async function runRemoteBridgeProxy(
         profile,
         API_ROUTES.remoteBridgeLease(profile.repositoryId),
         { connectionId },
-        accessTokenState,
+        originAccess,
         runtime,
       );
       if (!response.ok) throw new Error(await responseError(response));

@@ -6,9 +6,11 @@ import {
   REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
   REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
   REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
+  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
   REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
   REMOTE_BRIDGE_PROTOCOL,
   REMOTE_BRIDGE_TICKET_PREFIX,
+  remoteBridgeOriginAccessIdIsValid,
   type ClaimRemoteBridgePairingRequest,
   type CreateRemoteBridgePairingRequest,
   type RemoteBridgeCapability,
@@ -80,7 +82,7 @@ interface PendingPairing {
   sshAlias: string;
   username: string;
   origin: string;
-  cloudflareAccess: boolean;
+  originAccess: string;
   expiresAt: number;
 }
 
@@ -276,11 +278,18 @@ export class RemoteBridgeService {
   createPairing(
     repository: { id: string; name: string; root: string },
     input: CreateRemoteBridgePairingRequest,
-    context: { origin: string; cloudflareAccess: boolean },
+    context: { origin: string; originAccess: string },
   ): RemoteBridgePairingResponse {
     this.assertAvailable();
     if (typeof input.label !== "string" || !input.label.trim() || input.label.trim().length > 80) {
       throw new HttpError(400, "remote_bridge_label_invalid", "Device label must contain between 1 and 80 characters");
+    }
+    if (!remoteBridgeOriginAccessIdIsValid(context.originAccess)) {
+      throw new HttpError(
+        500,
+        "remote_bridge_origin_access_invalid",
+        "The configured bridge origin-access provider is invalid",
+      );
     }
     const deviceId = randomUUID();
     const sshAlias = `couchview-${slug(repository.name)}-${deviceId.slice(0, 8)}`;
@@ -295,7 +304,7 @@ export class RemoteBridgeService {
       sshAlias,
       username: this.username,
       origin: context.origin,
-      cloudflareAccess: context.cloudflareAccess,
+      originAccess: context.originAccess,
       expiresAt,
     });
     this.pruneExpired();
@@ -308,7 +317,9 @@ export class RemoteBridgeService {
       "couchview bridge pair",
       `--url ${shellQuote(context.origin)}`,
       `--code ${shellQuote(code)}`,
-      ...(context.cloudflareAccess ? ["--cloudflare-access"] : []),
+      ...(context.originAccess === REMOTE_BRIDGE_NO_ORIGIN_ACCESS
+        ? []
+        : [`--origin-access ${shellQuote(context.originAccess)}`]),
     ].join(" ");
     return {
       command,
@@ -350,7 +361,7 @@ export class RemoteBridgeService {
       deviceLabel: pairing.label,
       sshAlias: pairing.sshAlias,
       username: pairing.username,
-      cloudflareAccess: pairing.cloudflareAccess,
+      originAccess: pairing.originAccess,
     };
   }
 

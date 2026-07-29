@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
+
 import {
   CLI_VERSION,
   CliPromptInterrupted,
@@ -135,12 +137,13 @@ describe("CLI command parsing", () => {
       "https://review.example.com",
       "--code",
       "a".repeat(43),
-      "--cloudflare-access",
+      "--origin-access",
+      CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     ])).toEqual({
       kind: "bridge-pair",
       origin: "https://review.example.com",
       code: "a".repeat(43),
-      cloudflareAccess: true,
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     });
     expect(parseCliInvocation([
       "bridge",
@@ -148,6 +151,18 @@ describe("CLI command parsing", () => {
       "--profile",
       "device-profile",
     ])).toEqual({ kind: "bridge-proxy", profileId: "device-profile" });
+    expect(parseCliInvocation([
+      "bridge",
+      "pair",
+      "--url",
+      "https://review.example.com",
+      "--code",
+      "a".repeat(43),
+      "--cloudflare-access",
+    ])).toMatchObject({
+      kind: "bridge-pair",
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
+    });
     expect(() => parseCliInvocation(["bridge", "par"])).toThrow("Did you mean 'pair'");
   });
 

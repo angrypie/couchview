@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   API_ROUTES,
   CSRF_HEADER,
+  REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
   REMOTE_BRIDGE_PROTOCOL,
   REMOTE_BRIDGE_TICKET_PREFIX,
   type ApiErrorBody,
@@ -27,6 +28,7 @@ import {
   type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import {
   accessOriginsForHost,
@@ -354,7 +356,7 @@ describe("Couchview HTTP security and routes", () => {
     }));
     expect(created.status).toBe(201);
     const pairing = await created.json() as { command: string; sshAlias: string };
-    expect(pairing.command).toContain("--cloudflare-access");
+    expect(pairing.command).toContain("--origin-access 'cloudflare-access'");
     const code = /--code '([^']+)'/.exec(pairing.command)?.[1];
     expect(code).toBeString();
 
@@ -368,7 +370,7 @@ describe("Couchview HTTP security and routes", () => {
     expect(profile).toMatchObject({
       sshAlias: pairing.sshAlias,
       repositoryId: app.repository.id,
-      cloudflareAccess: true,
+      originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     });
 
     const listed = await app.fetch(request(route));
@@ -384,12 +386,24 @@ describe("Couchview HTTP security and routes", () => {
       },
     ));
     expect(missingCredential.status).toBe(403);
-    const ticketResponse = await app.fetch(request(
+    const legacyCredential = await app.fetch(request(
       API_ROUTES.remoteBridgeTickets(app.repository.id),
       {
         method: "POST",
         headers: {
           authorization: `Bearer ${profile.deviceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ connectionId: "connection_legacy" }),
+      },
+    ));
+    expect(legacyCredential.status).toBe(201);
+    const ticketResponse = await app.fetch(request(
+      API_ROUTES.remoteBridgeTickets(app.repository.id),
+      {
+        method: "POST",
+        headers: {
+          [REMOTE_BRIDGE_DEVICE_TOKEN_HEADER]: profile.deviceToken,
           "content-type": "application/json",
         },
         body: JSON.stringify({ connectionId: "connection_123" }),
@@ -438,6 +452,40 @@ describe("Couchview HTTP security and routes", () => {
     ));
     expect(revoked.status).toBe(204);
     expect(await (await app.fetch(request(route))).json()).toEqual({ devices: [] });
+  });
+
+  test("embeds a configured tunnel-neutral origin-access provider in pairings", async () => {
+    const app = await fixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        enabled: true,
+        originAccess: "private-relay",
+      },
+    );
+    const route = API_ROUTES.remoteBridgePairings(app.repository.id);
+    const created = await app.fetch(request(route, {
+      method: "POST",
+      headers: {
+        origin: "http://127.0.0.1:3001",
+        [CSRF_HEADER]: app.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ label: "MacBook Air" }),
+    }));
+    const pairing = await created.json() as { command: string };
+    expect(pairing.command).toContain("--origin-access 'private-relay'");
+    const code = /--code '([^']+)'/.exec(pairing.command)?.[1];
+    const claimed = await app.fetch(request(API_ROUTES.remoteBridgeClaim, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    }));
+    expect(await claimed.json()).toMatchObject({ originAccess: "private-relay" });
+    expect(app.remoteBridgeOriginAccess).toBe("private-relay");
   });
 
   test("exposes project-scoped Codex threads and sends only current comments", async () => {

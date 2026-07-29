@@ -4,6 +4,11 @@ import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 
 import packageJson from "../../package.json" with { type: "json" };
+import {
+  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
+  remoteBridgeOriginAccessIdIsValid,
+} from "../shared/contracts.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 export const CLI_VERSION = packageJson.version;
 
@@ -127,6 +132,13 @@ const optionDefinitions: readonly CliOptionDefinition[] = [
     commands: ["serve"],
   },
   {
+    name: "remote-bridge-origin-access",
+    type: "string",
+    valueName: "provider",
+    description: "Origin-access provider in bridge pairings (default: auto).",
+    commands: ["serve"],
+  },
+  {
     name: "url",
     type: "string",
     valueName: "origin",
@@ -148,9 +160,16 @@ const optionDefinitions: readonly CliOptionDefinition[] = [
     commands: ["bridge"],
   },
   {
+    name: "origin-access",
+    type: "string",
+    valueName: "provider",
+    description: "Origin-access provider for HTTP and WebSocket setup.",
+    commands: ["bridge"],
+  },
+  {
     name: "cloudflare-access",
     type: "boolean",
-    description: "Authenticate the CLI through Cloudflare Access.",
+    description: "Legacy alias for --origin-access cloudflare-access.",
     commands: ["bridge"],
   },
 ] as const;
@@ -166,6 +185,7 @@ export interface ParsedServeArguments {
   terminalP2pMode: "enabled" | "disabled" | undefined;
   remoteBridgeMode: "enabled" | "disabled" | undefined;
   remoteBridgeP2pMode: "enabled" | "disabled" | undefined;
+  remoteBridgeOriginAccess: string | undefined;
   explicit: {
     repo: boolean;
     host: boolean;
@@ -202,7 +222,7 @@ export type CliInvocation =
       kind: "bridge-pair";
       origin: string;
       code: string;
-      cloudflareAccess: boolean;
+      originAccess: string;
     }
   | {
       kind: "bridge-proxy";
@@ -298,6 +318,8 @@ function parseOptions(command: CliCommandName, args: string[]) {
       ["url", "Couchview bridge URL is required"],
       ["code", "Couchview bridge pairing code is required"],
       ["profile", "Couchview bridge profile ID is required"],
+      ["origin-access", "Couchview bridge origin-access provider is required"],
+      ["remote-bridge-origin-access", "Native bridge origin-access provider is required"],
     ].find(([name]) =>
       message.includes(`--${name}`) &&
       (/argument missing/i.test(message) || /argument is ambiguous/i.test(message))
@@ -398,6 +420,18 @@ export function parseServeArguments(
       "serve",
     );
   }
+  const remoteBridgeOriginAccess = stringValue(
+    parsed.values,
+    "remote-bridge-origin-access",
+  );
+  if (remoteBridgeOriginAccess !== undefined &&
+    remoteBridgeOriginAccess !== "auto" &&
+    !remoteBridgeOriginAccessIdIsValid(remoteBridgeOriginAccess)) {
+    throw new CliUsageError(
+      "The native bridge origin-access provider must be auto or use lowercase letters, numbers, and hyphens.",
+      "serve",
+    );
+  }
   return {
     repo: optionRepo ?? positionalRepo,
     host: stringValue(parsed.values, "host"),
@@ -421,6 +455,7 @@ export function parseServeArguments(
       : remoteBridgeP2pDisabled
         ? "disabled"
         : undefined,
+    remoteBridgeOriginAccess,
     explicit: {
       repo: optionRepo !== undefined || positionalRepo !== undefined,
       host: optionCount(parsed.tokens, "host") === 1,
@@ -431,7 +466,8 @@ export function parseServeArguments(
         remoteBridgeEnabled ||
         remoteBridgeDisabled ||
         remoteBridgeP2pEnabled ||
-        remoteBridgeP2pDisabled,
+        remoteBridgeP2pDisabled ||
+        remoteBridgeOriginAccess !== undefined,
     },
   };
 }
@@ -499,7 +535,25 @@ function parseBridgeArguments(args: string[]): CliInvocation {
   const origin = stringValue(parsed.values, "url");
   const code = stringValue(parsed.values, "code");
   const profileId = stringValue(parsed.values, "profile");
+  const explicitOriginAccess = stringValue(parsed.values, "origin-access");
   const cloudflareAccess = booleanValue(parsed.values, "cloudflare-access");
+  if (explicitOriginAccess && cloudflareAccess) {
+    throw new CliUsageError(
+      "--origin-access and --cloudflare-access may only be provided once.",
+      "bridge",
+    );
+  }
+  const originAccess = explicitOriginAccess ?? (
+    cloudflareAccess
+      ? CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID
+      : REMOTE_BRIDGE_NO_ORIGIN_ACCESS
+  );
+  if (!remoteBridgeOriginAccessIdIsValid(originAccess)) {
+    throw new CliUsageError(
+      "The bridge origin-access provider must use lowercase letters, numbers, and hyphens.",
+      "bridge",
+    );
+  }
   if (action === "pair") {
     if (!origin || !code) {
       throw new CliUsageError(
@@ -510,15 +564,15 @@ function parseBridgeArguments(args: string[]): CliInvocation {
     if (profileId) {
       throw new CliUsageError("--profile is only valid for bridge proxy.", "bridge");
     }
-    return { kind: "bridge-pair", origin, code, cloudflareAccess };
+    return { kind: "bridge-pair", origin, code, originAccess };
   }
   if (action === "proxy") {
     if (!profileId) {
       throw new CliUsageError("The proxy action requires --profile.", "bridge");
     }
-    if (origin || code || cloudflareAccess) {
+    if (origin || code || explicitOriginAccess || cloudflareAccess) {
       throw new CliUsageError(
-        "--url, --code, and --cloudflare-access are only valid for bridge pair.",
+        "--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
         "bridge",
       );
     }
@@ -545,6 +599,9 @@ function canonicalServeArguments(parsed: ParsedServeArguments): string[] {
   if (parsed.remoteBridgeMode === "disabled") argv.push("--disable-remote-bridge");
   if (parsed.remoteBridgeP2pMode === "enabled") argv.push("--enable-remote-bridge-p2p");
   if (parsed.remoteBridgeP2pMode === "disabled") argv.push("--disable-remote-bridge-p2p");
+  if (parsed.remoteBridgeOriginAccess !== undefined) {
+    argv.push("--remote-bridge-origin-access", parsed.remoteBridgeOriginAccess);
+  }
   return argv;
 }
 
@@ -726,7 +783,7 @@ Examples:
     return `Pair a development device or run Couchview's SSH transport proxy.
 
 Usage:
-  couchview bridge pair --url <origin> --code <code> [--cloudflare-access]
+  couchview bridge pair --url <origin> --code <code> [--origin-access <provider>]
   couchview bridge proxy --profile <id>
 
 Options:
@@ -760,6 +817,8 @@ Environment:
                            One to four comma-separated STUN URLs.
   COUCHVIEW_REMOTE_BRIDGE_PORT
                            Loopback SSH port (default: 22).
+  COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS
+                           Pairing origin-access provider (default: auto).
   COUCHVIEW_ALLOWED_ORIGINS
                            Trusted reverse-proxy origins; no wildcards.
   STATIC_DIR               Override the production asset directory.
