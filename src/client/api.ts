@@ -21,6 +21,9 @@ import {
   type DiffResponse,
   type ReviewStateResponse,
   type RepositoryCatalogResponse,
+  type CreateRemoteBridgePairingRequest,
+  type RemoteBridgeDevicesResponse,
+  type RemoteBridgePairingResponse,
   type ForgetRepositoryResponse,
   type PackageRunResponse,
   type PackageRunsResponse,
@@ -161,6 +164,39 @@ export const api = {
 
   repositories(signal?: AbortSignal) {
     return request<RepositoryCatalogResponse>(API_ROUTES.repositories, { signal });
+  },
+
+  remoteBridgeDevices(repositoryId: string, signal?: AbortSignal) {
+    return request<RemoteBridgeDevicesResponse>(
+      API_ROUTES.remoteBridgePairings(repositoryId),
+      { signal },
+    );
+  },
+
+  createRemoteBridgePairing(
+    repositoryId: string,
+    body: CreateRemoteBridgePairingRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<RemoteBridgePairingResponse>(
+      API_ROUTES.remoteBridgePairings(repositoryId),
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  revokeRemoteBridgeDevice(
+    repositoryId: string,
+    deviceId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<void>(
+      API_ROUTES.remoteBridgePairing(repositoryId, deviceId),
+      { method: "DELETE", signal },
+      csrfToken,
+    );
   },
 
   changes(repositoryId: string, signal?: AbortSignal) {

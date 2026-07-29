@@ -444,6 +444,8 @@ describe("Couchview app", () => {
   let releaseCommitMessageResponse: (() => void) | null = null;
   let commitMessageAvailable = true;
   let terminalAvailable = false;
+  let remoteBridgeAvailable = false;
+  let remoteBridgeDevices: Array<Record<string, unknown>> = [];
   let bootstrapFailureStatus: number | null = null;
 
   beforeEach(() => {
@@ -469,6 +471,8 @@ describe("Couchview app", () => {
     releaseCommitMessageResponse = null;
     commitMessageAvailable = true;
     terminalAvailable = false;
+    remoteBridgeAvailable = false;
+    remoteBridgeDevices = [];
     bootstrapFailureStatus = null;
     resetRendererState();
     resetFakeTerminalWebSockets();
@@ -565,6 +569,11 @@ describe("Couchview app", () => {
               reason: terminalAvailable ? null : "tmux is unavailable in this test.",
             }],
           },
+          remoteBridge: {
+            available: remoteBridgeAvailable,
+            reason: remoteBridgeAvailable ? null : "Native IDE bridge is disabled in this test.",
+            p2pEnabled: remoteBridgeAvailable,
+          },
         });
       }
       if (url.pathname === "/api/restart" && method === "POST") {
@@ -579,7 +588,7 @@ describe("Couchview app", () => {
       if (url.pathname === "/api/instance" && method === "GET") {
         return Response.json({
           service: "couchview",
-          protocolVersion: 4,
+          protocolVersion: 5,
           version: "0.1.0",
           instanceId: "fixture-instance",
           bindHost: "127.0.0.1",
@@ -588,6 +597,10 @@ describe("Couchview app", () => {
           terminalEnabled: terminalAvailable,
           terminalP2pEnabled: false,
           terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
+          remoteBridgeEnabled: remoteBridgeAvailable,
+          remoteBridgeP2pEnabled: remoteBridgeAvailable,
+          remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
+          remoteBridgeTargetPort: 22,
         });
       }
       if (url.pathname === "/api/repositories") {
@@ -611,6 +624,23 @@ describe("Couchview app", () => {
             controllerConnected: false,
           },
         }, { status: 201 });
+      }
+      if (nestedPath === "remote-bridge/pairings" && method === "GET") {
+        return Response.json({ devices: remoteBridgeDevices });
+      }
+      if (nestedPath === "remote-bridge/pairings" && method === "POST") {
+        return Response.json({
+          command:
+            "couchview bridge pair --url 'https://review.example.com' --code 'pairing-code' --cloudflare-access",
+          expiresAt: "2099-07-29T12:05:00.000Z",
+          sshAlias: "couchview-fixture-new-device",
+        }, { status: 201 });
+      }
+      const remoteBridgeDeviceRoute = /^remote-bridge\/pairings\/([^/]+)$/.exec(nestedPath);
+      if (remoteBridgeDeviceRoute && method === "DELETE") {
+        const deviceId = decodeURIComponent(remoteBridgeDeviceRoute[1]!);
+        remoteBridgeDevices = remoteBridgeDevices.filter((device) => device.id !== deviceId);
+        return new Response(null, { status: 204 });
       }
       if (nestedPath === "package-scripts" && method === "GET") {
         return Response.json(packageScriptsFixture);
@@ -1533,6 +1563,47 @@ describe("Couchview app", () => {
     });
     await waitFor(() => expect(screen.queryByText("Refreshing diff…")).toBeNull());
     expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
+  });
+
+  test("pairs native IDEs, opens Zed through the managed alias, and revokes devices", async () => {
+    remoteBridgeAvailable = true;
+    remoteBridgeDevices = [{
+      id: "device-one",
+      repositoryId: repository.id,
+      label: "MacBook Air",
+      sshAlias: "couchview-fixture-device-one",
+      createdAt: "2026-07-29T10:00:00.000Z",
+      lastUsedAt: "2026-07-29T10:01:00.000Z",
+    }];
+    render(<App />);
+    await screen.findByText("src/first.ts");
+    fireEvent.click(screen.getByRole("button", { name: "Set up native IDE" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Native IDE setup" });
+    expect(within(dialog).getByText("Direct WebRTC preferred")).toBeTruthy();
+    const zedLink = within(dialog).getByRole("link", { name: "Open in Zed" });
+    expect(zedLink.getAttribute("href")).toBe(
+      "zed://ssh/couchview-fixture-device-one/fixture",
+    );
+
+    fireEvent.change(within(dialog).getByLabelText("Device name"), {
+      target: { value: "Travel Air" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Generate" }));
+    await within(dialog).findByText(/couchview bridge pair --url/);
+    expect(requests).toContainEqual({
+      path: `/api/repositories/${repository.id}/remote-bridge/pairings`,
+      method: "POST",
+      body: { label: "Travel Air" },
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke MacBook Air" }));
+    await waitFor(() => expect(requests).toContainEqual({
+      path: `/api/repositories/${repository.id}/remote-bridge/pairings/device-one`,
+      method: "DELETE",
+      body: null,
+    }));
+    await waitFor(() => expect(within(dialog).queryByText("MacBook Air")).toBeNull());
   });
 
   test("switches repositories through the picker and follows URL history", async () => {

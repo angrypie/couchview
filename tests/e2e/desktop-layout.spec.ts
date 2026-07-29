@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 
-import type { ChangesResponse } from "../../src/shared/contracts.ts";
+import type {
+  BootstrapResponse,
+  ChangesResponse,
+  RemoteBridgeDevice,
+} from "../../src/shared/contracts.ts";
 
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
@@ -68,5 +72,97 @@ test.describe("desktop review layout", () => {
         name: "src/generated/file-28.ts added unstaged +4 −0",
       }),
     ).toBeVisible();
+  });
+
+  test("pairs and revokes a native IDE without overflowing the desktop sheet", async ({
+    page,
+  }) => {
+    const device: RemoteBridgeDevice = {
+      id: "fixture-device-one",
+      repositoryId: "fixture-repository",
+      label: "MacBook Air",
+      sshAlias: "couchview-fixture-device",
+      createdAt: "2026-07-29T10:00:00.000Z",
+      lastUsedAt: null,
+    };
+    let devices = [device];
+    let pairingRequest: { csrf: string | null; label: string } | null = null;
+    let revokedDevice = "";
+
+    await page.route("**/api/bootstrap", async (route) => {
+      const response = await route.fetch();
+      const body = await response.json() as BootstrapResponse;
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          remoteBridge: {
+            available: true,
+            reason: null,
+            p2pEnabled: true,
+          },
+        } satisfies BootstrapResponse,
+      });
+    });
+    await page.route("**/api/repositories/*/remote-bridge/pairings**", async (route) => {
+      const request = route.request();
+      if (request.method() === "GET") {
+        await route.fulfill({ json: { devices } });
+        return;
+      }
+      if (request.method() === "POST") {
+        const body = request.postDataJSON() as { label: string };
+        pairingRequest = {
+          csrf: request.headers()["x-couchview-csrf"] ?? null,
+          label: body.label,
+        };
+        await route.fulfill({
+          status: 201,
+          json: {
+            command:
+              "couchview bridge pair --url 'https://review.example.com' --code 'fixture-code' --cloudflare-access",
+            expiresAt: "2099-07-29T10:05:00.000Z",
+            sshAlias: "couchview-fixture-new-device",
+          },
+        });
+        return;
+      }
+      if (request.method() === "DELETE") {
+        revokedDevice = decodeURIComponent(new URL(request.url()).pathname.split("/").at(-1) ?? "");
+        devices = devices.filter((candidate) => candidate.id !== revokedDevice);
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Set up native IDE" }).click();
+    const dialog = page.getByRole("dialog", { name: "Native IDE setup" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("Direct WebRTC preferred")).toBeVisible();
+    const zedLink = dialog.getByRole("link", { name: "Open in Zed" });
+    await expect(zedLink).toHaveAttribute(
+      "href",
+      "zed://ssh/couchview-fixture-device/fixtures/sample-project",
+    );
+    await expect.poll(async () => {
+      const nextBounds = await dialog.boundingBox();
+      return nextBounds ? nextBounds.y + nextBounds.height : Number.POSITIVE_INFINITY;
+    }).toBeLessThanOrEqual(800);
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1280);
+
+    await dialog.getByLabel("Device name").fill("Travel Air");
+    await dialog.getByRole("button", { name: "Generate" }).click();
+    await expect(dialog.getByText(/couchview bridge pair/)).toBeVisible();
+    expect(pairingRequest).toEqual({ csrf: fixtureCsrf, label: "Travel Air" });
+
+    page.once("dialog", (confirmation) => void confirmation.accept());
+    await dialog.getByRole("button", { name: "Revoke MacBook Air" }).click();
+    await expect(dialog.getByText("No development Macs are paired yet.")).toBeVisible();
+    expect(revokedDevice).toBe(device.id);
   });
 });

@@ -110,7 +110,7 @@ describe("global SQLite state", () => {
       "wal",
     );
     expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-      1,
+      2,
     );
     expect(
       raw
@@ -118,7 +118,7 @@ describe("global SQLite state", () => {
           "SELECT value FROM metadata WHERE key = 'schema_version'",
         )
         .get()?.value,
-    ).toBe(1);
+    ).toBe(2);
     raw.close();
 
     const reopened = await StateDatabase.open(filePath);
@@ -128,6 +128,58 @@ describe("global SQLite state", () => {
       comments: [comment("comment-one", "alpha")],
     });
     reopened.close();
+  });
+
+  test("migrates version-one state without losing repositories", async () => {
+    const filePath = await databasePath();
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const raw = new Database(filePath, { create: true, strict: true });
+    raw.run(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL UNIQUE,
+        git_directory TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        state_revision INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO metadata(key, value) VALUES ('schema_version', 1);
+      INSERT INTO metadata(key, value) VALUES ('catalog_revision', 1);
+      INSERT INTO repositories(
+        id, name, root, git_directory, added_at, updated_at, state_revision
+      ) VALUES (
+        'repo-one', 'one', '/projects/one', '/projects/one/.git',
+        '2026-07-29T10:00:00.000Z', '2026-07-29T10:00:00.000Z', 0
+      );
+      PRAGMA user_version = 1;
+    `);
+    raw.close();
+
+    const migrated = await StateDatabase.open(filePath);
+    try {
+      expect(migrated.repository("repo-one")).toMatchObject({ name: "one" });
+      expect(migrated.remoteBridgeDevices("repo-one")).toEqual([]);
+      migrated.insertRemoteBridgeDevice({
+        id: "device-one",
+        repositoryId: "repo-one",
+        label: "Air",
+        sshAlias: "couchview-one-device",
+        createdAt: "2026-07-29T10:01:00.000Z",
+        lastUsedAt: null,
+      }, "hash");
+      expect(migrated.remoteBridgeDevices("repo-one")).toHaveLength(1);
+    } finally {
+      migrated.close();
+    }
+    const inspected = new Database(filePath, { readonly: true, strict: true });
+    expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version)
+      .toBe(2);
+    expect(inspected.query<{ value: number }, []>(
+      "SELECT value FROM metadata WHERE key = 'schema_version'",
+    ).get()?.value).toBe(2);
+    inspected.close();
   });
 
   test("isolates repositories across concurrent connections and cascades Forget", async () => {
@@ -222,6 +274,42 @@ describe("global SQLite state", () => {
     } finally {
       writer.close();
       reader.close();
+    }
+  });
+
+  test("stores only hashed native bridge credentials and cascades paired devices", async () => {
+    const database = StateDatabase.memory();
+    try {
+      database.registerRepository({
+        id: "repo-one",
+        name: "one",
+        root: "/projects/one",
+        gitDirectory: "/projects/one/.git",
+      });
+      const device = {
+        id: "device-one",
+        repositoryId: "repo-one",
+        label: "MacBook Air",
+        sshAlias: "couchview-one-device",
+        createdAt: "2026-07-29T10:00:00.000Z",
+        lastUsedAt: null,
+      };
+      database.insertRemoteBridgeDevice(device, "hashed-secret");
+      expect(database.remoteBridgeDevices("repo-one")).toEqual([device]);
+      expect(database.remoteBridgeDeviceByTokenHash("raw-secret")).toBeNull();
+      expect(database.remoteBridgeDeviceByTokenHash("hashed-secret")).toEqual(device);
+      expect(database.touchRemoteBridgeDevice(
+        device.id,
+        "2026-07-29T10:01:00.000Z",
+      )).toBe(true);
+      expect(database.remoteBridgeDevices("repo-one")[0]?.lastUsedAt).toBe(
+        "2026-07-29T10:01:00.000Z",
+      );
+      expect(database.forgetRepository("repo-one")).toBe(true);
+      expect(database.remoteBridgeDevices("repo-one")).toEqual([]);
+      expect(database.remoteBridgeDeviceByTokenHash("hashed-secret")).toBeNull();
+    } finally {
+      database.close();
     }
   });
 });

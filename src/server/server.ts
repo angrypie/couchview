@@ -8,6 +8,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import {
   API_ROUTES,
   CSRF_HEADER,
+  REMOTE_BRIDGE_PROTOCOL,
   type ApiErrorBody,
   type ApiErrorDiagnostic,
   type BootstrapResponse,
@@ -17,6 +18,8 @@ import {
   type CodexEvent,
   type CodexTurnResponse,
   type CommitRequest,
+  type ClaimRemoteBridgePairingRequest,
+  type CreateRemoteBridgePairingRequest,
   type GenerateCommitMessageRequest,
   type GenerateCommitMessageResponse,
   type CreateCommentRequest,
@@ -29,6 +32,8 @@ import {
   type PackageScriptsResponse,
   type RegisterRepositoryRequest,
   type RegisterRepositoryResponse,
+  type RemoteBridgeLeaseRequest,
+  type RemoteBridgeTicketRequest,
   type RestartCapability,
   type RestartResponse,
   type ServerEvent,
@@ -50,6 +55,10 @@ import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git.ts";
 import { PackageCommandService } from "./packageCommands.ts";
+import {
+  RemoteBridgeService,
+  type RemoteBridgeSocketData,
+} from "./remoteBridgeService.ts";
 import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
 import {
@@ -61,7 +70,7 @@ import {
 
 const encoder = new TextEncoder();
 const MAX_BODY_BYTES = 64 * 1024;
-export const INSTANCE_PROTOCOL_VERSION = 4;
+export const INSTANCE_PROTOCOL_VERSION = 5;
 export const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
@@ -88,7 +97,17 @@ export interface CouchviewAppOptions {
     stunUrls?: string[];
   };
   terminalSessions?: TerminalSessionService;
+  remoteBridge?: {
+    enabled: boolean;
+    disabledReason?: string;
+    p2pEnabled?: boolean;
+    stunUrls?: string[];
+    targetPort?: number;
+  };
+  remoteBridgeService?: RemoteBridgeService;
 }
+
+export type CouchviewSocketData = TerminalSocketData | RemoteBridgeSocketData;
 
 export interface CouchviewApp {
   repository: GitRepository;
@@ -97,7 +116,8 @@ export interface CouchviewApp {
   commitMessages: CommitMessageGenerator;
   codex: CodexAppServerService;
   terminalSessions: TerminalSessionService;
-  websocket: Bun.WebSocketHandler<TerminalSocketData>;
+  remoteBridge: RemoteBridgeService;
+  websocket: Bun.WebSocketHandler<CouchviewSocketData>;
   database: StateDatabase;
   csrfToken: string;
   controlToken: string;
@@ -111,7 +131,7 @@ export interface CouchviewApp {
   fetch(request: Request): Promise<Response>;
   fetchWithServer(
     request: Request,
-    server: Bun.Server<TerminalSocketData>,
+    server: Bun.Server<CouchviewSocketData>,
   ): Promise<Response | undefined>;
   close(): void;
 }
@@ -446,6 +466,14 @@ export async function createCouchviewApp(
     p2pEnabled: options.terminal?.p2pEnabled ?? false,
     stunUrls: options.terminal?.stunUrls,
   });
+  const remoteBridge = options.remoteBridgeService ?? new RemoteBridgeService({
+    enabled: options.remoteBridge?.enabled ?? false,
+    database,
+    disabledReason: options.remoteBridge?.disabledReason,
+    p2pEnabled: options.remoteBridge?.p2pEnabled ?? false,
+    stunUrls: options.remoteBridge?.stunUrls,
+    targetPort: options.remoteBridge?.targetPort,
+  });
   const streams = new Set<StreamState>();
   const subscriptions = new Map<string, () => void>();
   let defaultRepositoryId: string | null = initial.repository.id;
@@ -595,11 +623,20 @@ export async function createCouchviewApp(
       url.pathname === API_ROUTES.controlRepositories && request.method === "POST";
     const controlRestart =
       url.pathname === API_ROUTES.controlRestart && request.method === "POST";
+    const remoteBridgeClaim =
+      url.pathname === API_ROUTES.remoteBridgeClaim && request.method === "POST";
+    const remoteBridgeCredentialMutation =
+      request.method === "POST" &&
+      /^\/api\/repositories\/[^/]+\/remote-bridge\/(?:tickets|lease)$/.test(url.pathname);
     if (controlRegistration || controlRestart) {
       if (!tokenMatches(bearerToken(request), controlToken)) {
         throw new HttpError(403, "control_token_failed", "CLI control request is not authorized");
       }
-    } else if (isMutation(request.method)) {
+    } else if (
+      isMutation(request.method) &&
+      !remoteBridgeClaim &&
+      !remoteBridgeCredentialMutation
+    ) {
       if (!request.headers.get("origin")) {
         throw new HttpError(403, "origin_required", "A same-origin browser request is required");
       }
@@ -636,6 +673,10 @@ export async function createCouchviewApp(
         },
       });
     }
+    if (remoteBridgeClaim) {
+      const input = await readJsonObject<ClaimRemoteBridgePairingRequest>(request);
+      return json(remoteBridge.claimPairing(input), { status: 201 });
+    }
     if (url.pathname === API_ROUTES.instance && request.method === "GET") {
       const response: InstanceResponse = {
         service: "couchview",
@@ -648,6 +689,10 @@ export async function createCouchviewApp(
         terminalEnabled: terminalSessions.enabled,
         terminalP2pEnabled: terminalSessions.p2pEnabled,
         terminalStunUrls: [...terminalSessions.stunUrls],
+        remoteBridgeEnabled: remoteBridge.enabled,
+        remoteBridgeP2pEnabled: remoteBridge.p2pEnabled,
+        remoteBridgeStunUrls: [...remoteBridge.stunUrls],
+        remoteBridgeTargetPort: remoteBridge.targetPort,
       };
       return json(response);
     }
@@ -664,6 +709,7 @@ export async function createCouchviewApp(
         commitMessage: commitMessages.capability,
         codex: codex.capabilityFor(),
         terminal: terminalSessions.capability,
+        remoteBridge: remoteBridge.capability,
       };
       return json(response);
     }
@@ -707,6 +753,7 @@ export async function createCouchviewApp(
     if (!nestedPath && request.method === "DELETE") {
       const terminalStatus = await terminalSessions.status(repositoryId);
       if (terminalStatus.running) await terminalSessions.end(repositoryId);
+      remoteBridge.closeRepository(repositoryId);
       packageCommands.stopRepository(repositoryId);
       repositories.forget(repositoryId);
       if (defaultRepositoryId === repositoryId) {
@@ -765,6 +812,75 @@ export async function createCouchviewApp(
     }
     if (nestedPath === "terminal/end" && request.method === "POST") {
       return json(await terminalSessions.end(repositoryId));
+    }
+    if (nestedPath === "remote-bridge/pairings" && request.method === "GET") {
+      return json(remoteBridge.listDevices(repositoryId));
+    }
+    if (nestedPath === "remote-bridge/pairings" && request.method === "POST") {
+      const origin = request.headers.get("origin");
+      if (!origin) {
+        throw new HttpError(403, "origin_required", "A same-origin browser request is required");
+      }
+      const storedRepository = database.repository(repositoryId);
+      if (!storedRepository) {
+        throw new HttpError(404, "repository_not_found", "Repository is not registered");
+      }
+      const input = await readJsonObject<CreateRemoteBridgePairingRequest>(request);
+      return json(
+        remoteBridge.createPairing(
+          {
+            id: repositoryId,
+            name: storedRepository.name,
+            root: repository.root,
+          },
+          input,
+          {
+            origin: normalizeOrigin(origin),
+            cloudflareAccess: request.headers.has("cf-access-jwt-assertion"),
+          },
+        ),
+        { status: 201 },
+      );
+    }
+    const remoteBridgePairingRoute = /^remote-bridge\/pairings\/([^/]+)$/.exec(nestedPath);
+    if (remoteBridgePairingRoute && request.method === "DELETE") {
+      remoteBridge.revokeDevice(
+        repositoryId,
+        decodeSegment(remoteBridgePairingRoute[1] ?? ""),
+      );
+      return new Response(null, { status: 204 });
+    }
+    if (nestedPath === "remote-bridge/tickets" && request.method === "POST") {
+      const input = await readJsonObject<RemoteBridgeTicketRequest>(request);
+      return json(
+        remoteBridge.issueTicket(
+          repositoryId,
+          repository.root,
+          bearerToken(request),
+          input,
+          {
+            host: normalizeRequestHost(
+              request.headers.get("host") ?? new URL(request.url).host,
+            ),
+          },
+        ),
+        { status: 201 },
+      );
+    }
+    if (nestedPath === "remote-bridge/lease" && request.method === "POST") {
+      const input = await readJsonObject<RemoteBridgeLeaseRequest>(request);
+      return json(
+        remoteBridge.renewLease(
+          repositoryId,
+          bearerToken(request),
+          input,
+          {
+            host: normalizeRequestHost(
+              request.headers.get("host") ?? new URL(request.url).host,
+            ),
+          },
+        ),
+      );
     }
     if (fileRoute?.[2] === "diff" && request.method === "GET") {
       return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));
@@ -1203,7 +1319,7 @@ export async function createCouchviewApp(
 
   const handleRequest = async (
     request: Request,
-    server?: Bun.Server<TerminalSocketData>,
+    server?: Bun.Server<CouchviewSocketData>,
   ): Promise<Response | undefined> => {
     const url = new URL(request.url);
     const hostHeader = request.headers.get("host") ?? url.host;
@@ -1260,6 +1376,42 @@ export async function createCouchviewApp(
         return undefined;
       }
 
+      const remoteBridgeSocketRoute =
+        /^\/api\/repositories\/([^/]+)\/remote-bridge\/socket$/.exec(url.pathname);
+      if (remoteBridgeSocketRoute && request.method === "GET") {
+        if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+          throw new HttpError(
+            426,
+            "websocket_required",
+            "This native bridge route requires a WebSocket upgrade",
+          );
+        }
+        if (!server) {
+          throw new HttpError(
+            426,
+            "websocket_required",
+            "The current server cannot upgrade this request",
+          );
+        }
+        const repositoryId = decodeSegment(remoteBridgeSocketRoute[1] ?? "");
+        await repositories.get(repositoryId);
+        const data = remoteBridge.consumeUpgrade(repositoryId, request, {
+          host: normalizedHost,
+        });
+        const upgraded = server.upgrade(request, {
+          data,
+          headers: { "Sec-WebSocket-Protocol": REMOTE_BRIDGE_PROTOCOL },
+        });
+        if (!upgraded) {
+          throw new HttpError(
+            400,
+            "websocket_upgrade_failed",
+            "The native bridge WebSocket upgrade failed",
+          );
+        }
+        return undefined;
+      }
+
       response = url.pathname === "/api" || url.pathname.startsWith("/api/")
         ? await handleApi(request, url)
         : await serveStatic(url);
@@ -1269,6 +1421,54 @@ export async function createCouchviewApp(
     return addSecurityHeaders(response);
   };
 
+  const websocket: Bun.WebSocketHandler<CouchviewSocketData> = {
+    data: {} as CouchviewSocketData,
+    maxPayloadLength: 64 * 1024,
+    backpressureLimit: 1024 * 1024,
+    closeOnBackpressureLimit: true,
+    idleTimeout: 120,
+    sendPings: true,
+    open(socket) {
+      if (socket.data.kind === "terminal") {
+        terminalSessions.websocket.open?.(
+          socket as unknown as Bun.ServerWebSocket<TerminalSocketData>,
+        );
+      } else {
+        remoteBridge.websocket.open?.(
+          socket as unknown as Bun.ServerWebSocket<RemoteBridgeSocketData>,
+        );
+      }
+    },
+    message(socket, message) {
+      if (socket.data.kind === "terminal") {
+        terminalSessions.websocket.message?.(
+          socket as unknown as Bun.ServerWebSocket<TerminalSocketData>,
+          message,
+        );
+      } else {
+        remoteBridge.websocket.message?.(
+          socket as unknown as Bun.ServerWebSocket<RemoteBridgeSocketData>,
+          message,
+        );
+      }
+    },
+    close(socket, code, reason) {
+      if (socket.data.kind === "terminal") {
+        terminalSessions.websocket.close?.(
+          socket as unknown as Bun.ServerWebSocket<TerminalSocketData>,
+          code,
+          reason,
+        );
+      } else {
+        remoteBridge.websocket.close?.(
+          socket as unknown as Bun.ServerWebSocket<RemoteBridgeSocketData>,
+          code,
+          reason,
+        );
+      }
+    },
+  };
+
   const app: CouchviewApp = {
     repository: initialBackend,
     repositories,
@@ -1276,7 +1476,8 @@ export async function createCouchviewApp(
     commitMessages,
     codex,
     terminalSessions,
-    websocket: terminalSessions.websocket,
+    remoteBridge,
+    websocket,
     database,
     csrfToken,
     controlToken,
@@ -1307,7 +1508,7 @@ export async function createCouchviewApp(
     },
     fetchWithServer(
       request: Request,
-      server: Bun.Server<TerminalSocketData>,
+      server: Bun.Server<CouchviewSocketData>,
     ): Promise<Response | undefined> {
       return handleRequest(request, server);
     },
@@ -1328,6 +1529,7 @@ export async function createCouchviewApp(
       streams.clear();
       database.removeServerInstance(instanceId);
       terminalSessions.close();
+      remoteBridge.close();
       commitMessages.close();
       codex.close();
       packageCommands.close();

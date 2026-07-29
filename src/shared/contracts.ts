@@ -58,6 +58,17 @@ export const API_ROUTES = {
     `${repositoryApiPath(repositoryId)}/terminal/end`,
   terminalSocket: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/terminal/socket`,
+  remoteBridgePairings: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/remote-bridge/pairings`,
+  remoteBridgePairing: (repositoryId: string, deviceId: string) =>
+    `${repositoryApiPath(repositoryId)}/remote-bridge/pairings/${encodeURIComponent(deviceId)}`,
+  remoteBridgeClaim: "/api/remote-bridge/pairings/claim",
+  remoteBridgeTickets: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/remote-bridge/tickets`,
+  remoteBridgeLease: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/remote-bridge/lease`,
+  remoteBridgeSocket: (repositoryId: string) =>
+    `${repositoryApiPath(repositoryId)}/remote-bridge/socket`,
   codexThreads: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/codex/threads`,
   codexThread: (repositoryId: string, threadId: string) =>
@@ -80,6 +91,12 @@ export const TERMINAL_P2P_FAILED_CLOSE_CODE = 4004;
 export const TERMINAL_LEASE_EXPIRED_CLOSE_CODE = 4005;
 export const TERMINAL_DATA_CHANNEL_LABEL = "couchview-terminal";
 export const TERMINAL_DATA_CHANNEL_PROTOCOL = "couchview-terminal-data-v1";
+export const REMOTE_BRIDGE_PROTOCOL = "couchview-remote-bridge-v1";
+export const REMOTE_BRIDGE_TICKET_PREFIX = "couchview-bridge-ticket.";
+export const REMOTE_BRIDGE_DATA_CHANNEL_LABEL = "couchview-remote-bridge";
+export const REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL = "couchview-remote-bridge-data-v1";
+export const REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE = 4014;
+export const REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE = 4015;
 
 export type ChangeKind =
   | "added"
@@ -143,6 +160,7 @@ export interface BootstrapResponse {
   commitMessage: CommitMessageCapability;
   codex: CodexCapability;
   terminal: TerminalCapability;
+  remoteBridge: RemoteBridgeCapability;
 }
 
 export interface InstanceResponse {
@@ -156,6 +174,10 @@ export interface InstanceResponse {
   terminalEnabled: boolean;
   terminalP2pEnabled: boolean;
   terminalStunUrls: string[];
+  remoteBridgeEnabled: boolean;
+  remoteBridgeP2pEnabled: boolean;
+  remoteBridgeStunUrls: string[];
+  remoteBridgeTargetPort: number;
 }
 
 export interface RestartCapability {
@@ -234,6 +256,73 @@ export interface TerminalLeaseResponse {
 
 export interface TerminalEndResponse {
   status: "ended";
+}
+
+export interface RemoteBridgeCapability {
+  available: boolean;
+  reason: string | null;
+  p2pEnabled: boolean;
+}
+
+export interface RemoteBridgeDevice {
+  id: string;
+  repositoryId: string;
+  label: string;
+  sshAlias: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface RemoteBridgeDevicesResponse {
+  devices: RemoteBridgeDevice[];
+}
+
+export interface CreateRemoteBridgePairingRequest {
+  label: string;
+}
+
+export interface RemoteBridgePairingResponse {
+  command: string;
+  expiresAt: string;
+  sshAlias: string;
+}
+
+export interface ClaimRemoteBridgePairingRequest {
+  code: string;
+}
+
+export interface RemoteBridgeProfile {
+  id: string;
+  origin: string;
+  repositoryId: string;
+  repositoryName: string;
+  repositoryRoot: string;
+  deviceId: string;
+  deviceToken: string;
+  deviceLabel: string;
+  sshAlias: string;
+  username: string;
+  cloudflareAccess: boolean;
+}
+
+export interface RemoteBridgeTicketRequest {
+  connectionId: string;
+}
+
+export interface RemoteBridgeTicketResponse {
+  ticket: string;
+  expiresAt: string;
+  protocol: typeof REMOTE_BRIDGE_PROTOCOL;
+  leaseRenewIntervalMs: number;
+  webRtc?: TerminalWebRtcConfiguration;
+}
+
+export interface RemoteBridgeLeaseRequest {
+  connectionId: string;
+}
+
+export interface RemoteBridgeLeaseResponse {
+  expiresAt: string;
 }
 
 export type CodexThreadStatus =

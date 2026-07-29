@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   API_ROUTES,
   CSRF_HEADER,
+  REMOTE_BRIDGE_PROTOCOL,
+  REMOTE_BRIDGE_TICKET_PREFIX,
   type ApiErrorBody,
   type BootstrapResponse,
   type ChangesResponse,
@@ -21,6 +23,8 @@ import {
   type ServerEvent,
   type StageFileResponse,
   type StageFilesResponse,
+  type RemoteBridgeProfile,
+  type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
@@ -29,6 +33,7 @@ import {
   createCouchviewApp,
   type CouchviewApp,
   type CouchviewAppOptions,
+  type CouchviewSocketData,
 } from "./server.ts";
 import { GitCommandError } from "./git.ts";
 import type { TerminalSessionService, TerminalSocketData } from "./terminalSessions.ts";
@@ -49,6 +54,7 @@ async function fixture(
   commitMessages?: CommitMessageGenerator,
   codex?: CodexAppServerService,
   terminalSessions?: TerminalSessionService,
+  remoteBridge?: CouchviewAppOptions["remoteBridge"],
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), "couchview-server-"));
   temporaryDirectories.push(directory);
@@ -68,6 +74,7 @@ async function fixture(
     commitMessages,
     codex,
     terminalSessions,
+    remoteBridge,
   });
   applications.push(app);
   return app;
@@ -303,6 +310,134 @@ describe("Couchview HTTP security and routes", () => {
     app.close();
     expect(closed).toBe(true);
     applications.splice(applications.indexOf(app), 1);
+  });
+
+  test("pairs, authenticates, upgrades, and revokes native IDE devices", async () => {
+    const app = await fixture(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        enabled: true,
+        p2pEnabled: true,
+        stunUrls: ["stun:stun.cloudflare.com:3478"],
+      },
+    );
+    const bootstrap = await (await app.fetch(request(API_ROUTES.bootstrap))).json() as
+      BootstrapResponse;
+    expect(bootstrap.remoteBridge).toMatchObject({
+      available: true,
+      p2pEnabled: true,
+    });
+    const route = API_ROUTES.remoteBridgePairings(app.repository.id);
+    const unauthenticated = await app.fetch(request(route, {
+      method: "POST",
+      headers: {
+        origin: "http://127.0.0.1:3001",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ label: "MacBook Air" }),
+    }));
+    expect(unauthenticated.status).toBe(403);
+
+    const created = await app.fetch(request(route, {
+      method: "POST",
+      headers: {
+        origin: "http://127.0.0.1:3001",
+        [CSRF_HEADER]: app.csrfToken,
+        "content-type": "application/json",
+        "cf-access-jwt-assertion": "edge-verified-jwt",
+      },
+      body: JSON.stringify({ label: "MacBook Air" }),
+    }));
+    expect(created.status).toBe(201);
+    const pairing = await created.json() as { command: string; sshAlias: string };
+    expect(pairing.command).toContain("--cloudflare-access");
+    const code = /--code '([^']+)'/.exec(pairing.command)?.[1];
+    expect(code).toBeString();
+
+    const claimed = await app.fetch(request(API_ROUTES.remoteBridgeClaim, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    }));
+    expect(claimed.status).toBe(201);
+    const profile = await claimed.json() as RemoteBridgeProfile;
+    expect(profile).toMatchObject({
+      sshAlias: pairing.sshAlias,
+      repositoryId: app.repository.id,
+      cloudflareAccess: true,
+    });
+
+    const listed = await app.fetch(request(route));
+    expect(await listed.json()).toMatchObject({
+      devices: [{ id: profile.deviceId, label: "MacBook Air" }],
+    });
+    const missingCredential = await app.fetch(request(
+      API_ROUTES.remoteBridgeTickets(app.repository.id),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connectionId: "connection_123" }),
+      },
+    ));
+    expect(missingCredential.status).toBe(403);
+    const ticketResponse = await app.fetch(request(
+      API_ROUTES.remoteBridgeTickets(app.repository.id),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${profile.deviceToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ connectionId: "connection_123" }),
+      },
+    ));
+    expect(ticketResponse.status).toBe(201);
+    const ticket = await ticketResponse.json() as RemoteBridgeTicketResponse;
+    expect(ticket.webRtc?.iceServers).toEqual([{ urls: "stun:stun.cloudflare.com:3478" }]);
+
+    let upgradedData: CouchviewSocketData | null = null;
+    let selectedProtocol: string | null = null;
+    const fakeServer = {
+      upgrade(_request: Request, options: { data: CouchviewSocketData; headers: HeadersInit }) {
+        upgradedData = options.data;
+        selectedProtocol = new Headers(options.headers).get("sec-websocket-protocol");
+        return true;
+      },
+    } as unknown as Bun.Server<CouchviewSocketData>;
+    const socketRequest = request(API_ROUTES.remoteBridgeSocket(app.repository.id), {
+      headers: {
+        upgrade: "websocket",
+        connection: "Upgrade",
+        "sec-websocket-protocol":
+          `${REMOTE_BRIDGE_PROTOCOL}, ${REMOTE_BRIDGE_TICKET_PREFIX}${ticket.ticket}`,
+      },
+    });
+    expect(await app.fetchWithServer(socketRequest, fakeServer)).toBeUndefined();
+    expect(upgradedData).toMatchObject({
+      kind: "remote-bridge",
+      deviceId: profile.deviceId,
+      connectionId: "connection_123",
+    });
+    expect(String(selectedProtocol)).toBe(REMOTE_BRIDGE_PROTOCOL);
+    const replay = await app.fetchWithServer(socketRequest, fakeServer);
+    expect(replay?.status).toBe(403);
+
+    const revoked = await app.fetch(request(
+      API_ROUTES.remoteBridgePairing(app.repository.id, profile.deviceId),
+      {
+        method: "DELETE",
+        headers: {
+          origin: "http://127.0.0.1:3001",
+          [CSRF_HEADER]: app.csrfToken,
+        },
+      },
+    ));
+    expect(revoked.status).toBe(204);
+    expect(await (await app.fetch(request(route))).json()).toEqual({ devices: [] });
   });
 
   test("exposes project-scoped Codex threads and sends only current comments", async () => {
@@ -1140,7 +1275,7 @@ describe("Couchview HTTP security and routes", () => {
     expect(instance.status).toBe(200);
     expect(await instance.json()).toMatchObject({
       service: "couchview",
-      protocolVersion: 4,
+      protocolVersion: 5,
       instanceId: app.instanceId,
       bindHost: "127.0.0.1",
       port: 3001,

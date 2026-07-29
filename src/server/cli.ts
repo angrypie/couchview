@@ -13,6 +13,7 @@ import {
   type BootstrapResponse,
   type InstanceResponse,
   type RegisterRepositoryResponse,
+  type RemoteBridgeProfile,
   type RestartCapability,
   type RestartResponse,
 } from "../shared/contracts.ts";
@@ -34,6 +35,11 @@ import {
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import {
+  pairRemoteBridge,
+  remoteBridgeZedUrl,
+  runRemoteBridgeProxy,
+} from "./remoteBridgeClient.ts";
+import {
   createCouchviewApp,
   hostForUrl,
   INSTANCE_PROTOCOL_VERSION,
@@ -43,8 +49,11 @@ import { terminalAccessIsLoopback } from "./terminalSessions.ts";
 
 export type TerminalMode = "auto" | "enabled" | "disabled";
 export type TerminalP2pMode = "auto" | "enabled" | "disabled";
+export type RemoteBridgeMode = "auto" | "enabled" | "disabled";
+export type RemoteBridgeP2pMode = "auto" | "enabled" | "disabled";
 
 export const DEFAULT_TERMINAL_STUN_URLS = ["stun:stun.cloudflare.com:3478"] as const;
+export const DEFAULT_REMOTE_BRIDGE_STUN_URLS = ["stun:stun.cloudflare.com:3478"] as const;
 
 interface CliOptions {
   root: string;
@@ -53,6 +62,10 @@ interface CliOptions {
   terminalMode: TerminalMode;
   terminalP2pMode: TerminalP2pMode;
   terminalStunUrls: string[];
+  remoteBridgeMode: RemoteBridgeMode;
+  remoteBridgeP2pMode: RemoteBridgeP2pMode;
+  remoteBridgeStunUrls: string[];
+  remoteBridgePort: number;
 }
 
 interface RunningRegistration {
@@ -99,6 +112,12 @@ interface RunCliRuntime {
   supervise(argv: string[]): Promise<number>;
   start(argv: string[]): Promise<unknown>;
   restart(argv: string[]): Promise<unknown>;
+  pairBridge(options: {
+    origin: string;
+    code: string;
+    cloudflareAccess: boolean;
+  }): Promise<RemoteBridgeProfile>;
+  proxyBridge(profileId: string): Promise<number>;
   installCompletion(shell: CompletionShell): Promise<string>;
   createPrompter(): InteractivePrompter;
   stdout(message: string): void;
@@ -262,10 +281,35 @@ function parseCliState(argv: string[]): {
     else throw new Error("COUCHVIEW_TERMINAL_P2P must be 1 or 0");
   }
   const terminalStunUrls = parseTerminalStunUrls(Bun.env.COUCHVIEW_TERMINAL_STUN);
+  const remoteBridgeEnvironment = Bun.env.COUCHVIEW_REMOTE_BRIDGE;
+  let environmentRemoteBridgeMode: RemoteBridgeMode = "auto";
+  if (remoteBridgeEnvironment !== undefined) {
+    if (remoteBridgeEnvironment === "1") environmentRemoteBridgeMode = "enabled";
+    else if (remoteBridgeEnvironment === "0") environmentRemoteBridgeMode = "disabled";
+    else throw new Error("COUCHVIEW_REMOTE_BRIDGE must be 1 or 0");
+  }
+  const remoteBridgeP2pEnvironment = Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P;
+  let environmentRemoteBridgeP2pMode: RemoteBridgeP2pMode = "auto";
+  if (remoteBridgeP2pEnvironment !== undefined) {
+    if (remoteBridgeP2pEnvironment === "1") environmentRemoteBridgeP2pMode = "enabled";
+    else if (remoteBridgeP2pEnvironment === "0") environmentRemoteBridgeP2pMode = "disabled";
+    else throw new Error("COUCHVIEW_REMOTE_BRIDGE_P2P must be 1 or 0");
+  }
+  const remoteBridgeStunUrls = parseRemoteBridgeStunUrls(
+    Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN,
+  );
+  const remoteBridgePort = Number(Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT ?? 22);
   if (!root) throw new Error("Repository path is required");
   if (!host) throw new Error("Host is required");
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Port must be between 1 and 65535");
+  }
+  if (
+    !Number.isSafeInteger(remoteBridgePort) ||
+    remoteBridgePort < 1 ||
+    remoteBridgePort > 65_535
+  ) {
+    throw new Error("COUCHVIEW_REMOTE_BRIDGE_PORT must be between 1 and 65535");
   }
   return {
     parsed,
@@ -276,16 +320,25 @@ function parseCliState(argv: string[]): {
       terminalMode: parsed.terminalMode ?? environmentTerminalMode,
       terminalP2pMode: parsed.terminalP2pMode ?? environmentTerminalP2pMode,
       terminalStunUrls,
+      remoteBridgeMode: parsed.remoteBridgeMode ?? environmentRemoteBridgeMode,
+      remoteBridgeP2pMode:
+        parsed.remoteBridgeP2pMode ?? environmentRemoteBridgeP2pMode,
+      remoteBridgeStunUrls,
+      remoteBridgePort,
     },
   };
 }
 
-export function parseTerminalStunUrls(value: string | undefined): string[] {
+function parseStunUrls(
+  value: string | undefined,
+  environmentName: string,
+  defaults: readonly string[],
+): string[] {
   const urls = value === undefined
-    ? [...DEFAULT_TERMINAL_STUN_URLS]
+    ? [...defaults]
     : value.split(",").map((candidate) => candidate.trim());
   if (urls.length < 1 || urls.length > 4 || urls.some((candidate) => !candidate)) {
-    throw new Error("COUCHVIEW_TERMINAL_STUN must contain between 1 and 4 STUN URLs");
+    throw new Error(`${environmentName} must contain between 1 and 4 STUN URLs`);
   }
   for (const candidate of urls) {
     const match = /^stun:(\[[0-9A-Fa-f:.]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(candidate);
@@ -306,11 +359,23 @@ export function parseTerminalStunUrls(value: string | undefined): string[] {
       (explicitPort !== undefined && (Number(explicitPort) < 1 || Number(explicitPort) > 65_535))
     ) {
       throw new Error(
-        "COUCHVIEW_TERMINAL_STUN entries must use stun:host or stun:host:port",
+        `${environmentName} entries must use stun:host or stun:host:port`,
       );
     }
   }
   return [...new Set(urls)];
+}
+
+export function parseTerminalStunUrls(value: string | undefined): string[] {
+  return parseStunUrls(value, "COUCHVIEW_TERMINAL_STUN", DEFAULT_TERMINAL_STUN_URLS);
+}
+
+export function parseRemoteBridgeStunUrls(value: string | undefined): string[] {
+  return parseStunUrls(
+    value,
+    "COUCHVIEW_REMOTE_BRIDGE_STUN",
+    DEFAULT_REMOTE_BRIDGE_STUN_URLS,
+  );
 }
 
 function parseRestartCli(argv: string[]): RestartCliOptions {
@@ -380,7 +445,12 @@ function isInstanceResponse(value: unknown): value is InstanceResponse {
     typeof candidate.terminalEnabled === "boolean" &&
     typeof candidate.terminalP2pEnabled === "boolean" &&
     Array.isArray(candidate.terminalStunUrls) &&
-    candidate.terminalStunUrls.every((url) => typeof url === "string");
+    candidate.terminalStunUrls.every((url) => typeof url === "string") &&
+    typeof candidate.remoteBridgeEnabled === "boolean" &&
+    typeof candidate.remoteBridgeP2pEnabled === "boolean" &&
+    Array.isArray(candidate.remoteBridgeStunUrls) &&
+    candidate.remoteBridgeStunUrls.every((url) => typeof url === "string") &&
+    typeof candidate.remoteBridgeTargetPort === "number";
 }
 
 async function responseError(response: Response): Promise<string> {
@@ -606,6 +676,48 @@ async function registerWithRunningServer(
       `Couchview is already using port ${options.port} with different terminal STUN servers; stop it or choose another port`,
     );
   }
+  if (options.remoteBridgeMode === "enabled" && !rawInstance.remoteBridgeEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with the native bridge disabled; stop it or choose another port`,
+    );
+  }
+  if (options.remoteBridgeMode === "disabled" && rawInstance.remoteBridgeEnabled) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with the native bridge enabled; stop it or choose another port`,
+    );
+  }
+  if (
+    options.remoteBridgeP2pMode === "enabled" &&
+    !rawInstance.remoteBridgeP2pEnabled
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with native bridge P2P disabled; stop it or choose another port`,
+    );
+  }
+  if (
+    options.remoteBridgeP2pMode === "disabled" &&
+    rawInstance.remoteBridgeP2pEnabled
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with native bridge P2P enabled; stop it or choose another port`,
+    );
+  }
+  if (
+    options.remoteBridgeP2pMode === "enabled" &&
+    options.remoteBridgeStunUrls.join(",") !== rawInstance.remoteBridgeStunUrls.join(",")
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with different native bridge STUN servers; stop it or choose another port`,
+    );
+  }
+  if (
+    Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT !== undefined &&
+    options.remoteBridgePort !== rawInstance.remoteBridgeTargetPort
+  ) {
+    throw new Error(
+      `Couchview is already using port ${options.port} with a different loopback SSH port; stop it or choose another port`,
+    );
+  }
 
   const database = await StateDatabase.open(resolveStateDatabasePath());
   try {
@@ -751,6 +863,16 @@ export async function startServer(
   const terminalDisabledReason = options.terminalMode === "disabled"
     ? "Terminal access was disabled by configuration."
     : "Terminal access on non-loopback hosts requires --enable-terminal or COUCHVIEW_TERMINAL=1.";
+  const remoteBridgeEnabled = options.remoteBridgeMode === "enabled";
+  const remoteBridgeP2pEnabled = options.remoteBridgeP2pMode === "enabled";
+  if (remoteBridgeP2pEnabled && !remoteBridgeEnabled) {
+    throw new Error(
+      "Native bridge P2P requires the native bridge; add --enable-remote-bridge or remove --enable-remote-bridge-p2p",
+    );
+  }
+  const remoteBridgeDisabledReason = options.remoteBridgeMode === "disabled"
+    ? "Native remote development was disabled by configuration."
+    : "Native remote development requires --enable-remote-bridge or COUCHVIEW_REMOTE_BRIDGE=1.";
   const capability = restartCapability();
   let restartInProgress = false;
   let relaunch: () => void = () => undefined;
@@ -765,6 +887,13 @@ export async function startServer(
       disabledReason: terminalEnabled ? undefined : terminalDisabledReason,
       p2pEnabled: terminalP2pEnabled,
       stunUrls: options.terminalStunUrls,
+    },
+    remoteBridge: {
+      enabled: remoteBridgeEnabled,
+      disabledReason: remoteBridgeEnabled ? undefined : remoteBridgeDisabledReason,
+      p2pEnabled: remoteBridgeP2pEnabled,
+      stunUrls: options.remoteBridgeStunUrls,
+      targetPort: options.remoteBridgePort,
     },
     restart: {
       ...capability,
@@ -897,6 +1026,16 @@ export async function startServer(
       "Direct terminal P2P is enabled. Authorized peers can learn this host's network addresses, and terminal payloads bypass Cloudflare after signaling; Access and the tunnel still protect signaling, authorization renewal, and WebSocket fallback.",
     );
   }
+  if (remoteBridgeEnabled) {
+    console.warn(
+      `Native IDE bridge access is enabled for paired devices and can reach SSH only on 127.0.0.1:${options.remoteBridgePort}. Protect exposed Couchview origins with trusted access control.`,
+    );
+  }
+  if (remoteBridgeP2pEnabled) {
+    console.warn(
+      "Direct native bridge P2P is enabled. Paired devices can learn this host's network addresses, and SSH payloads bypass Cloudflare after signaling; Access and the tunnel still protect signaling, lease renewal, and WebSocket fallback.",
+    );
+  }
 
   let stopped = false;
   const stop = () => {
@@ -939,6 +1078,16 @@ export async function startServer(
             ? ["--enable-terminal-p2p"]
             : options.terminalP2pMode === "disabled"
               ? ["--disable-terminal-p2p"]
+              : []),
+          ...(options.remoteBridgeMode === "enabled"
+            ? ["--enable-remote-bridge"]
+            : options.remoteBridgeMode === "disabled"
+              ? ["--disable-remote-bridge"]
+              : []),
+          ...(options.remoteBridgeP2pMode === "enabled"
+            ? ["--enable-remote-bridge-p2p"]
+            : options.remoteBridgeP2pMode === "disabled"
+              ? ["--disable-remote-bridge-p2p"]
               : []),
         ],
         {
@@ -1017,6 +1166,8 @@ export async function runCli(
     supervise: runtimeOverrides.supervise ?? superviseServer,
     start: runtimeOverrides.start ?? startServer,
     restart: runtimeOverrides.restart ?? restartRunningServer,
+    pairBridge: runtimeOverrides.pairBridge ?? pairRemoteBridge,
+    proxyBridge: runtimeOverrides.proxyBridge ?? runRemoteBridgeProxy,
     installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
     createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
     stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
@@ -1024,7 +1175,11 @@ export async function runCli(
     supervisedWorker: runtimeOverrides.supervisedWorker ??
       Bun.env[supervisedWorkerEnvironment] === "1",
   };
-  let action = argv[0] === "restart" ? "restart" : "start";
+  let action = argv[0] === "restart"
+    ? "restart"
+    : argv[0] === "bridge"
+      ? "run the native bridge"
+      : "start";
   try {
     const invocation = parseCliInvocation(argv);
     if (invocation.kind === "help") {
@@ -1044,6 +1199,21 @@ export async function runCli(
       }
       runtime.stdout(renderCompletion(invocation.shell));
       return 0;
+    }
+    if (invocation.kind === "bridge-pair") {
+      action = "pair the native bridge";
+      const profile = await runtime.pairBridge({
+        origin: invocation.origin,
+        code: invocation.code,
+        cloudflareAccess: invocation.cloudflareAccess,
+      });
+      runtime.stdout(`Paired '${profile.deviceLabel}' as SSH host ${profile.sshAlias}.`);
+      runtime.stdout(`Open in Zed: ${remoteBridgeZedUrl(profile)}`);
+      return 0;
+    }
+    if (invocation.kind === "bridge-proxy") {
+      action = "run the native bridge proxy";
+      return await runtime.proxyBridge(invocation.profileId);
     }
     if (invocation.kind === "restart") {
       action = "restart";

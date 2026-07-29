@@ -30,6 +30,7 @@ import {
   Menu,
   MessageSquareText,
   Minus,
+  MonitorUp,
   Pencil,
   Play,
   Plus,
@@ -89,6 +90,7 @@ import {
 } from "./diffAdapter.ts";
 import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
 import { SettingsPage } from "./SettingsWorkspace.tsx";
+import { RemoteBridgeSheet } from "./RemoteBridgeSheet.tsx";
 import {
   codeFontStack,
   loadTypographyPreferences,
@@ -610,6 +612,7 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<DrawerView>("files");
   const [repositoryPickerOpen, setRepositoryPickerOpen] = useState(false);
+  const [remoteBridgeOpen, setRemoteBridgeOpen] = useState(false);
   const [forgetRepositoryBusy, setForgetRepositoryBusy] = useState<string | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
@@ -791,6 +794,11 @@ export function App() {
     reason: "The browser tmux terminal is unavailable from this Couchview server.",
     persistence: "tmux" as const,
     profiles: [],
+  };
+  const remoteBridgeCapability = bootstrap?.remoteBridge ?? {
+    available: false,
+    reason: "Native remote development is unavailable from this Couchview server.",
+    p2pEnabled: false,
   };
   const stageableFiles = files.filter((file) => !file.staged || file.unstaged);
   const stageableReviewedFiles = stageableFiles.filter((file) => file.reviewed);
@@ -2947,6 +2955,7 @@ export function App() {
       if (workspaceMode === "terminal") return;
       const overlayOpen =
         repositoryPickerOpen ||
+        remoteBridgeOpen ||
         searchOpen ||
         failureDetailsOpen ||
         commitComposerOpen ||
@@ -2960,6 +2969,7 @@ export function App() {
         if (copyFallbackText) setCopyFallbackText("");
         else if (failureDetailsOpen) setFailureDetailsOpen(false);
         else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
+        else if (remoteBridgeOpen) setRemoteBridgeOpen(false);
         else if (commitComposerOpen) closeCommitComposer();
         else if (selectedPackageRunId) setSelectedPackageRunId(null);
         else if (commentComposerOpen) setCommentComposerOpen(false);
@@ -2994,6 +3004,7 @@ export function App() {
     navigateFile,
     navigateHunk,
     repositoryPickerOpen,
+    remoteBridgeOpen,
     searchOpen,
     selectedPackageRunId,
     setReviewed,
@@ -3002,6 +3013,7 @@ export function App() {
 
   const overlayVisible =
     repositoryPickerOpen ||
+    remoteBridgeOpen ||
     searchOpen ||
     failureDetailsOpen ||
     commitComposerOpen ||
@@ -3018,7 +3030,7 @@ export function App() {
     const overlay = overlays.item(overlays.length - 1);
     if (!overlay) return;
     const focusableSelector =
-      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusFirst = window.requestAnimationFrame(() => {
       if (!overlay.contains(document.activeElement)) {
         overlay.querySelector<HTMLElement>(focusableSelector)?.focus();
@@ -3056,6 +3068,7 @@ export function App() {
     failureDetailsOpen,
     overlayVisible,
     repositoryPickerOpen,
+    remoteBridgeOpen,
     searchOpen,
     selectedPackageRunId,
   ]);
@@ -3630,6 +3643,18 @@ export function App() {
           </div>
         )}
         <button
+          aria-label="Set up native IDE"
+          className="icon-button remote-bridge-launch-button"
+          disabled={!repositoryId || !repository}
+          onClick={() => setRemoteBridgeOpen(true)}
+          title={remoteBridgeCapability.available
+            ? "Pair a Mac and open this repository in Zed"
+            : remoteBridgeCapability.reason ?? "Native remote development is unavailable"}
+          type="button"
+        >
+          <MonitorUp size={18} />
+        </button>
+        <button
           aria-label="Open tmux terminal"
           aria-pressed={workspaceMode === "terminal"}
           className="icon-button terminal-launch-button"
@@ -4065,12 +4090,37 @@ export function App() {
                   </div>
                 </>
               )}
+              {repositoryId && repository && (
+                <button
+                  className="action-button secondary repository-remote-action"
+                  onClick={() => {
+                    setRepositoryPickerOpen(false);
+                    setRemoteBridgeOpen(true);
+                  }}
+                  type="button"
+                >
+                  <MonitorUp size={16} /> Native IDE setup
+                </button>
+              )}
               <div className="progress-label">
                 Run <code>couchview</code> inside another Git project to add it.
               </div>
             </footer>
           </section>
         </>
+      )}
+
+      {bootstrap && repositoryId && repository && (
+        <RemoteBridgeSheet
+          capability={remoteBridgeCapability}
+          csrfToken={bootstrap.csrfToken}
+          onClose={() => setRemoteBridgeOpen(false)}
+          onNotice={showToast}
+          open={remoteBridgeOpen}
+          repositoryId={repositoryId}
+          repositoryName={repository.name}
+          repositoryRoot={repository.root}
+        />
       )}
 
       {searchOpen && (

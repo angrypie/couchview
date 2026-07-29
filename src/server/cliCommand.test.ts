@@ -84,6 +84,10 @@ describe("CLI command parsing", () => {
       "--enable-terminal-p2p",
       "--disable-terminal-p2p",
     ])).toThrow("cannot be used together");
+    expect(() => parseServeArguments([
+      "--enable-remote-bridge",
+      "--disable-remote-bridge",
+    ])).toThrow("cannot be used together");
   });
 
   test("dispatches the default command, explicit commands, help, and version", () => {
@@ -124,6 +128,27 @@ describe("CLI command parsing", () => {
       shell: "fish",
       install: true,
     });
+    expect(parseCliInvocation([
+      "bridge",
+      "pair",
+      "--url",
+      "https://review.example.com",
+      "--code",
+      "a".repeat(43),
+      "--cloudflare-access",
+    ])).toEqual({
+      kind: "bridge-pair",
+      origin: "https://review.example.com",
+      code: "a".repeat(43),
+      cloudflareAccess: true,
+    });
+    expect(parseCliInvocation([
+      "bridge",
+      "proxy",
+      "--profile",
+      "device-profile",
+    ])).toEqual({ kind: "bridge-proxy", profileId: "device-profile" });
+    expect(() => parseCliInvocation(["bridge", "par"])).toThrow("Did you mean 'pair'");
   });
 
   test("suggests nearby commands, options, and shell names", () => {
@@ -155,10 +180,13 @@ describe("CLI help and completion", () => {
     expect(renderCliHelp(null)).not.toContain("couchview [serve]");
     expect(renderCliHelp(null)).toContain("couchview serve [repository]");
     expect(renderCliHelp(null)).toContain("couchview completion <shell>");
+    expect(renderCliHelp(null)).toContain("couchview bridge <pair|proxy>");
     expect(renderCliHelp("serve")).toContain("-i, --interactive");
     expect(renderCliHelp("serve")).toContain("--enable-terminal-p2p");
     expect(renderCliHelp("restart")).not.toContain("--repo");
     expect(renderCliHelp("completion")).toContain("couchview completion fish --install");
+    expect(renderCliHelp("bridge")).toContain("bridge pair --url");
+    expect(renderCliHelp("serve")).toContain("--enable-remote-bridge-p2p");
     expect(fishCompletionPath({}, "/Users/example")).toBe(
       "/Users/example/.config/fish/completions/couchview.fish",
     );
@@ -174,6 +202,7 @@ describe("CLI help and completion", () => {
       const completion = renderCompletion(shell as CompletionShell);
       expect(completion).toContain("completion");
       expect(completion).toContain("enable-terminal-p2p");
+      expect(completion).toContain("bridge");
       expect(completion).toContain("repo");
       if (shell === "zsh") {
         expect(completion).not.toContain("'directories:repository directory:_directories'");

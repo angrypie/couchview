@@ -376,6 +376,76 @@ outbound connections to Cloudflare. If the token is disclosed, refresh it in the
 tunnel's **Overview** page and reinstall the connector service with the replacement
 token.
 
+### Native IDE bridge (Zed)
+
+Couchview can make a repository on the host Mac available to a normal remote IDE
+without publishing TCP port 22. Zed invokes the system OpenSSH client, OpenSSH invokes
+Couchview through a generated `ProxyCommand`, and Couchview carries the complete SSH
+byte stream over the already protected Couchview origin. The connection starts on an
+authenticated WebSocket and, when explicitly enabled and reachable, moves to an
+ordered, reliable WebRTC DataChannel. If WebRTC cannot connect, WebSocket remains the
+automatic fallback.
+
+If a direct path fails after the handoff, Couchview closes that SSH transport so
+OpenSSH or Zed can reconnect cleanly instead of risking duplicated or reordered SSH
+bytes. A failed negotiation before handoff simply continues on WebSocket.
+
+On the Mac mini:
+
+1. Enable **System Settings > General > Sharing > Remote Login** for the intended macOS
+   user. Configure normal SSH key or password authentication; Couchview does not bypass
+   OpenSSH authentication or host-key verification.
+2. Configure the HTTPS origin and Cloudflare Access as described above. Keep Couchview
+   and the tunnel bound to loopback.
+3. Add the native bridge flags to the normal Couchview launch:
+
+   ```sh
+   COUCHVIEW_ALLOWED_ORIGINS=https://couchview.example.com \
+     couchview serve /absolute/path/to/project \
+     --host 127.0.0.1 \
+     --enable-remote-bridge \
+     --enable-remote-bridge-p2p
+   ```
+
+   For a LaunchAgent, add both flags as separate `ProgramArguments`. The equivalent
+   environment values are `COUCHVIEW_REMOTE_BRIDGE=1` and
+   `COUCHVIEW_REMOTE_BRIDGE_P2P=1`. WebRTC is optional; omit its flag to use only the
+   protected WebSocket. A loopback SSH daemon on a nonstandard port can be selected
+   with `COUCHVIEW_REMOTE_BRIDGE_PORT`. The target host is deliberately fixed to a
+   numeric loopback address.
+
+Then pair the MacBook Air:
+
+1. Install or link this Couchview CLI on the Air. When Cloudflare Access protects the
+   origin, also install `cloudflared` and make it available on `PATH`.
+2. Open the repository in Couchview, choose **Native IDE**, enter a device name, and
+   generate a one-use command.
+3. Run that command once in Terminal on the Air. It authenticates through Cloudflare
+   Access when required, stores a private Couchview device credential, creates a
+   managed OpenSSH host alias, and prints the Zed URL.
+4. Choose **Open in Zed** after the device appears, or open the printed `zed://ssh/...`
+   URL. Zed performs its normal remote-server installation through OpenSSH on first
+   connection.
+
+The automation keeps Couchview profiles in
+`${XDG_CONFIG_HOME:-$HOME/.config}/couchview/remote-bridges.json`, writes managed SSH
+hosts to `~/.ssh/couchview_config`, and adds one `Include ~/.ssh/couchview_config` line
+to `~/.ssh/config`. Directories and credential files use user-only permissions. The
+generated `couchview bridge proxy` command is an OpenSSH transport helper and should
+not be run manually.
+
+Pairing codes are single-use and expire after five minutes. Persistent device secrets
+are stored only as hashes on the Mini, transport tickets expire after 30 seconds, and
+active connections require a short renewable authorization lease. Revoking a device
+from **Native IDE** removes its credential and disconnects its current bridge. The
+bridge cannot select another TCP destination and never stores SSH private keys.
+
+As with terminal P2P, WebRTC can expose the Mini and Air's peer addresses to each other,
+has no TURN relay, and may be unavailable behind symmetric NAT or restrictive UDP
+firewalls. Cloudflare Access still protects signaling, lease renewal, and WebSocket
+fallback; SSH continues to provide end-to-end host authentication and encryption on
+both transports.
+
 To run without linking the command:
 
 ```sh
@@ -436,7 +506,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 
 Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. If a database already exists at the pre-rename `couch-review` path and the new path does not exist, Couchview continues using it so saved reviews and comments remain available. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
 
-Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line `--repo`, `--port`, `--enable-terminal`, `--disable-terminal`, `--enable-terminal-p2p`, and `--disable-terminal-p2p` take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
+Older `.git/couch-review/state.json` files are intentionally not imported or deleted. They remain Git-private and are not pushed by normal Git operations, but Couchview no longer reads them. `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `COUCHVIEW_REMOTE_BRIDGE`, `COUCHVIEW_REMOTE_BRIDGE_P2P`, `COUCHVIEW_REMOTE_BRIDGE_STUN`, `COUCHVIEW_REMOTE_BRIDGE_PORT`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line repository, port, terminal, and remote-bridge options take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards. Pre-rename `COUCH_REVIEW_*` variables remain accepted as lower-priority fallbacks.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 

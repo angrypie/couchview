@@ -705,6 +705,11 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 							},
 						],
 					},
+					remoteBridge: {
+						available: false,
+						reason: "Native remote development is unavailable in the browser test fixture.",
+						p2pEnabled: false,
+					},
 				} satisfies BootstrapResponse);
 		}
 

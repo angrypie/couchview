@@ -4,9 +4,13 @@ import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { ReviewComment, ReviewRecord } from "../shared/contracts.ts";
+import type {
+  RemoteBridgeDevice,
+  ReviewComment,
+  ReviewRecord,
+} from "../shared/contracts.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 interface RepositoryRow {
   id: string;
@@ -60,6 +64,16 @@ interface InstanceRow {
   control_token: string;
   access_origins_json: string;
   started_at: string;
+}
+
+interface RemoteBridgeDeviceRow {
+  id: string;
+  repository_id: string;
+  label: string;
+  ssh_alias: string;
+  token_hash: string;
+  created_at: string;
+  last_used_at: string | null;
 }
 
 export interface StoredRepository {
@@ -161,6 +175,17 @@ function commentFromRow(row: CommentRow): ReviewComment {
   };
 }
 
+function remoteBridgeDeviceFromRow(row: RemoteBridgeDeviceRow): RemoteBridgeDevice {
+  return {
+    id: row.id,
+    repositoryId: row.repository_id,
+    label: row.label,
+    sshAlias: row.ssh_alias,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+  };
+}
+
 export class StateDatabase {
   readonly filePath: string;
   private readonly database: Database;
@@ -222,11 +247,32 @@ export class StateDatabase {
     }
     if (version === SCHEMA_VERSION) {
       this.database.run(
-        "INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 1)",
+        `INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', ${SCHEMA_VERSION})`,
       );
       this.database.run(
         "INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0)",
       );
+      return;
+    }
+
+    if (version === 1) {
+      this.database.transaction(() => {
+        this.database.run(`
+          CREATE TABLE remote_bridge_devices (
+            id TEXT PRIMARY KEY,
+            repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+            label TEXT NOT NULL,
+            ssh_alias TEXT NOT NULL UNIQUE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT
+          );
+          CREATE INDEX remote_bridge_devices_repository
+            ON remote_bridge_devices(repository_id, created_at);
+          UPDATE metadata SET value = 2 WHERE key = 'schema_version';
+          PRAGMA user_version = 2;
+        `);
+      })();
       return;
     }
 
@@ -289,9 +335,20 @@ export class StateDatabase {
           started_at TEXT NOT NULL,
           UNIQUE (bind_host, port)
         );
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 1);
+        CREATE TABLE IF NOT EXISTS remote_bridge_devices (
+          id TEXT PRIMARY KEY,
+          repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+          label TEXT NOT NULL,
+          ssh_alias TEXT NOT NULL UNIQUE,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS remote_bridge_devices_repository
+          ON remote_bridge_devices(repository_id, created_at);
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 2);
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
       `);
     })();
   }
@@ -521,6 +578,58 @@ export class StateDatabase {
       if (result.changes > 0) this.bumpStateRevision(repositoryId);
       return result.changes > 0;
     }).immediate();
+  }
+
+  remoteBridgeDevices(repositoryId: string): RemoteBridgeDevice[] {
+    return this.database.query<RemoteBridgeDeviceRow, { repositoryId: string }>(`
+      SELECT id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+      FROM remote_bridge_devices
+      WHERE repository_id = $repositoryId
+      ORDER BY COALESCE(last_used_at, created_at) DESC, created_at DESC, id
+    `).all({ repositoryId }).map(remoteBridgeDeviceFromRow);
+  }
+
+  insertRemoteBridgeDevice(
+    device: RemoteBridgeDevice,
+    tokenHash: string,
+  ): RemoteBridgeDevice {
+    this.database.query<unknown, {
+      id: string;
+      repositoryId: string;
+      label: string;
+      sshAlias: string;
+      tokenHash: string;
+      createdAt: string;
+      lastUsedAt: string | null;
+    }>(`
+      INSERT INTO remote_bridge_devices(
+        id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+      ) VALUES (
+        $id, $repositoryId, $label, $sshAlias, $tokenHash, $createdAt, $lastUsedAt
+      )
+    `).run({ ...device, tokenHash });
+    return structuredClone(device);
+  }
+
+  remoteBridgeDeviceByTokenHash(tokenHash: string): RemoteBridgeDevice | null {
+    const row = this.database.query<RemoteBridgeDeviceRow, { tokenHash: string }>(`
+      SELECT id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+      FROM remote_bridge_devices WHERE token_hash = $tokenHash
+    `).get({ tokenHash });
+    return row ? remoteBridgeDeviceFromRow(row) : null;
+  }
+
+  touchRemoteBridgeDevice(id: string, lastUsedAt: string): boolean {
+    return this.database.query<unknown, { id: string; lastUsedAt: string }>(`
+      UPDATE remote_bridge_devices SET last_used_at = $lastUsedAt WHERE id = $id
+    `).run({ id, lastUsedAt }).changes > 0;
+  }
+
+  deleteRemoteBridgeDevice(repositoryId: string, id: string): boolean {
+    return this.database.query<unknown, { repositoryId: string; id: string }>(`
+      DELETE FROM remote_bridge_devices
+      WHERE repository_id = $repositoryId AND id = $id
+    `).run({ repositoryId, id }).changes > 0;
   }
 
   registerServerInstance(instance: StoredServerInstance): void {
