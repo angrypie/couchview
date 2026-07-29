@@ -51,6 +51,10 @@ export interface PairRemoteBridgeOptions {
   cloudflareAccess: boolean;
 }
 
+export interface CloudflareAccessTokenOptions {
+  allowLogin?: boolean;
+}
+
 interface CloudflareTokenState {
   value: string | null;
 }
@@ -64,7 +68,10 @@ export interface RemoteBridgeClientRuntime {
   createPeerConnection(
     iceServers: readonly { urls: string }[],
   ): RTCPeerConnection;
-  cloudflareAccessToken(origin: string): Promise<string>;
+  cloudflareAccessToken(
+    origin: string,
+    options?: CloudflareAccessTokenOptions,
+  ): Promise<string>;
   paths: RemoteBridgePaths;
   executableCommand: string;
   stdin: NodeJS.ReadableStream;
@@ -305,15 +312,12 @@ async function fetchWithTimeout(
   }
 }
 
-export async function cloudflareAccessToken(origin: string): Promise<string> {
-  const cloudflared = Bun.which("cloudflared");
-  if (!cloudflared) {
-    throw new Error(
-      "cloudflared is required for this Access-protected Couchview bridge; install it and try again",
-    );
-  }
-  const process = Bun.spawn(
-    [cloudflared, "access", "token", `-app=${normalizeOrigin(origin)}`],
+async function readCloudflareAccessToken(
+  cloudflared: string,
+  origin: string,
+): Promise<{ token: string; detail: string | undefined; valid: boolean }> {
+  const child = Bun.spawn(
+    [cloudflared, "access", "token", `-app=${origin}`],
     {
       stdin: "inherit",
       stdout: "pipe",
@@ -322,18 +326,54 @@ export async function cloudflareAccessToken(origin: string): Promise<string> {
     },
   );
   const [exitCode, stdout, stderr] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
   ]);
   const token = stdout.trim();
-  if (exitCode !== 0 || !token || token.length > 32_768 || /\s/.test(token)) {
-    const detail = stderr.trim().split("\n")[0]?.slice(0, 240);
+  return {
+    token,
+    detail: stderr.trim().split("\n")[0]?.slice(0, 240),
+    valid: exitCode === 0 && Boolean(token) && token.length <= 32_768 && !/\s/.test(token),
+  };
+}
+
+export async function cloudflareAccessToken(
+  origin: string,
+  options: CloudflareAccessTokenOptions = {},
+): Promise<string> {
+  const cloudflared = Bun.which("cloudflared");
+  if (!cloudflared) {
     throw new Error(
-      `Cloudflare Access authentication failed${detail ? `: ${detail}` : ""}`,
+      "cloudflared is required for this Access-protected Couchview bridge; install it and try again",
     );
   }
-  return token;
+  const normalizedOrigin = normalizeOrigin(origin);
+  let attempt = await readCloudflareAccessToken(cloudflared, normalizedOrigin);
+  if (!attempt.valid && options.allowLogin) {
+    process.stderr.write(
+      `Cloudflare Access sign-in required for ${normalizedOrigin}. Complete it in the browser.\n`,
+    );
+    const login = Bun.spawn(
+      [cloudflared, "access", "login", "--quiet", normalizedOrigin],
+      {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        timeout: 5 * 60_000,
+      },
+    );
+    if (await login.exited !== 0) {
+      throw new Error("Cloudflare Access login failed");
+    }
+    attempt = await readCloudflareAccessToken(cloudflared, normalizedOrigin);
+  }
+  if (!attempt.valid) {
+    throw new Error(
+      `Cloudflare Access authentication failed${attempt.detail ? `: ${attempt.detail}` : ""}`,
+    );
+  }
+  return attempt.token;
 }
 
 function defaultRuntime(): RemoteBridgeClientRuntime {
@@ -361,10 +401,17 @@ async function accessHeaders(
   enabled: boolean,
   state: CloudflareTokenState,
   runtime: RemoteBridgeClientRuntime,
-  force = false,
+  options: {
+    allowLogin?: boolean;
+    force?: boolean;
+  } = {},
 ): Promise<Record<string, string>> {
   if (!enabled) return {};
-  if (!state.value || force) state.value = await runtime.cloudflareAccessToken(origin);
+  if (!state.value || options.force) {
+    state.value = await runtime.cloudflareAccessToken(origin, {
+      allowLogin: options.allowLogin ?? false,
+    });
+  }
   return { "cf-access-token": state.value };
 }
 
@@ -383,6 +430,7 @@ export async function pairRemoteBridge(
     options.cloudflareAccess,
     tokenState,
     runtime,
+    { allowLogin: true },
   );
   const response = await fetchWithTimeout(
     runtime.fetch,
@@ -442,7 +490,7 @@ async function authenticatedBridgeRequest(
       profile.cloudflareAccess,
       tokenState,
       runtime,
-      forceAccessRefresh,
+      { force: forceAccessRefresh },
     );
     return fetchWithTimeout(runtime.fetch, `${profile.origin}${pathname}`, {
       method: "POST",

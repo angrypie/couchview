@@ -183,6 +183,7 @@ describe("native bridge client configuration", () => {
     await writeFile(paths.sshConfigFile, "Host existing\n  HostName example.com\n");
     const requests: Request[] = [];
     let accessCalls = 0;
+    const accessLoginModes: boolean[] = [];
     const result = await pairRemoteBridge(
       {
         origin: "https://review.example.com",
@@ -192,8 +193,9 @@ describe("native bridge client configuration", () => {
       {
         paths,
         executableCommand: "'/opt/couchview'",
-        cloudflareAccessToken: async () => {
+        cloudflareAccessToken: async (_origin, options) => {
           accessCalls += 1;
+          accessLoginModes.push(options?.allowLogin ?? false);
           return "access.jwt.token";
         },
         fetch: (async (input, init) => {
@@ -206,6 +208,7 @@ describe("native bridge client configuration", () => {
 
     expect(result.deviceLabel).toBe("MacBook Air");
     expect(accessCalls).toBe(1);
+    expect(accessLoginModes).toEqual([true]);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.headers.get("cf-access-token")).toBe("access.jwt.token");
     expect(await requests[0]?.json()).toEqual({ code: "c".repeat(43) });
@@ -245,7 +248,7 @@ describe("native bridge client configuration", () => {
 describe("native bridge ProxyCommand", () => {
   test("pipes SSH bytes over authenticated WebSocket fallback without exposing the device token", async () => {
     const { paths } = await fixturePaths();
-    await storeRemoteBridgeProfile(profile({ cloudflareAccess: false }), {
+    await storeRemoteBridgeProfile(profile(), {
       paths,
       executableCommand: "couchview",
     });
@@ -255,11 +258,16 @@ describe("native bridge ProxyCommand", () => {
     let socket: FakeWebSocket | null = null;
     let socketOptions: Bun.WebSocketOptions | null = null;
     const requests: Request[] = [];
+    const accessLoginModes: boolean[] = [];
     const runtime: Partial<RemoteBridgeClientRuntime> = {
       paths,
       stdin: input as unknown as NodeJS.ReadableStream,
       stdout: output as unknown as NodeJS.WritableStream & { writableLength?: number },
       stderr: (message) => errors.push(message),
+      cloudflareAccessToken: async (_origin, options) => {
+        accessLoginModes.push(options?.allowLogin ?? false);
+        return "access.jwt.token";
+      },
       fetch: (async (rawInput, init) => {
         const request = new Request(rawInput, init);
         requests.push(request);
@@ -299,7 +307,12 @@ describe("native bridge ProxyCommand", () => {
     expect(await proxy).toBe(0);
 
     expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${profile().deviceToken}`);
+    expect(requests[0]?.headers.get("cf-access-token")).toBe("access.jwt.token");
+    expect(accessLoginModes).toEqual([false]);
     expect(JSON.stringify(socketOptions)).not.toContain(profile().deviceToken);
+    expect(socketOptions).toMatchObject({
+      headers: { "cf-access-token": "access.jwt.token" },
+    });
     expect(socketOptions).toMatchObject({
       protocols: [
         REMOTE_BRIDGE_PROTOCOL,

@@ -421,8 +421,11 @@ Then pair the MacBook Air:
 2. Open the repository in Couchview, choose **Native IDE**, enter a device name, and
    generate a one-use command.
 3. Run that command once in Terminal on the Air. It authenticates through Cloudflare
-   Access when required, stores a private Couchview device credential, creates a
-   managed OpenSSH host alias, and prints the Zed URL.
+   Access when required, opening the browser automatically when no cached Access
+   session exists. It then stores a private Couchview device credential, creates a
+   managed OpenSSH host alias, and prints the Zed URL. `cloudflared` is used only for
+   Access login and token retrieval; IDE traffic still uses Couchview's WebRTC path or
+   protected WebSocket fallback.
 4. Choose **Open in Zed** after the device appears, or open the printed `zed://ssh/...`
    URL. Zed performs its normal remote-server installation through OpenSSH on first
    connection.
