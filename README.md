@@ -447,6 +447,44 @@ On the Mac mini:
    LAN mode to an untrusted network: Couchview's origin and CSRF checks are not remote
    user authentication.
 
+   With Tailscale, install and sign in to Tailscale on both Macs, then find the Mini's
+   stable Tailscale IPv4 address:
+
+   ```sh
+   tailscale ip -4
+   ```
+
+   Bind Couchview only to that address, replacing the example IP with the command's
+   output:
+
+   ```sh
+   couchview serve /absolute/path/to/project \
+     --host 100.101.102.103 \
+     --enable-remote-bridge
+   ```
+
+   Ensure the tailnet policy allows the Air to reach TCP port `4173` on the Mini. On
+   the Air, open `http://100.101.102.103:4173`, choose **Native IDE**, and run the
+   generated command. It will resemble:
+
+   ```sh
+   couchview bridge pair \
+     --url 'http://100.101.102.103:4173' \
+     --code '<one-use-code>'
+   ```
+
+   Tailscale is the private network boundary, so this uses the `none` provider and
+   requires neither `cloudflared` nor a manual `--origin-access` flag on the Air.
+   Traffic stays on the origin WebSocket over Tailscale by default. Add
+   `--enable-remote-bridge-p2p` on the Mini only if you also want WebRTC and accept its
+   peer-address disclosure and possible alternate direct path.
+
+   A Tailscale MagicDNS name can replace the IP in the browser and pairing URL. When
+   doing so, add its exact origin, including port, to `COUCHVIEW_ALLOWED_ORIGINS`, for
+   example `http://mini-name:4173`. See Tailscale's guides for
+   [connecting to devices](https://tailscale.com/docs/how-to/connect-to-devices) and
+   [MagicDNS](https://tailscale.com/docs/features/magicdns).
+
    For a VPS, reverse proxy, or tunnel, configure its exact public origin and keep a
    local Couchview origin on loopback when the connector runs on the same host:
 
