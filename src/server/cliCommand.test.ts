@@ -113,6 +113,18 @@ describe("CLI command parsing", () => {
       "--repo",
       "relative/project",
     ])).toThrow("must be absolute");
+    expect(() => parseCliInvocation([
+      "bridge",
+      "terminal",
+      "--repo",
+      "relative/project",
+    ])).toThrow("must be absolute");
+    expect(() => parseCliInvocation([
+      "bridge",
+      "terminal",
+      "--",
+      "claude",
+    ])).toThrow("opens a login shell");
   });
 
   test("dispatches the default command, explicit commands, help, and version", () => {
@@ -199,6 +211,40 @@ describe("CLI command parsing", () => {
     });
     expect(parseCliInvocation([
       "bridge",
+      "terminal",
+      "--profile",
+      "couchview-project-one",
+      "--repo",
+      "/Users/mini/Code/Project One",
+    ])).toEqual({
+      kind: "bridge-terminal",
+      profileSelector: "couchview-project-one",
+      repositoryRoot: "/Users/mini/Code/Project One",
+    });
+    expect(parseCliInvocation([
+      "bridge",
+      "claude",
+      "--profile",
+      "couchview-project-one",
+      "--repo",
+      "/Users/mini/Code/Project One",
+      "--",
+      "--name",
+      "Project One",
+    ])).toEqual({
+      kind: "bridge-claude",
+      profileSelector: "couchview-project-one",
+      repositoryRoot: "/Users/mini/Code/Project One",
+      claudeArgs: ["--name", "Project One"],
+    });
+    expect(parseCliInvocation(["bridge", "claude"])).toEqual({
+      kind: "bridge-claude",
+      profileSelector: null,
+      repositoryRoot: null,
+      claudeArgs: [],
+    });
+    expect(parseCliInvocation([
+      "bridge",
       "pair",
       "--url",
       "https://review.example.com",
@@ -241,13 +287,17 @@ describe("CLI help and completion", () => {
     expect(renderCliHelp(null)).not.toContain("couchview [serve]");
     expect(renderCliHelp(null)).toContain("couchview serve [repository]");
     expect(renderCliHelp(null)).toContain("couchview completion <shell>");
-    expect(renderCliHelp(null)).toContain("couchview bridge <pair|proxy|codex>");
+    expect(renderCliHelp(null)).toContain(
+      "couchview bridge <pair|proxy|codex|terminal|claude>",
+    );
     expect(renderCliHelp("serve")).toContain("-i, --interactive");
     expect(renderCliHelp("serve")).toContain("--enable-terminal-p2p");
     expect(renderCliHelp("restart")).not.toContain("--repo");
     expect(renderCliHelp("completion")).toContain("couchview completion fish --install");
     expect(renderCliHelp("bridge")).toContain("bridge pair --url");
     expect(renderCliHelp("bridge")).toContain("bridge codex [--profile");
+    expect(renderCliHelp("bridge")).toContain("bridge terminal [--profile");
+    expect(renderCliHelp("bridge")).toContain("bridge claude [--profile");
     expect(renderCliHelp("serve")).toContain("--enable-remote-bridge-p2p");
     expect(fishCompletionPath({}, "/Users/example")).toBe(
       "/Users/example/.config/fish/completions/couchview.fish",
@@ -266,6 +316,8 @@ describe("CLI help and completion", () => {
       expect(completion).toContain("enable-terminal-p2p");
       expect(completion).toContain("bridge");
       expect(completion).toContain("codex");
+      expect(completion).toContain("terminal");
+      expect(completion).toContain("claude");
       expect(completion).toContain("repo");
       if (shell === "zsh") {
         expect(completion).not.toContain("'directories:repository directory:_directories'");

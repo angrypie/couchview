@@ -1881,6 +1881,13 @@ describe("Couchview app", () => {
     expect(within(dialog).getByText(
       "couchview bridge codex --profile couchview-fixture-device-one --repo '/fixture'",
     )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge terminal --profile couchview-fixture-device-one --repo '/fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge claude --profile couchview-fixture-device-one --repo '/fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText("Claude Code Remote Control")).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText("Device name"), {
       target: { value: "Travel Air" },
@@ -1936,6 +1943,12 @@ describe("Couchview app", () => {
     )).toBeTruthy();
     expect(within(dialog).getByText(
       "couchview bridge codex --profile couchview-fixture-device-one --repo '/second-fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge terminal --profile couchview-fixture-device-one --repo '/second-fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge claude --profile couchview-fixture-device-one --repo '/second-fixture'",
     )).toBeTruthy();
     expect(requests).toContainEqual({
       path: "/api/repositories/repo-two/remote-bridge/pairings",

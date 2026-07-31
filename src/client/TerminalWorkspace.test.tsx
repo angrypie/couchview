@@ -341,6 +341,45 @@ describe("TerminalWorkspace", () => {
     expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
   });
 
+  test("sends helper keys and applies the one-shot Ctrl modifier to any helper key", async () => {
+    render(<TerminalWorkspace {...defaultProps()} />);
+    await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+    const socket = FakeTerminalWebSocket.instances[0]!;
+    await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+
+    const helperBar = screen.getByRole("toolbar", {
+      name: "Terminal keyboard shortcuts",
+    });
+    const control = screen.getByRole("button", {
+      name: "Control modifier for next key",
+    });
+    expect(control.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(control);
+    expect(rendererState.virtualControl).toBe(true);
+    expect(control.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Send Arrow Left" }));
+    expect(rendererState.keyInputs.at(-1)).toEqual({
+      code: "ArrowLeft",
+      ctrlKey: true,
+      key: "ArrowLeft",
+    });
+    expect(control.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Send Escape" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Tab" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Ctrl+C" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send Ctrl+L" }));
+    expect(rendererState.keyInputs.slice(-4)).toEqual([
+      { code: "Escape", ctrlKey: false, key: "Escape" },
+      { code: "Tab", ctrlKey: false, key: "Tab" },
+      { code: "KeyC", ctrlKey: true, key: "c" },
+      { code: "KeyL", ctrlKey: true, key: "l" },
+    ]);
+    expect(helperBar.contains(document.activeElement)).toBe(false);
+    expect(rendererState.focuses).toBeGreaterThan(0);
+  });
+
   test("keeps WebSocket transport when native WebRTC is unavailable", async () => {
     attachmentResponses.push(p2pAttachment("p2p-unavailable"));
     render(<TerminalWorkspace {...defaultProps()} />);

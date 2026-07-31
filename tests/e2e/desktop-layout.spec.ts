@@ -176,6 +176,14 @@ test.describe("desktop review layout", () => {
       "couchview bridge codex --profile couchview-fixture-device --repo '/fixtures/sample-project'",
       { exact: true },
     )).toBeVisible();
+    await expect(dialog.getByText(
+      "couchview bridge terminal --profile couchview-fixture-device --repo '/fixtures/sample-project'",
+      { exact: true },
+    )).toBeVisible();
+    await expect(dialog.getByText(
+      "couchview bridge claude --profile couchview-fixture-device --repo '/fixtures/sample-project'",
+      { exact: true },
+    )).toBeVisible();
     await expect.poll(async () => {
       const nextBounds = await dialog.boundingBox();
       return nextBounds ? nextBounds.y + nextBounds.height : Number.POSITIVE_INFINITY;

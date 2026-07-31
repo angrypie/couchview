@@ -37,11 +37,17 @@ import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import {
   pairRemoteBridge,
+  remoteBridgeClaudeCommand,
   remoteBridgeCodexCommand,
+  remoteBridgeTerminalCommand,
   remoteBridgeZedUrl,
   runRemoteBridgeProxy,
 } from "./remoteBridgeClient.ts";
 import { runRemoteCodex } from "./remoteCodexClient.ts";
+import {
+  runRemoteClaude,
+  runRemoteTerminal,
+} from "./remoteTerminalClient.ts";
 import {
   createCouchviewApp,
   hostForUrl,
@@ -126,6 +132,15 @@ interface RunCliRuntime {
     profileSelector: string | null;
     repositoryRoot: string | null;
     codexArgs: string[];
+  }): Promise<number>;
+  terminalBridge(options: {
+    profileSelector: string | null;
+    repositoryRoot: string | null;
+  }): Promise<number>;
+  claudeBridge(options: {
+    profileSelector: string | null;
+    repositoryRoot: string | null;
+    claudeArgs: string[];
   }): Promise<number>;
   installCompletion(shell: CompletionShell): Promise<string>;
   createPrompter(): InteractivePrompter;
@@ -1211,6 +1226,10 @@ export async function runCli(
     proxyBridge: runtimeOverrides.proxyBridge ?? runRemoteBridgeProxy,
     codexBridge: runtimeOverrides.codexBridge ?? ((options) =>
       runRemoteCodex(options)),
+    terminalBridge: runtimeOverrides.terminalBridge ?? ((options) =>
+      runRemoteTerminal(options)),
+    claudeBridge: runtimeOverrides.claudeBridge ?? ((options) =>
+      runRemoteClaude(options)),
     installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
     createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
     stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
@@ -1255,6 +1274,12 @@ export async function runCli(
       runtime.stdout(
         `Open in Codex CLI: ${remoteBridgeCodexCommand(profile)}`,
       );
+      runtime.stdout(
+        `Open a remote terminal: ${remoteBridgeTerminalCommand(profile)}`,
+      );
+      runtime.stdout(
+        `Start Claude Code Remote Control: ${remoteBridgeClaudeCommand(profile)}`,
+      );
       return 0;
     }
     if (invocation.kind === "bridge-proxy") {
@@ -1267,6 +1292,21 @@ export async function runCli(
         profileSelector: invocation.profileSelector,
         repositoryRoot: invocation.repositoryRoot,
         codexArgs: invocation.codexArgs,
+      });
+    }
+    if (invocation.kind === "bridge-terminal") {
+      action = "open a terminal through the native bridge";
+      return await runtime.terminalBridge({
+        profileSelector: invocation.profileSelector,
+        repositoryRoot: invocation.repositoryRoot,
+      });
+    }
+    if (invocation.kind === "bridge-claude") {
+      action = "start Claude Code Remote Control through the native bridge";
+      return await runtime.claudeBridge({
+        profileSelector: invocation.profileSelector,
+        repositoryRoot: invocation.repositoryRoot,
+        claudeArgs: invocation.claudeArgs,
       });
     }
     if (invocation.kind === "restart") {

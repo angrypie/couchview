@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
 import {
-  readRemoteBridgeConfig,
+  resolveRemoteBridgeProfile,
   resolveRemoteBridgePaths,
   type RemoteBridgePaths,
 } from "./remoteBridgeClient.ts";
@@ -274,31 +274,7 @@ export async function resolveRemoteCodexProfile(
   selector: string | null | undefined,
   paths = resolveRemoteBridgePaths(),
 ): Promise<RemoteBridgeProfile> {
-  const profiles = (await readRemoteBridgeConfig(paths)).profiles;
-  if (selector) {
-    const selected = profiles.find((profile) =>
-      profile.id === selector || profile.sshAlias === selector
-    );
-    if (selected) return selected;
-    const available = profiles.map((profile) => profile.sshAlias).sort();
-    throw new Error(
-      available.length === 0
-        ? "No paired Couchview bridge profiles are available"
-        : `Couchview bridge profile '${selector}' was not found. Available SSH hosts: ${available.join(", ")}`,
-    );
-  }
-  if (profiles.length === 1) return profiles[0]!;
-  if (profiles.length === 0) {
-    throw new Error(
-      "No paired Couchview bridge profiles are available; pair this computer from Couchview first",
-    );
-  }
-  throw new Error(
-    `More than one Couchview bridge profile is available; choose one with --profile (${profiles
-      .map((profile) => profile.sshAlias)
-      .sort()
-      .join(", ")})`,
-  );
+  return await resolveRemoteBridgeProfile(selector, paths);
 }
 
 export function remoteCodexLaunchCommands(

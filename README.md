@@ -376,7 +376,7 @@ outbound connections to Cloudflare. If the token is disclosed, refresh it in the
 tunnel's **Overview** page and reinstall the connector service with the replacement
 token.
 
-### Native SSH bridge (Zed and Codex CLI)
+### Native SSH bridge (Zed, Codex, terminal, and Claude Code)
 
 Couchview can make a repository on the host Mac available to a normal remote IDE
 without publishing TCP port 22. Zed invokes the system OpenSSH client, OpenSSH invokes
@@ -522,8 +522,9 @@ Then pair the MacBook Air:
    `cloudflared` is used only for login and token retrieval; IDE traffic still uses
    Couchview's WebRTC path or the origin WebSocket fallback.
 4. After the device appears, select any repository and reopen **Native IDE**. Couchview
-   shows copyable Zed and Codex commands containing that repository's remote path. Zed
-   performs its normal remote-server installation through OpenSSH on first connection.
+   shows separate copyable Zed, Codex, terminal, and Claude Code Remote Control commands
+   containing that repository's remote path. Zed performs its normal remote-server
+   installation through OpenSSH on first connection.
    The Zed command follows its
    [remote-development SSH URL format](https://zed.dev/docs/remote-development):
 
@@ -531,18 +532,9 @@ Then pair the MacBook Air:
    zed 'ssh://<managed-ssh-host>/absolute/path/to/registered/project'
    ```
 
-To keep the Codex terminal UI on the Air while Codex reads files and runs commands on
-the Mini, use the managed SSH host printed by the pairing command:
-
-```sh
-couchview bridge codex \
-  --profile <managed-ssh-host> \
-  --repo /absolute/path/to/registered/project
-```
-
 Pairing authorizes the Couchview transport but does not replace macOS SSH
-authentication. Before the first Codex launch, connect to the printed SSH host once
-to verify its host key and login:
+authentication. Before the first remote launch, connect to the printed SSH host once to
+verify its host key and login:
 
 ```sh
 ssh <couchview-ssh-host>
@@ -552,11 +544,55 @@ For password-free launches, install the Air's public key on the Mini first, for
 example with `ssh-copy-id <couchview-ssh-host>`, and confirm that the plain `ssh`
 command succeeds.
 
-When only one bridge profile is stored, `--profile` can be omitted. Omitting `--repo`
-uses the repository from which the pairing was originally created. The machine-local
-profile ID is also accepted, but the managed SSH alias is easier to match with the host
-used for `ssh-copy-id`. Arguments after `--` are forwarded to the Air's Codex CLI, for
-example:
+To open an ordinary remote terminal in the selected repository, run:
+
+```sh
+couchview bridge terminal \
+  --profile <managed-ssh-host> \
+  --repo /absolute/path/to/registered/project
+```
+
+This starts the remote account's login shell without creating or managing a persistent
+session. From there the user can start `tmux`, Claude Code, Neovim, or any other terminal
+tool. Closing the shell closes the SSH connection.
+
+To start Claude Code Remote Control in the repository as a single command, run:
+
+```sh
+couchview bridge claude \
+  --profile <managed-ssh-host> \
+  --repo /absolute/path/to/registered/project
+```
+
+The Mini must have Claude Code installed and authenticated with a Claude.ai account.
+The command runs `claude remote-control` remotely and leaves its status, session URL,
+and QR code visible in the Air's terminal. After startup, browser and mobile control
+traffic uses Anthropic's TLS service; Couchview carries the SSH launcher, not the Claude
+conversation. The remote process remains attached to that SSH session. To keep it alive
+after closing the Air's terminal, first open `couchview bridge terminal`, start `tmux`,
+and run `claude remote-control` inside it. Claude arguments can follow `--`, for example:
+
+```sh
+couchview bridge claude \
+  --profile couchview-project-name-12345678 \
+  --repo '/Users/mini/Code/Another Project' -- \
+  --name 'Another Project'
+```
+
+To keep the Codex terminal UI on the Air while Codex reads files and runs commands on
+the Mini, use:
+
+```sh
+couchview bridge codex \
+  --profile <managed-ssh-host> \
+  --repo /absolute/path/to/registered/project
+```
+
+When only one bridge profile is stored, `--profile` can be omitted from the terminal,
+Claude, and Codex launchers. Omitting `--repo` uses the repository from which the pairing
+was originally created. The machine-local profile ID is also accepted, but the managed
+SSH alias is easier to match with the host used for `ssh-copy-id`. Arguments after `--`
+are forwarded to the Air's Codex CLI, for example:
 
 ```sh
 couchview bridge codex \

@@ -1,14 +1,17 @@
 import type { TerminalRendererConfig } from "./typographyPreferences.ts";
 import type {
+  BrowserTerminalRenderer,
   BrowserTerminalPreviewRenderer,
   BrowserTerminalWriteProfile,
 } from "./ghosttyTerminal.ts";
+import type { TerminalKeyInput } from "./terminalKeyboard.ts";
 
 interface RendererOptions {
   container: HTMLElement;
   config: TerminalRendererConfig;
   onData(data: Uint8Array<ArrayBuffer>): boolean;
   onResize(cols: number, rows: number): void;
+  onVirtualControlChange?(active: boolean): void;
 }
 
 export const rendererState = {
@@ -19,9 +22,11 @@ export const rendererState = {
   fits: 0,
   focuses: 0,
   latencyKeyHandler: null as ((event: KeyboardEvent) => void) | null,
+  keyInputs: [] as TerminalKeyInput[],
   options: null as RendererOptions | null,
   pendingCanvasRenders: [] as BrowserTerminalWriteProfile[],
   writes: [] as Uint8Array[],
+  virtualControl: false,
 };
 
 export const previewRendererState = {
@@ -39,9 +44,11 @@ export function resetRendererState(): void {
   rendererState.fits = 0;
   rendererState.focuses = 0;
   rendererState.latencyKeyHandler = null;
+  rendererState.keyInputs.length = 0;
   rendererState.options = null;
   rendererState.pendingCanvasRenders.length = 0;
   rendererState.writes.length = 0;
+  rendererState.virtualControl = false;
   previewRendererState.calls = 0;
   previewRendererState.configs.length = 0;
   previewRendererState.disposed = 0;
@@ -68,7 +75,9 @@ export async function terminalPreviewRendererFactory(options: {
   };
 }
 
-export async function terminalRendererFactory(options: RendererOptions) {
+export async function terminalRendererFactory(
+  options: RendererOptions,
+): Promise<BrowserTerminalRenderer> {
   rendererState.calls += 1;
   rendererState.configs.push(options.config);
   const failure = rendererState.failure;
@@ -86,6 +95,20 @@ export async function terminalRendererFactory(options: RendererOptions) {
     },
     focus() {
       rendererState.focuses += 1;
+    },
+    sendKey(input: TerminalKeyInput) {
+      rendererState.keyInputs.push({
+        ...input,
+        ctrlKey: Boolean(input.ctrlKey || rendererState.virtualControl),
+      });
+      if (rendererState.virtualControl) {
+        rendererState.virtualControl = false;
+        options.onVirtualControlChange?.(false);
+      }
+    },
+    setVirtualControl(active: boolean) {
+      rendererState.virtualControl = active;
+      options.onVirtualControlChange?.(active);
     },
     setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null) {
       rendererState.latencyKeyHandler = handler;

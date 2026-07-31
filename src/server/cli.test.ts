@@ -397,6 +397,15 @@ describe("CLI entrypoint", () => {
       repositoryRoot: string | null;
       codexArgs: string[];
     }> = [];
+    const bridgeTerminals: Array<{
+      profileSelector: string | null;
+      repositoryRoot: string | null;
+    }> = [];
+    const bridgeClaude: Array<{
+      profileSelector: string | null;
+      repositoryRoot: string | null;
+      claudeArgs: string[];
+    }> = [];
     return {
       stdout,
       stderr,
@@ -407,6 +416,8 @@ describe("CLI entrypoint", () => {
       bridgePairs,
       bridgeProxies,
       bridgeCodex,
+      bridgeTerminals,
+      bridgeClaude,
       runtime: {
         stdout(message: string) {
           stdout.push(message);
@@ -454,6 +465,21 @@ describe("CLI entrypoint", () => {
           codexArgs: string[];
         }) {
           bridgeCodex.push(options);
+          return 0;
+        },
+        async terminalBridge(options: {
+          profileSelector: string | null;
+          repositoryRoot: string | null;
+        }) {
+          bridgeTerminals.push(options);
+          return 0;
+        },
+        async claudeBridge(options: {
+          profileSelector: string | null;
+          repositoryRoot: string | null;
+          claudeArgs: string[];
+        }) {
+          bridgeClaude.push(options);
           return 0;
         },
         async installCompletion(shell: CompletionShell) {
@@ -535,6 +561,12 @@ describe("CLI entrypoint", () => {
     expect(pairing.stdout.join("\n")).toContain(
       "Open in Codex CLI: couchview bridge codex --profile couchview-project-one --repo '/projects/one'",
     );
+    expect(pairing.stdout.join("\n")).toContain(
+      "Open a remote terminal: couchview bridge terminal --profile couchview-project-one --repo '/projects/one'",
+    );
+    expect(pairing.stdout.join("\n")).toContain(
+      "Start Claude Code Remote Control: couchview bridge claude --profile couchview-project-one --repo '/projects/one'",
+    );
     expect(pairing.stdout.join("\n")).not.toContain("t".repeat(43));
 
     const proxy = entrypointRuntime();
@@ -563,6 +595,38 @@ describe("CLI entrypoint", () => {
       profileSelector: "couchview-project-one",
       repositoryRoot: "/projects/two",
       codexArgs: ["--model", "gpt-5.4"],
+    }]);
+
+    const terminal = entrypointRuntime();
+    expect(await runCli([
+      "bridge",
+      "terminal",
+      "--profile",
+      "couchview-project-one",
+      "--repo",
+      "/projects/two",
+    ], terminal.runtime)).toBe(0);
+    expect(terminal.bridgeTerminals).toEqual([{
+      profileSelector: "couchview-project-one",
+      repositoryRoot: "/projects/two",
+    }]);
+
+    const claude = entrypointRuntime();
+    expect(await runCli([
+      "bridge",
+      "claude",
+      "--profile",
+      "couchview-project-one",
+      "--repo",
+      "/projects/two",
+      "--",
+      "--name",
+      "Project Two",
+    ], claude.runtime)).toBe(0);
+    expect(claude.bridgeClaude).toEqual([{
+      profileSelector: "couchview-project-one",
+      repositoryRoot: "/projects/two",
+      claudeArgs: ["--name", "Project Two"],
     }]);
   });
 

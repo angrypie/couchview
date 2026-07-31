@@ -5,6 +5,12 @@ import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
 import { installTerminalClipboardPaste } from "./terminalClipboardPaste.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 import {
+  terminalControlCharacter,
+  terminalKeyboardCode,
+  terminalModifierOnlyKey,
+  type TerminalKeyInput,
+} from "./terminalKeyboard.ts";
+import {
   codeFontStack,
   type TerminalRendererConfig,
 } from "./typographyPreferences.ts";
@@ -13,6 +19,8 @@ export interface BrowserTerminalRenderer {
   readonly cols: number;
   readonly rows: number;
   write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile): void;
+  sendKey(input: TerminalKeyInput): void;
+  setVirtualControl(active: boolean): void;
   setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null): void;
   focus(): void;
   fit(): void;
@@ -35,6 +43,7 @@ interface CreateBrowserTerminalOptions {
   config: TerminalRendererConfig;
   onData(data: Uint8Array<ArrayBuffer>): boolean;
   onResize(cols: number, rows: number): void;
+  onVirtualControlChange?(active: boolean): void;
 }
 
 interface CreateBrowserTerminalPreviewOptions {
@@ -270,6 +279,7 @@ export async function createBrowserTerminal(
   const originalRender = terminalRenderer?.render;
   const echoPaintController = new TerminalEchoPaintController();
   let hostWriteDepth = 0;
+  let virtualControlActive = false;
   let pendingCanvasRenders: BrowserTerminalWriteProfile[] | null = null;
   let keySubscription: { dispose(): void } | null = null;
   const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
@@ -287,11 +297,52 @@ export async function createBrowserTerminal(
       originalRender.apply(terminalRenderer, args);
       for (const profile of profiles) profile.onRenderComplete();
     };
-    keySubscription = terminal.onKey(({ domEvent }) => handler(domEvent));
+    keySubscription = terminal.onKey(({ domEvent }) => {
+      if (!virtualControlActive) handler(domEvent);
+    });
   };
   const applyAdjustedMetrics = () => {
     applyTerminalAdjustedMetrics(terminal, config);
   };
+  const setVirtualControl = (active: boolean) => {
+    if (virtualControlActive === active) return;
+    virtualControlActive = active;
+    options.onVirtualControlChange?.(active);
+  };
+  const sendKey = (input: TerminalKeyInput) => {
+    const ctrlKey = Boolean(input.ctrlKey || virtualControlActive);
+    if (virtualControlActive) setVirtualControl(false);
+    const controlCharacter = ctrlKey && !input.altKey && !input.metaKey
+      ? terminalControlCharacter(input.key)
+      : null;
+    if (controlCharacter !== null) {
+      terminal.input(controlCharacter, true);
+      return;
+    }
+    const code = terminalKeyboardCode(input.key, input.code);
+    if (!code) return;
+    terminal.element?.dispatchEvent(new KeyboardEvent("keydown", {
+      altKey: input.altKey,
+      bubbles: true,
+      cancelable: true,
+      code,
+      ctrlKey,
+      key: input.key,
+      metaKey: input.metaKey,
+      shiftKey: input.shiftKey,
+    }));
+  };
+  terminal.attachCustomKeyEventHandler((event) => {
+    if (!virtualControlActive || event.ctrlKey || event.metaKey) return false;
+    if (terminalModifierOnlyKey(event.key)) return false;
+    sendKey({
+      altKey: event.altKey,
+      code: event.code,
+      key: event.key,
+      shiftKey: event.shiftKey,
+    });
+    return true;
+  });
   applyAdjustedMetrics();
   const dataSubscription = terminal.onData((data) => {
     const bytes = encoder.encode(data);
@@ -316,6 +367,8 @@ export async function createBrowserTerminal(
     get rows() {
       return terminal.rows;
     },
+    sendKey,
+    setVirtualControl,
     write(data, profile) {
       if (pendingCanvasRenders && profile) {
         pendingCanvasRenders.push(profile);

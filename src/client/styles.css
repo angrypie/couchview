@@ -837,6 +837,8 @@ textarea:focus-visible,
   overflow: hidden;
   padding: 6px max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom))
     max(6px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
   background: var(--terminal-background, #1e1e2e);
 }
 
@@ -853,6 +855,68 @@ textarea:focus-visible,
 .terminal-surface canvas {
   max-width: 100%;
   max-height: 100%;
+}
+
+.terminal-keyboard-bar {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .terminal-stage {
+    gap: 5px;
+  }
+
+  .terminal-keyboard-bar {
+    min-width: 0;
+    padding: 3px;
+    border: 1px solid #35404e;
+    border-radius: 9px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    overflow-x: auto;
+    background: rgb(16 21 28 / 96%);
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+  }
+
+  .terminal-keyboard-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .terminal-keyboard-key {
+    min-width: 42px;
+    min-height: 38px;
+    padding: 0 9px;
+    border: 1px solid #3b4655;
+    border-radius: 7px;
+    flex: 0 0 auto;
+    color: #d6deea;
+    background: #1a212b;
+    font: 750 12px/1 var(--code-font-family);
+    touch-action: manipulation;
+  }
+
+  .terminal-keyboard-key.symbol {
+    padding-inline: 0;
+    font-size: 18px;
+  }
+
+  .terminal-keyboard-key.shortcut {
+    color: #bfdbfe;
+  }
+
+  .terminal-keyboard-key.modifier.active {
+    border-color: color-mix(in srgb, var(--accent) 72%, #fff 12%);
+    color: #e0f2fe;
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px rgb(125 211 252 / 22%);
+  }
+
+  .terminal-keyboard-key:disabled {
+    opacity: 0.42;
+  }
 }
 
 .terminal-latency-overlay {

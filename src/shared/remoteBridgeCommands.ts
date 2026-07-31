@@ -34,3 +34,25 @@ export function remoteBridgeCodexCommand(
     `--repo ${shellQuote(repositoryRoot)}`,
   ].join(" ");
 }
+
+export function remoteBridgeTerminalCommand(
+  sshAlias: string,
+  repositoryRoot: string,
+): string {
+  return [
+    "couchview bridge terminal",
+    `--profile ${sshAlias}`,
+    `--repo ${shellQuote(repositoryRoot)}`,
+  ].join(" ");
+}
+
+export function remoteBridgeClaudeCommand(
+  sshAlias: string,
+  repositoryRoot: string,
+): string {
+  return [
+    "couchview bridge claude",
+    `--profile ${sshAlias}`,
+    `--repo ${shellQuote(repositoryRoot)}`,
+  ].join(" ");
+}

@@ -23,7 +23,9 @@ import type {
   RemoteBridgePairingResponse,
 } from "../shared/contracts.ts";
 import {
+  remoteBridgeClaudeCommand,
   remoteBridgeCodexCommand,
+  remoteBridgeTerminalCommand,
   remoteBridgeZedCommand,
   remoteBridgeZedUrl,
 } from "../shared/remoteBridgeCommands.ts";
@@ -278,6 +280,14 @@ export function RemoteBridgeSheet({
                       device.sshAlias,
                       repositoryRoot,
                     );
+                    const terminalCommand = remoteBridgeTerminalCommand(
+                      device.sshAlias,
+                      repositoryRoot,
+                    );
+                    const claudeCommand = remoteBridgeClaudeCommand(
+                      device.sshAlias,
+                      repositoryRoot,
+                    );
                     return (
                       <div className="remote-bridge-device" key={device.id}>
                         <Laptop className="remote-bridge-device-icon" size={18} />
@@ -336,6 +346,36 @@ export function RemoteBridgeSheet({
                             </button>
                           </div>
                           <pre className="remote-bridge-command">{codexCommand}</pre>
+                          <div className="remote-bridge-launch-heading">
+                            <strong>Terminal</strong>
+                            <button
+                              aria-label={`Copy terminal command for ${device.label}`}
+                              className="icon-button remote-bridge-copy"
+                              onClick={() => void copyText(terminalCommand)
+                                .then(() => onNotice("Terminal command copied"))
+                                .catch((nextError) => setError(messageOf(nextError)))}
+                              title="Copy terminal command"
+                              type="button"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                          <pre className="remote-bridge-command">{terminalCommand}</pre>
+                          <div className="remote-bridge-launch-heading">
+                            <strong>Claude Code Remote Control</strong>
+                            <button
+                              aria-label={`Copy Claude Code Remote Control command for ${device.label}`}
+                              className="icon-button remote-bridge-copy"
+                              onClick={() => void copyText(claudeCommand)
+                                .then(() => onNotice("Claude Code Remote Control command copied"))
+                                .catch((nextError) => setError(messageOf(nextError)))}
+                              title="Copy Claude Code Remote Control command"
+                              type="button"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                          <pre className="remote-bridge-command">{claudeCommand}</pre>
                         </div>
                       </div>
                     );

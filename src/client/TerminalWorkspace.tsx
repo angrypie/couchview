@@ -35,6 +35,7 @@ import {
   SAFE_TERMINAL_RENDERER_CONFIG,
   type TerminalRendererConfig,
 } from "./typographyPreferences.ts";
+import type { TerminalKeyInput } from "./terminalKeyboard.ts";
 import {
   TerminalWebRtcUpgrade,
   type TerminalTransportStatus,
@@ -139,6 +140,7 @@ export function TerminalWorkspace({
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const [rendererRetryNonce, setRendererRetryNonce] = useState(0);
   const [ending, setEnding] = useState(false);
+  const [virtualControlActive, setVirtualControlActive] = useState(false);
   const [latencyEnabled, setLatencyEnabled] = useState(
     terminalLatencyEnabled(window.location.search),
   );
@@ -233,6 +235,7 @@ export function TerminalWorkspace({
     // socket below. Move readiness back through false so the replacement
     // renderer can trigger a fresh terminal attachment when it becomes ready.
     setRendererReady(false);
+    setVirtualControlActive(false);
     setConnectionState("loading");
     setConnectionError(null);
     latencyTrackerRef.current?.reset();
@@ -250,6 +253,7 @@ export function TerminalWorkspace({
           sendTerminalControl({ type: "resize", cols, rows });
         }, 50);
       },
+      onVirtualControlChange: setVirtualControlActive,
     }).then((renderer) => {
       if (disposed) {
         renderer.dispose();
@@ -629,6 +633,12 @@ export function TerminalWorkspace({
     return () => window.cancelAnimationFrame(frame);
   }, [active, rendererGeneration, rendererReady]);
 
+  useEffect(() => {
+    if (active && connectionState === "connected") return;
+    rendererRef.current?.setVirtualControl(false);
+    setVirtualControlActive(false);
+  }, [active, connectionState]);
+
   const endSession = useCallback(async () => {
     if (!window.confirm(
       "End this persistent tmux session? Running programs and unsaved work will be terminated.",
@@ -709,7 +719,23 @@ export function TerminalWorkspace({
     setLatencyEnabled(nextEnabled);
   }, [latencyEnabled]);
 
+  const preserveTerminalFocus = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+  }, []);
+
+  const sendHelperKey = useCallback((input: TerminalKeyInput) => {
+    rendererRef.current?.sendKey(input);
+    rendererRef.current?.focus();
+  }, []);
+
+  const toggleVirtualControl = useCallback(() => {
+    const nextActive = !virtualControlActive;
+    rendererRef.current?.setVirtualControl(nextActive);
+    rendererRef.current?.focus();
+  }, [virtualControlActive]);
+
   const connectionLabel = `${stateLabel(connectionState)}${safeMode ? " · Safe Mode" : ""}`;
+  const keyboardHelpersDisabled = !rendererReady || connectionState !== "connected";
 
   return (
     <section
@@ -779,6 +805,104 @@ export function TerminalWorkspace({
       </header>
       <div className="terminal-stage">
         <div className="terminal-surface" ref={containerRef} />
+        <div
+          aria-label="Terminal keyboard shortcuts"
+          className="terminal-keyboard-bar"
+          role="toolbar"
+        >
+          <button
+            aria-label="Control modifier for next key"
+            aria-pressed={virtualControlActive}
+            className={`terminal-keyboard-key modifier${virtualControlActive ? " active" : ""}`}
+            disabled={keyboardHelpersDisabled}
+            onClick={toggleVirtualControl}
+            onPointerDown={preserveTerminalFocus}
+            title="Apply Ctrl to the next keyboard or helper key"
+            type="button"
+          >
+            Ctrl
+          </button>
+          <button
+            aria-label="Send Ctrl+C"
+            className="terminal-keyboard-key shortcut"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "c", code: "KeyC", ctrlKey: true })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            ^C
+          </button>
+          <button
+            aria-label="Send Ctrl+L"
+            className="terminal-keyboard-key shortcut"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "l", code: "KeyL", ctrlKey: true })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            ^L
+          </button>
+          <button
+            aria-label="Send Escape"
+            className="terminal-keyboard-key"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "Escape", code: "Escape" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            Esc
+          </button>
+          <button
+            aria-label="Send Tab"
+            className="terminal-keyboard-key"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "Tab", code: "Tab" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            Tab
+          </button>
+          <button
+            aria-label="Send Arrow Left"
+            className="terminal-keyboard-key symbol"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "ArrowLeft", code: "ArrowLeft" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            ←
+          </button>
+          <button
+            aria-label="Send Arrow Up"
+            className="terminal-keyboard-key symbol"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "ArrowUp", code: "ArrowUp" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            ↑
+          </button>
+          <button
+            aria-label="Send Arrow Down"
+            className="terminal-keyboard-key symbol"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "ArrowDown", code: "ArrowDown" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            ↓
+          </button>
+          <button
+            aria-label="Send Arrow Right"
+            className="terminal-keyboard-key symbol"
+            disabled={keyboardHelpersDisabled}
+            onClick={() => sendHelperKey({ key: "ArrowRight", code: "ArrowRight" })}
+            onPointerDown={preserveTerminalFocus}
+            type="button"
+          >
+            →
+          </button>
+        </div>
         {latencyEnabled && (
           <div
             aria-label="Terminal latency diagnostics"

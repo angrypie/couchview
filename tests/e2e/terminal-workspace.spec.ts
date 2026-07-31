@@ -57,6 +57,7 @@ test.describe("desktop tmux terminal", () => {
 
     const workspace = page.getByRole("region", { name: "tmux terminal" });
     await expect(workspace).toBeVisible();
+    await expect(workspace.locator(".terminal-keyboard-bar")).toBeHidden();
     await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
       timeout: 15_000,
     });

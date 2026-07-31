@@ -28,7 +28,9 @@ import {
   type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
 import {
+  remoteBridgeClaudeCommand as buildRemoteBridgeClaudeCommand,
   remoteBridgeCodexCommand as buildRemoteBridgeCodexCommand,
+  remoteBridgeTerminalCommand as buildRemoteBridgeTerminalCommand,
   remoteBridgeZedUrl as buildRemoteBridgeZedUrl,
 } from "../shared/remoteBridgeCommands.ts";
 import {
@@ -214,6 +216,37 @@ export async function readRemoteBridgeConfig(
   };
 }
 
+export async function resolveRemoteBridgeProfile(
+  selector: string | null | undefined,
+  paths = resolveRemoteBridgePaths(),
+): Promise<RemoteBridgeProfile> {
+  const profiles = (await readRemoteBridgeConfig(paths)).profiles;
+  if (selector) {
+    const selected = profiles.find((profile) =>
+      profile.id === selector || profile.sshAlias === selector
+    );
+    if (selected) return selected;
+    const available = profiles.map((profile) => profile.sshAlias).sort();
+    throw new Error(
+      available.length === 0
+        ? "No paired Couchview bridge profiles are available"
+        : `Couchview bridge profile '${selector}' was not found. Available SSH hosts: ${available.join(", ")}`,
+    );
+  }
+  if (profiles.length === 1) return profiles[0]!;
+  if (profiles.length === 0) {
+    throw new Error(
+      "No paired Couchview bridge profiles are available; pair this computer from Couchview first",
+    );
+  }
+  throw new Error(
+    `More than one Couchview bridge profile is available; choose one with --profile (${profiles
+      .map((profile) => profile.sshAlias)
+      .sort()
+      .join(", ")})`,
+  );
+}
+
 async function writePrivateFile(filePath: string, contents: string): Promise<void> {
   const temporary = `${filePath}.tmp-${randomUUID()}`;
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
@@ -308,6 +341,20 @@ export function remoteBridgeCodexCommand(
   repositoryRoot = profile.repositoryRoot,
 ): string {
   return buildRemoteBridgeCodexCommand(profile.sshAlias, repositoryRoot);
+}
+
+export function remoteBridgeTerminalCommand(
+  profile: RemoteBridgeProfile,
+  repositoryRoot = profile.repositoryRoot,
+): string {
+  return buildRemoteBridgeTerminalCommand(profile.sshAlias, repositoryRoot);
+}
+
+export function remoteBridgeClaudeCommand(
+  profile: RemoteBridgeProfile,
+  repositoryRoot = profile.repositoryRoot,
+): string {
+  return buildRemoteBridgeClaudeCommand(profile.sshAlias, repositoryRoot);
 }
 
 function defaultExecutableCommand(): string {

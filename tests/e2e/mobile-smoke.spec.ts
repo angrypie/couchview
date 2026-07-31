@@ -3,6 +3,10 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
 
+interface TerminalFixtureState {
+  inputs: string[];
+}
+
 async function openFixture(page: Page) {
   await page.goto("/");
   await expect(page).toHaveTitle("Couchview");
@@ -80,6 +84,46 @@ test.describe("mobile fixture review", () => {
     await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("diff review");
     await palette.getByText("Go to diff review", { exact: true }).click();
     await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+  });
+
+  test("uses mobile terminal helper keys and a one-shot Ctrl modifier", async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "Terminal keyboard helpers need one representative touch-browser pass.",
+    );
+    await openFixture(page);
+    await page.getByRole("button", { name: "Open tmux terminal" }).click();
+
+    const terminal = page.getByRole("region", { name: "tmux terminal" });
+    await expect(terminal.getByText("Connected", { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    const helpers = terminal.getByRole("toolbar", {
+      name: "Terminal keyboard shortcuts",
+    });
+    await expect(helpers).toBeVisible();
+    const control = helpers.getByRole("button", {
+      name: "Control modifier for next key",
+    });
+    const state = async () => (await (
+      await request.get("/api/e2e/terminal")
+    ).json()) as TerminalFixtureState;
+
+    await control.click();
+    await expect(control).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("l");
+    await expect(control).toHaveAttribute("aria-pressed", "false");
+    await expect.poll(async () => (await state()).inputs.join(""))
+      .toContain("\x0c");
+
+    await helpers.getByRole("button", { name: "Send Ctrl+C" }).click();
+    await helpers.getByRole("button", { name: "Send Escape" }).click();
+    await helpers.getByRole("button", { name: "Send Arrow Up" }).click();
+    await expect.poll(async () => (await state()).inputs.join(""))
+      .toContain("\x03\x1b\x1b[A");
   });
 
   test("keeps the selected host profile browser-specific", async ({
