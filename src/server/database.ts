@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -9,8 +10,17 @@ import type {
   ReviewComment,
   ReviewRecord,
 } from "../shared/contracts.ts";
+import {
+  createDefaultSettingsProfileData,
+  DEFAULT_SETTINGS_PROFILE_ID,
+  DEFAULT_SETTINGS_PROFILE_NAME,
+  normalizeSettingsProfileName,
+  parseSettingsProfileData,
+  type SettingsProfile,
+  type SettingsProfileData,
+} from "../shared/settings.ts";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 interface RepositoryRow {
   id: string;
@@ -76,6 +86,15 @@ interface RemoteBridgeDeviceRow {
   last_used_at: string | null;
 }
 
+interface SettingsProfileRow {
+  id: string;
+  name: string;
+  data_json: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StoredRepository {
   id: string;
   name: string;
@@ -109,6 +128,11 @@ export interface StoredReviewState {
   reviews: ReviewRecord[];
   comments: ReviewComment[];
 }
+
+export type UpdateSettingsProfileResult =
+  | { status: "updated"; profile: SettingsProfile }
+  | { status: "missing" }
+  | { status: "stale"; profile: SettingsProfile };
 
 export function resolveStateDatabasePath(
   environment: NodeJS.ProcessEnv = process.env,
@@ -186,6 +210,23 @@ function remoteBridgeDeviceFromRow(row: RemoteBridgeDeviceRow): RemoteBridgeDevi
   };
 }
 
+function settingsProfileFromRow(row: SettingsProfileRow): SettingsProfile {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.data_json);
+  } catch {
+    throw new Error(`Settings profile ${row.id} contains invalid JSON`);
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    data: parseSettingsProfileData(parsed),
+    revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class StateDatabase {
   readonly filePath: string;
   private readonly database: Database;
@@ -252,6 +293,13 @@ export class StateDatabase {
       this.database.run(
         "INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0)",
       );
+      this.createSettingsProfilesTable();
+      this.ensureDefaultSettingsProfile();
+      return;
+    }
+
+    if (version === 3) {
+      this.migrateVersionThreeToFour();
       return;
     }
 
@@ -282,6 +330,7 @@ export class StateDatabase {
           PRAGMA user_version = 3;
         `);
       })();
+      this.migrateVersionThreeToFour();
       return;
     }
 
@@ -303,6 +352,7 @@ export class StateDatabase {
           PRAGMA user_version = 3;
         `);
       })();
+      this.migrateVersionThreeToFour();
       return;
     }
 
@@ -376,11 +426,159 @@ export class StateDatabase {
         );
         CREATE INDEX IF NOT EXISTS remote_bridge_devices_created
           ON remote_bridge_devices(created_at);
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 3);
+        CREATE TABLE IF NOT EXISTS settings_profiles (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          data_json TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision >= 1),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 4);
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 3;
+        PRAGMA user_version = 4;
+      `);
+      this.ensureDefaultSettingsProfile();
+    })();
+  }
+
+  private createSettingsProfilesTable(): void {
+    this.database.run(`
+      CREATE TABLE IF NOT EXISTS settings_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        data_json TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+  }
+
+  private ensureDefaultSettingsProfile(): void {
+    const now = new Date().toISOString();
+    this.database.query<unknown, {
+      id: string;
+      name: string;
+      dataJson: string;
+      now: string;
+    }>(`
+      INSERT OR IGNORE INTO settings_profiles(
+        id, name, data_json, revision, created_at, updated_at
+      ) VALUES ($id, $name, $dataJson, 1, $now, $now)
+    `).run({
+      id: DEFAULT_SETTINGS_PROFILE_ID,
+      name: DEFAULT_SETTINGS_PROFILE_NAME,
+      dataJson: JSON.stringify(createDefaultSettingsProfileData()),
+      now,
+    });
+  }
+
+  private migrateVersionThreeToFour(): void {
+    this.database.transaction(() => {
+      this.createSettingsProfilesTable();
+      this.ensureDefaultSettingsProfile();
+      this.database.run(`
+        UPDATE metadata SET value = 4 WHERE key = 'schema_version';
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 4);
+        PRAGMA user_version = 4;
       `);
     })();
+  }
+
+  settingsProfiles(): SettingsProfile[] {
+    return this.database.query<SettingsProfileRow, []>(`
+      SELECT id, name, data_json, revision, created_at, updated_at
+      FROM settings_profiles
+      ORDER BY CASE WHEN id = 'default' THEN 0 ELSE 1 END,
+        name COLLATE NOCASE, created_at, id
+    `).all().map(settingsProfileFromRow);
+  }
+
+  settingsProfile(id: string): SettingsProfile | null {
+    const row = this.database.query<SettingsProfileRow, { id: string }>(`
+      SELECT id, name, data_json, revision, created_at, updated_at
+      FROM settings_profiles WHERE id = $id
+    `).get({ id });
+    return row ? settingsProfileFromRow(row) : null;
+  }
+
+  createSettingsProfile(nameValue: unknown, sourceProfileId?: string): SettingsProfile {
+    const name = normalizeSettingsProfileName(nameValue);
+    const source = sourceProfileId
+      ? this.settingsProfile(sourceProfileId)
+      : null;
+    if (sourceProfileId && !source) {
+      throw new Error("Source settings profile does not exist");
+    }
+    const data = source?.data ?? createDefaultSettingsProfileData();
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    this.database.query<unknown, {
+      id: string;
+      name: string;
+      dataJson: string;
+      now: string;
+    }>(`
+      INSERT INTO settings_profiles(
+        id, name, data_json, revision, created_at, updated_at
+      ) VALUES ($id, $name, $dataJson, 1, $now, $now)
+    `).run({ id, name, dataJson: JSON.stringify(data), now });
+    const profile = this.settingsProfile(id);
+    if (!profile) throw new Error("Could not persist settings profile");
+    return profile;
+  }
+
+  updateSettingsProfile(
+    id: string,
+    nameValue: unknown,
+    dataValue: SettingsProfileData,
+    expectedRevision: number,
+  ): UpdateSettingsProfileResult {
+    const current = this.settingsProfile(id);
+    if (!current) return { status: "missing" };
+    if (current.revision !== expectedRevision) {
+      return { status: "stale", profile: current };
+    }
+    const name = id === DEFAULT_SETTINGS_PROFILE_ID
+      ? DEFAULT_SETTINGS_PROFILE_NAME
+      : normalizeSettingsProfileName(nameValue);
+    const data = parseSettingsProfileData(dataValue);
+    const updatedAt = new Date().toISOString();
+    const result = this.database.query<unknown, {
+      id: string;
+      name: string;
+      dataJson: string;
+      expectedRevision: number;
+      updatedAt: string;
+    }>(`
+      UPDATE settings_profiles
+      SET name = $name,
+        data_json = $dataJson,
+        revision = revision + 1,
+        updated_at = $updatedAt
+      WHERE id = $id AND revision = $expectedRevision
+    `).run({
+      id,
+      name,
+      dataJson: JSON.stringify(data),
+      expectedRevision,
+      updatedAt,
+    });
+    if (result.changes === 0) {
+      const latest = this.settingsProfile(id);
+      return latest ? { status: "stale", profile: latest } : { status: "missing" };
+    }
+    const profile = this.settingsProfile(id);
+    if (!profile) throw new Error("Could not reload updated settings profile");
+    return { status: "updated", profile };
+  }
+
+  deleteSettingsProfile(id: string): boolean {
+    if (id === DEFAULT_SETTINGS_PROFILE_ID) return false;
+    return this.database.query<unknown, { id: string }>(
+      "DELETE FROM settings_profiles WHERE id = $id",
+    ).run({ id }).changes > 0;
   }
 
   registerRepository(

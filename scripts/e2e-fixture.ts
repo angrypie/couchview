@@ -21,12 +21,19 @@ import {
 	type ReviewStateResponse,
 	type RepositoryCatalogEntry,
 	type SetReviewRequest,
+	type SettingsProfile,
+	type SettingsProfileData,
 	type StageFileRequest,
 	type StageFilesRequest,
 	type TerminalAttachmentRequest,
 	TERMINAL_ENDED_CLOSE_CODE,
 	TERMINAL_P2P_FAILED_CLOSE_CODE,
 } from "../src/shared/contracts.ts";
+import {
+	createDefaultSettingsProfileData,
+	DEFAULT_SETTINGS_PROFILE_ID,
+	DEFAULT_SETTINGS_PROFILE_NAME,
+} from "../src/shared/settings.ts";
 
 const host = process.env.E2E_HOST || "127.0.0.1";
 const port = Number(process.env.E2E_PORT || 4174);
@@ -34,6 +41,16 @@ const distRoot = resolve(import.meta.dir, "..", "dist");
 const csrfToken = "e2e-csrf-token";
 let operationRevision = "fixture-operation-1";
 let packageRuns: PackageRunSummary[] = [];
+let settingsProfileCounter = 0;
+const defaultSettingsProfile = (): SettingsProfile => ({
+	id: DEFAULT_SETTINGS_PROFILE_ID,
+	name: DEFAULT_SETTINGS_PROFILE_NAME,
+	data: createDefaultSettingsProfileData(),
+	revision: 1,
+	createdAt: "2026-07-31T00:00:00.000Z",
+	updatedAt: "2026-07-31T00:00:00.000Z",
+});
+let settingsProfiles: SettingsProfile[] = [defaultSettingsProfile()];
 let terminalRunning = false;
 let terminalAttachmentCount = 0;
 let terminalSocketConnections = 0;
@@ -710,7 +727,11 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 						reason: "Native remote development is unavailable in the browser test fixture.",
 						p2pEnabled: false,
 					},
+					settingsProfiles,
 				} satisfies BootstrapResponse);
+		}
+		if (url.pathname === API_ROUTES.settingsProfiles && request.method === "GET") {
+			return json({ profiles: settingsProfiles });
 		}
 
 		if (url.pathname === "/api/repositories" && request.method === "GET") {
@@ -896,6 +917,8 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			reviews.splice(0);
 			comments.splice(0);
 			packageRuns = [];
+			settingsProfileCounter = 0;
+			settingsProfiles = [defaultSettingsProfile()];
 			operationRevision = "fixture-operation-1";
 			closeTerminalP2p();
 			terminalController?.close(1000, "fixture_reset");
@@ -909,6 +932,76 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			terminalResizes.splice(0);
 			terminalTickets.clear();
 			return json({ reset: true });
+		}
+
+		if (url.pathname === API_ROUTES.settingsProfiles && request.method === "POST") {
+			const input = (await request.json()) as { name: string; sourceProfileId?: string };
+			const source = input.sourceProfileId
+				? settingsProfiles.find((profile) => profile.id === input.sourceProfileId)
+				: undefined;
+			if (input.sourceProfileId && !source) {
+				return json({
+					error: { code: "settings_profile_not_found", message: "Fixture profile not found" },
+				}, 404);
+			}
+			const now = new Date().toISOString();
+			const profile: SettingsProfile = {
+				id: `fixture-settings-${++settingsProfileCounter}`,
+				name: input.name.trim(),
+				data: structuredClone(source?.data ?? createDefaultSettingsProfileData()),
+				revision: 1,
+				createdAt: now,
+				updatedAt: now,
+			};
+			settingsProfiles = [...settingsProfiles, profile];
+			return json({ profile }, 201);
+		}
+
+		const settingsProfileRoute = /^\/api\/settings\/profiles\/([^/]+)$/.exec(url.pathname);
+		if (settingsProfileRoute && request.method === "PUT") {
+			const profileId = decodeURIComponent(settingsProfileRoute[1] || "");
+			const input = (await request.json()) as {
+				name: string;
+				data: SettingsProfileData;
+				expectedRevision: number;
+			};
+			const previous = settingsProfiles.find((profile) => profile.id === profileId);
+			if (!previous) {
+				return json({
+					error: { code: "settings_profile_not_found", message: "Fixture profile not found" },
+				}, 404);
+			}
+			if (previous.revision !== input.expectedRevision) {
+				return json({
+					error: {
+						code: "stale_settings_profile",
+						message: "Fixture profile changed in another browser",
+					},
+				}, 409);
+			}
+			const profile: SettingsProfile = {
+				...previous,
+				name: profileId === DEFAULT_SETTINGS_PROFILE_ID
+					? DEFAULT_SETTINGS_PROFILE_NAME
+					: input.name.trim(),
+				data: structuredClone(input.data),
+				revision: previous.revision + 1,
+				updatedAt: new Date().toISOString(),
+			};
+			settingsProfiles = settingsProfiles.map((item) =>
+				item.id === profileId ? profile : item
+			);
+			return json({ profile });
+		}
+		if (settingsProfileRoute && request.method === "DELETE") {
+			const profileId = decodeURIComponent(settingsProfileRoute[1] || "");
+			if (profileId === DEFAULT_SETTINGS_PROFILE_ID) {
+				return json({
+					error: { code: "default_profile_required", message: "Default is required" },
+				}, 409);
+			}
+			settingsProfiles = settingsProfiles.filter((profile) => profile.id !== profileId);
+			return new Response(null, { status: 204, headers: securityHeaders });
 		}
 
 		if (url.pathname === "/api/e2e/terminal/p2p/fail" && request.method === "POST") {

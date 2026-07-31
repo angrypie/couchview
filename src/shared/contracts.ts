@@ -1,3 +1,23 @@
+import type {
+  SettingsProfile,
+} from "./settings.ts";
+
+export type {
+  CommandId,
+  CreateSettingsProfileRequest,
+  DisplayPreferences,
+  KeyboardLayout,
+  KeyboardPreferences,
+  SettingsProfile,
+  SettingsProfileData,
+  SettingsProfileResponse,
+  SettingsProfilesResponse,
+  ShortcutModifier,
+  ShortcutSequence,
+  ShortcutStroke,
+  UpdateSettingsProfileRequest,
+} from "./settings.ts";
+
 const repositoryApiPath = (repositoryId: string) =>
   `/api/repositories/${encodeURIComponent(repositoryId)}`;
 const repositoryFilesApiPath = (repositoryId: string) =>
@@ -10,6 +30,9 @@ export const API_ROUTES = {
   instance: "/api/instance",
   restart: "/api/restart",
   repositories: "/api/repositories",
+  settingsProfiles: "/api/settings/profiles",
+  settingsProfile: (profileId: string) =>
+    `/api/settings/profiles/${encodeURIComponent(profileId)}`,
   controlRepositories: "/api/control/repositories",
   controlRestart: "/api/control/restart",
   repository: repositoryApiPath,
@@ -165,6 +188,7 @@ export interface BootstrapResponse {
   repositories: RepositoryCatalogEntry[];
   defaultRepositoryId: string | null;
   catalogRevision: number;
+  settingsProfiles: SettingsProfile[];
   restart: RestartCapability;
   commitMessage: CommitMessageCapability;
   codex: CodexCapability;

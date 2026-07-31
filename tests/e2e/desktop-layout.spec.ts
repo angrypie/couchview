@@ -19,6 +19,28 @@ test.describe("desktop review layout", () => {
     expect(response.ok()).toBe(true);
   });
 
+  test("opens the command palette by keyboard and executes a filtered command", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "Couchview command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette.getByText("Open command palette")).toHaveCount(0);
+    await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("package");
+    await palette.getByText("Open package commands", { exact: true }).click();
+    await expect(palette).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Package commands" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Open command palette" }).click();
+    await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("settings");
+    await palette.getByText("Go to settings", { exact: true }).click();
+    await expect(page.getByRole("region", { name: "Settings" })).toBeVisible();
+    await expect(page).toHaveURL(/\/settings/);
+  });
+
   test("keeps file controls visible while the changed-files list scrolls", async ({
     page,
   }) => {

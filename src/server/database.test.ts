@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { ReviewComment, ReviewRecord } from "../shared/contracts.ts";
+import {
+  createDefaultSettingsProfileData,
+  DEFAULT_SETTINGS_PROFILE_ID,
+} from "../shared/settings.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 
 const temporaryDirectories: string[] = [];
@@ -110,7 +114,7 @@ describe("global SQLite state", () => {
       "wal",
     );
     expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-      3,
+      4,
     );
     expect(
       raw
@@ -118,7 +122,7 @@ describe("global SQLite state", () => {
           "SELECT value FROM metadata WHERE key = 'schema_version'",
         )
         .get()?.value,
-    ).toBe(3);
+    ).toBe(4);
     raw.close();
 
     const reopened = await StateDatabase.open(filePath);
@@ -127,6 +131,9 @@ describe("global SQLite state", () => {
       reviews: [review("alpha")],
       comments: [comment("comment-one", "alpha")],
     });
+    expect(reopened.settingsProfiles()).toEqual([
+      expect.objectContaining({ id: DEFAULT_SETTINGS_PROFILE_ID, name: "Default", revision: 1 }),
+    ]);
     reopened.close();
   });
 
@@ -175,10 +182,10 @@ describe("global SQLite state", () => {
     }
     const inspected = new Database(filePath, { readonly: true, strict: true });
     expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version)
-      .toBe(3);
+      .toBe(4);
     expect(inspected.query<{ value: number }, []>(
       "SELECT value FROM metadata WHERE key = 'schema_version'",
-    ).get()?.value).toBe(3);
+    ).get()?.value).toBe(4);
     inspected.close();
   });
 
@@ -244,11 +251,146 @@ describe("global SQLite state", () => {
     const inspected = new Database(filePath, { readonly: true, strict: true });
     expect(inspected.query<{ user_version: number }, []>(
       "PRAGMA user_version",
-    ).get()?.user_version).toBe(3);
+    ).get()?.user_version).toBe(4);
     expect(inspected.query<{ table: string }, []>(
       "PRAGMA foreign_key_list(remote_bridge_devices)",
     ).all()).toEqual([]);
     inspected.close();
+  });
+
+  test("migrates version-three state and inserts the protected Default profile", async () => {
+    const filePath = await databasePath();
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const raw = new Database(filePath, { create: true, strict: true });
+    raw.run(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL UNIQUE,
+        git_directory TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        state_revision INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE remote_bridge_devices (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        ssh_alias TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+      );
+      INSERT INTO metadata(key, value) VALUES ('schema_version', 3);
+      INSERT INTO metadata(key, value) VALUES ('catalog_revision', 8);
+      INSERT INTO repositories(
+        id, name, root, git_directory, added_at, updated_at, state_revision
+      ) VALUES (
+        'repo-three', 'three', '/projects/three', '/projects/three/.git',
+        '2026-07-30T10:00:00.000Z', '2026-07-30T10:00:00.000Z', 2
+      );
+      INSERT INTO remote_bridge_devices(
+        id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+      ) VALUES (
+        'device-three', 'repo-three', 'Studio', 'couchview-three-device',
+        'hashed-three', '2026-07-30T10:01:00.000Z', NULL
+      );
+      PRAGMA user_version = 3;
+    `);
+    raw.close();
+
+    const migrated = await StateDatabase.open(filePath);
+    try {
+      expect(migrated.repository("repo-three")).toMatchObject({ name: "three" });
+      expect(migrated.remoteBridgeDevices()).toEqual([
+        expect.objectContaining({ id: "device-three", repositoryId: "repo-three" }),
+      ]);
+      expect(migrated.catalogRevision()).toBe(8);
+      expect(migrated.settingsProfiles()).toEqual([
+        expect.objectContaining({
+          id: DEFAULT_SETTINGS_PROFILE_ID,
+          name: "Default",
+          data: createDefaultSettingsProfileData(),
+          revision: 1,
+        }),
+      ]);
+    } finally {
+      migrated.close();
+    }
+    const inspected = new Database(filePath, { readonly: true, strict: true });
+    expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version)
+      .toBe(4);
+    inspected.close();
+  });
+
+  test("creates, duplicates, updates, resets, and deletes host-wide profiles", async () => {
+    const filePath = await databasePath();
+    const database = await StateDatabase.open(filePath);
+    const defaults = createDefaultSettingsProfileData();
+    const editedDefault = structuredClone(defaults);
+    editedDefault.typography.diff.fontSize = 14;
+    try {
+      const initial = database.settingsProfiles();
+      expect(initial).toHaveLength(1);
+      expect(database.deleteSettingsProfile(DEFAULT_SETTINGS_PROFILE_ID)).toBe(false);
+
+      const defaultUpdate = database.updateSettingsProfile(
+        DEFAULT_SETTINGS_PROFILE_ID,
+        "Renamed Default",
+        editedDefault,
+        1,
+      );
+      expect(defaultUpdate).toMatchObject({
+        status: "updated",
+        profile: { name: "Default", revision: 2, data: editedDefault },
+      });
+      expect(database.updateSettingsProfile(
+        DEFAULT_SETTINGS_PROFILE_ID,
+        "Default",
+        defaults,
+        1,
+      )).toMatchObject({ status: "stale", profile: { revision: 2 } });
+
+      const duplicate = database.createSettingsProfile("  Review room  ", DEFAULT_SETTINGS_PROFILE_ID);
+      expect(duplicate).toMatchObject({
+        name: "Review room",
+        revision: 1,
+        data: editedDefault,
+      });
+      expect(() => database.createSettingsProfile("review ROOM")).toThrow("UNIQUE");
+      expect(() => database.createSettingsProfile("Default")).toThrow("UNIQUE");
+      expect(() => database.createSettingsProfile("", duplicate.id)).toThrow("between 1 and 64");
+      expect(() => database.createSettingsProfile("Missing source", "missing"))
+        .toThrow("does not exist");
+
+      const reset = database.updateSettingsProfile(
+        duplicate.id,
+        "Desk",
+        defaults,
+        duplicate.revision,
+      );
+      expect(reset).toMatchObject({
+        status: "updated",
+        profile: { name: "Desk", revision: 2, data: defaults },
+      });
+      expect(database.deleteSettingsProfile(duplicate.id)).toBe(true);
+      expect(database.deleteSettingsProfile(duplicate.id)).toBe(false);
+    } finally {
+      database.close();
+    }
+
+    const reopened = await StateDatabase.open(filePath);
+    try {
+      expect(reopened.settingsProfile(DEFAULT_SETTINGS_PROFILE_ID)).toMatchObject({
+        name: "Default",
+        revision: 2,
+        data: editedDefault,
+      });
+      expect(reopened.settingsProfiles()).toHaveLength(1);
+    } finally {
+      reopened.close();
+    }
   });
 
   test("isolates repositories across concurrent connections and cascades Forget", async () => {

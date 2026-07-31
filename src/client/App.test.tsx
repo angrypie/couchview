@@ -5,7 +5,13 @@ import type {
   FileDiff,
   PackageRunSummary,
   ReviewComment,
+  SettingsProfile,
 } from "../shared/contracts.ts";
+import {
+  createDefaultSettingsProfileData,
+  DEFAULT_SETTINGS_PROFILE_ID,
+  DEFAULT_SETTINGS_PROFILE_NAME,
+} from "../shared/settings.ts";
 import {
   FakeTerminalWebSocket,
   previewRendererState,
@@ -17,8 +23,6 @@ import {
 } from "./terminalTestFakes.ts";
 import {
   DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
-  TYPOGRAPHY_STORAGE_KEY,
-  type TypographyPreferences,
 } from "./typographyPreferences.ts";
 
 let pwaNeedRefresh = false;
@@ -451,6 +455,8 @@ describe("Couchview app", () => {
   let terminalAvailable = false;
   let remoteBridgeAvailable = false;
   let remoteBridgeDevices: Array<Record<string, unknown>> = [];
+  let settingsProfiles: SettingsProfile[] = [];
+  let staleNextSettingsSave = false;
   let bootstrapFailureStatus: number | null = null;
 
   beforeEach(() => {
@@ -478,6 +484,15 @@ describe("Couchview app", () => {
     terminalAvailable = false;
     remoteBridgeAvailable = false;
     remoteBridgeDevices = [];
+    settingsProfiles = [{
+      id: DEFAULT_SETTINGS_PROFILE_ID,
+      name: DEFAULT_SETTINGS_PROFILE_NAME,
+      data: createDefaultSettingsProfileData(),
+      revision: 1,
+      createdAt: "2026-07-31T00:00:00.000Z",
+      updatedAt: "2026-07-31T00:00:00.000Z",
+    }];
+    staleNextSettingsSave = false;
     bootstrapFailureStatus = null;
     pwaNeedRefresh = false;
     pwaUpdateCalls = 0;
@@ -522,6 +537,14 @@ describe("Couchview app", () => {
     Object.defineProperty(window, "confirm", {
       configurable: true,
       value: () => true,
+    });
+    Object.defineProperty(window, "alert", {
+      configurable: true,
+      value: () => undefined,
+    });
+    Object.defineProperty(window, "prompt", {
+      configurable: true,
+      value: () => null,
     });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -581,7 +604,75 @@ describe("Couchview app", () => {
             reason: remoteBridgeAvailable ? null : "Native IDE bridge is disabled in this test.",
             p2pEnabled: remoteBridgeAvailable,
           },
+          settingsProfiles,
         });
+      }
+      if (url.pathname === "/api/settings/profiles" && method === "GET") {
+        return Response.json({ profiles: settingsProfiles });
+      }
+      if (url.pathname === "/api/settings/profiles" && method === "POST") {
+        const input = body as { name: string; sourceProfileId?: string };
+        const source = input.sourceProfileId
+          ? settingsProfiles.find((profile) => profile.id === input.sourceProfileId)
+          : undefined;
+        const profile: SettingsProfile = {
+          id: `profile-${settingsProfiles.length}`,
+          name: input.name,
+          data: structuredClone(source?.data ?? createDefaultSettingsProfileData()),
+          revision: 1,
+          createdAt: "2026-07-31T00:01:00.000Z",
+          updatedAt: "2026-07-31T00:01:00.000Z",
+        };
+        settingsProfiles = [...settingsProfiles, profile];
+        return Response.json({ profile }, { status: 201 });
+      }
+      const settingsProfileRoute = /^\/api\/settings\/profiles\/([^/]+)$/.exec(url.pathname);
+      if (settingsProfileRoute && method === "PUT") {
+        const profileId = decodeURIComponent(settingsProfileRoute[1]!);
+        const input = body as {
+          name: string;
+          data: SettingsProfile["data"];
+          expectedRevision: number;
+        };
+        const previous = settingsProfiles.find((profile) => profile.id === profileId)!;
+        if (staleNextSettingsSave) {
+          staleNextSettingsSave = false;
+          settingsProfiles = settingsProfiles.map((item) => item.id === profileId
+            ? {
+                ...item,
+                revision: item.revision + 1,
+                updatedAt: "2026-07-31T00:01:30.000Z",
+              }
+            : item);
+          return Response.json({
+            error: {
+              code: "stale_settings_profile",
+              message: "The settings profile changed on another client.",
+            },
+          }, { status: 409 });
+        }
+        if (previous.revision !== input.expectedRevision) {
+          return Response.json({
+            error: {
+              code: "stale_settings_profile",
+              message: "The settings profile changed on another client.",
+            },
+          }, { status: 409 });
+        }
+        const profile: SettingsProfile = {
+          ...previous,
+          name: input.name,
+          data: structuredClone(input.data),
+          revision: previous.revision + 1,
+          updatedAt: "2026-07-31T00:02:00.000Z",
+        };
+        settingsProfiles = settingsProfiles.map((item) => item.id === profileId ? profile : item);
+        return Response.json({ profile });
+      }
+      if (settingsProfileRoute && method === "DELETE") {
+        const profileId = decodeURIComponent(settingsProfileRoute[1]!);
+        settingsProfiles = settingsProfiles.filter((profile) => profile.id !== profileId);
+        return new Response(null, { status: 204 });
       }
       if (url.pathname === "/api/restart" && method === "POST") {
         return Response.json(
@@ -971,10 +1062,9 @@ describe("Couchview app", () => {
     expect(screen.getByText("11px")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
     expect(screen.getByText("12px")).toBeTruthy();
-    expect(
-      (JSON.parse(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!) as TypographyPreferences)
-        .diff.fontSize,
-    ).toBe(12);
+    await waitFor(() => expect(
+      settingsProfiles[0]?.data.typography.diff.fontSize,
+    ).toBe(12));
 
     fireEvent.click(screen.getByRole("button", { name: /Review \+ next/ }));
     await waitFor(() => expect(screen.getByText("src/second.ts")).toBeTruthy());
@@ -1088,40 +1178,38 @@ describe("Couchview app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
     const settings = screen.getByRole("region", { name: "Settings" });
-    const diffCard = within(settings)
-      .getByRole("heading", { name: "Diff view" })
-      .closest("section")!;
-    const terminalCard = within(settings)
-      .getByRole("heading", { name: "Terminal" })
+    const appearanceCard = within(settings)
+      .getByRole("heading", { name: "Appearance" })
       .closest("section")!;
     await waitFor(() => expect(previewRendererState.calls).toBe(1));
-    expect(within(terminalCard).getByTestId("terminal-typography-preview")
+    expect(within(appearanceCard).getByTestId("terminal-typography-preview")
       .getAttribute("data-renderer")).toBe("ghostty-web");
-    expect(within(terminalCard).getByTestId("terminal-typography-preview")
+    expect(within(appearanceCard).getByTestId("terminal-typography-preview")
       .querySelector("canvas")).toBeTruthy();
-    fireEvent.change(within(diffCard).getByLabelText("Line height adjustment"), {
+    fireEvent.change(within(appearanceCard).getByLabelText("Line height adjustment"), {
       target: { value: "3.5" },
     });
-    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+    const fontSizes = within(appearanceCard).getAllByLabelText("Font size");
+    fireEvent.change(fontSizes[1]!, {
       target: { value: "16" },
     });
-    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+    fireEvent.change(fontSizes[1]!, {
       target: { value: "17" },
     });
-    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+    fireEvent.change(fontSizes[1]!, {
       target: { value: "18" },
     });
     await waitFor(() => expect(rendererState.calls).toBe(1));
     expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
-    const applyTerminal = within(terminalCard).getByRole("button", {
-      name: "Apply terminal changes",
+    const save = within(settings).getByRole("button", {
+      name: "Save changes",
     }) as HTMLButtonElement;
-    expect(applyTerminal.disabled).toBe(false);
+    expect(save.disabled).toBe(false);
 
-    fireEvent.click(applyTerminal);
+    fireEvent.click(save);
     await waitFor(() => expect(rendererState.calls).toBe(2));
     await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(2));
-    expect(applyTerminal.disabled).toBe(true);
+    await waitFor(() => expect(save.disabled).toBe(true));
 
     fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
@@ -1135,14 +1223,214 @@ describe("Couchview app", () => {
     window.history.replaceState(null, "", "/settings?repo=repo");
     render(<App />);
 
-    const settings = screen.getByRole("region", { name: "Settings" });
+    const settings = await screen.findByRole("region", { name: "Settings" });
     expect(window.location.pathname).toBe("/settings");
-    expect(within(settings).getByRole("heading", { name: "Typography" })).toBeTruthy();
+    expect(within(settings).getByRole("heading", { name: "Profiles" })).toBeTruthy();
+    expect(within(settings).getByRole("heading", { name: "Appearance" })).toBeTruthy();
     expect(screen.queryByRole("region", { name: "Unified diff" })).toBeNull();
 
     fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
     await screen.findByText("src/first.ts");
     expect(window.location.pathname).toBe("/");
+  });
+
+  test("opens the global command palette, filters commands, and executes a destination", async () => {
+    render(<App />);
+    await screen.findByText("src/first.ts");
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const palette = await screen.findByRole("dialog", {
+      name: "Couchview command palette",
+    });
+    expect(within(palette).queryByText("Open command palette")).toBeNull();
+    expect(within(palette).getByText("Go to terminal")).toBeTruthy();
+    expect(within(palette).getByText("tmux is unavailable in this test.")).toBeTruthy();
+    expect(within(palette).getByText("Go to terminal").closest("[cmdk-item]")
+      ?.getAttribute("aria-disabled")).toBe("true");
+
+    fireEvent.change(within(palette).getByRole("combobox", {
+      name: "Couchview command palette",
+    }), {
+      target: { value: "settings" },
+    });
+    expect(within(palette).getByText("Go to settings")).toBeTruthy();
+    fireEvent.click(within(palette).getByText("Go to settings"));
+
+    expect(await screen.findByRole("region", { name: "Settings" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/settings");
+    expect(screen.queryByRole("dialog", { name: "Couchview command palette" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+    expect(await screen.findByRole("dialog", {
+      name: "Couchview command palette",
+    })).toBeTruthy();
+  });
+
+  test("executes multi-stroke shortcuts and shifts only navigation defaults for Dvorak", async () => {
+    terminalAvailable = true;
+    render(<App />);
+    await screen.findByText("src/first.ts");
+
+    fireEvent.keyDown(window, { key: "g" });
+    expect(document.querySelector(".shortcut-pending-hud")?.textContent).toBe("G");
+    fireEvent.keyDown(window, { key: "t" });
+    expect(await screen.findByRole("region", { name: "tmux terminal" })).toBeTruthy();
+    expect(document.querySelector(".shortcut-pending-hud")).toBeNull();
+
+    cleanup();
+    settingsProfiles[0]!.data.keyboard.layout = "dvorak";
+    render(<App />);
+    await screen.findByText("src/first.ts");
+    fireEvent.keyDown(window, { key: "l" });
+    expect(screen.getByText("src/first.ts")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "s" });
+    expect(await screen.findByText("src/second.ts")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "g" });
+    fireEvent.keyDown(window, { key: "s" });
+    expect(await screen.findByRole("region", { name: "Settings" })).toBeTruthy();
+  });
+
+  test("creates, renames, duplicates, selects, and deletes host-wide profiles", async () => {
+    const prompts = ["Team", "Team copy"];
+    Object.defineProperty(window, "prompt", {
+      configurable: true,
+      value: () => prompts.shift() ?? null,
+    });
+    window.history.replaceState(null, "", "/settings");
+    render(<App />);
+    const settings = await screen.findByRole("region", { name: "Settings" });
+    const selector = within(settings).getByLabelText("Active profile") as HTMLSelectElement;
+    expect(selector.value).toBe(DEFAULT_SETTINGS_PROFILE_ID);
+    expect((within(settings).getByRole("button", {
+      name: /Delete/,
+    }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(within(settings).getByRole("button", { name: /New/ }));
+    await waitFor(() => expect(settingsProfiles).toHaveLength(2));
+    expect(selector.value).toBe("profile-1");
+    expect(localStorage.getItem("couchview:settings-profile-id:v1")).toBe("profile-1");
+
+    const name = within(settings).getByLabelText("Profile name");
+    expect((name as HTMLInputElement).disabled).toBe(false);
+    await waitFor(() => expect((within(settings).getByRole("button", {
+      name: "Save changes",
+    }) as HTMLButtonElement).disabled).toBe(true));
+    fireEvent.input(name, { target: { value: "Team renamed" } });
+    await waitFor(() => expect((name as HTMLInputElement).value).toBe("Team renamed"));
+    const save = within(settings).getByRole("button", { name: "Save changes" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(requests.some((entry) =>
+      entry.path === "/api/settings/profiles/profile-1" && entry.method === "PUT"
+    )).toBe(true));
+    expect(requests.find((entry) =>
+      entry.path === "/api/settings/profiles/profile-1" && entry.method === "PUT"
+    )?.body).toMatchObject({ name: "Team renamed" });
+    await waitFor(() => expect(settingsProfiles[1]?.name).toBe("Team renamed"));
+
+    fireEvent.click(within(settings).getByRole("button", { name: /Duplicate/ }));
+    await waitFor(() => expect(settingsProfiles).toHaveLength(3));
+    expect(selector.value).toBe("profile-2");
+    expect(settingsProfiles[2]).toMatchObject({
+      name: "Team copy",
+      data: settingsProfiles[1]!.data,
+    });
+
+    fireEvent.click(within(settings).getByRole("button", { name: /Delete/ }));
+    await waitFor(() => expect(settingsProfiles).toHaveLength(2));
+    expect(selector.value).toBe(DEFAULT_SETTINGS_PROFILE_ID);
+    expect(localStorage.getItem("couchview:settings-profile-id:v1"))
+      .toBe(DEFAULT_SETTINGS_PROFILE_ID);
+  });
+
+  test("preserves a dirty draft across a stale save and warns before leaving Settings", async () => {
+    const customData = createDefaultSettingsProfileData();
+    settingsProfiles.push({
+      id: "custom",
+      name: "Custom",
+      data: customData,
+      revision: 1,
+      createdAt: "2026-07-31T00:03:00.000Z",
+      updatedAt: "2026-07-31T00:03:00.000Z",
+    });
+    localStorage.setItem("couchview:settings-profile-id:v1", "custom");
+    let allowDiscard = false;
+    const alerts: string[] = [];
+    Object.defineProperty(window, "confirm", {
+      configurable: true,
+      value: () => allowDiscard,
+    });
+    Object.defineProperty(window, "alert", {
+      configurable: true,
+      value: (message: string) => alerts.push(message),
+    });
+    window.history.replaceState(null, "", "/settings");
+    render(<App />);
+    const settings = await screen.findByRole("region", { name: "Settings" });
+    const appearance = within(settings).getByRole("heading", { name: "Appearance" })
+      .closest("section")!;
+    const diffFontSize = within(appearance).getAllByLabelText("Font size")[0] as HTMLInputElement;
+    fireEvent.change(diffFontSize, { target: { value: "14" } });
+    fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
+    expect(window.location.pathname).toBe("/settings");
+    expect(screen.getByRole("region", { name: "Settings" })).toBeTruthy();
+
+    staleNextSettingsSave = true;
+    fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(alerts).toContain(
+      "The settings profile changed on another client.",
+    ));
+    expect(diffFontSize.value).toBe("14");
+    expect((within(settings).getByRole("button", {
+      name: "Save changes",
+    }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(settingsProfiles.find((profile) => profile.id === "custom"))
+      .toMatchObject({
+        revision: 3,
+        data: { typography: { diff: { fontSize: 14 } } },
+      }));
+    allowDiscard = true;
+    fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
+    expect(window.location.pathname).toBe("/");
+  });
+
+  test("records a shortcut and atomically replaces its exact conflict", async () => {
+    window.history.replaceState(null, "", "/settings");
+    render(<App />);
+    const settings = await screen.findByRole("region", { name: "Settings" });
+    const keyboardCard = within(settings)
+      .getByRole("heading", { name: "Keyboard shortcuts" })
+      .closest("section")!;
+    const previousFileRow = within(keyboardCard).getByText("Previous file")
+      .closest(".keybinding-row") as HTMLElement;
+    const nextFileRow = within(keyboardCard).getByText("Next file")
+      .closest(".keybinding-row") as HTMLElement;
+    expect(previousFileRow.querySelector("kbd")?.textContent).toBe("H");
+    expect(nextFileRow.querySelector("kbd")?.textContent).toBe("L");
+
+    fireEvent.click(within(previousFileRow).getByRole("button", { name: "Record" }));
+    fireEvent.keyDown(window, { key: "l" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_050));
+    });
+    expect(previousFileRow.querySelector("kbd")?.textContent).toBe("L");
+    expect(nextFileRow.querySelector("kbd")?.textContent).toBe("Unassigned");
+
+    fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(settingsProfiles[0]?.data.keyboard.bindings)
+      .toMatchObject({
+        "file.previous": [{ key: "l", modifiers: [] }],
+        "file.next": null,
+      }));
+    fireEvent.click(within(previousFileRow).getByRole("button", {
+      name: "Reset Previous file shortcut",
+    }));
+    expect(previousFileRow.querySelector("kbd")?.textContent).toBe("H");
+    fireEvent.click(within(nextFileRow).getByRole("button", {
+      name: "Reset Next file shortcut",
+    }));
+    expect(nextFileRow.querySelector("kbd")?.textContent).toBe("L");
   });
 
   test("persists independent diff and terminal typography from Settings", async () => {
@@ -1153,49 +1441,50 @@ describe("Couchview app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
     const settings = screen.getByRole("region", { name: "Settings" });
     expect(window.location.pathname).toBe("/settings");
-    const diffCard = within(settings)
-      .getByRole("heading", { name: "Diff view" })
+    const appearanceCard = within(settings)
+      .getByRole("heading", { name: "Appearance" })
       .closest("section")!;
-    const terminalCard = within(settings)
-      .getByRole("heading", { name: "Terminal" })
-      .closest("section")!;
-    expect(within(diffCard).getByTestId("diff-column-ruler").textContent).toContain("80");
-    expect(within(terminalCard).getByTestId("terminal-column-ruler").textContent)
+    expect(within(appearanceCard).getByTestId("diff-column-ruler").textContent).toContain("80");
+    expect(within(appearanceCard).getByTestId("terminal-column-ruler").textContent)
       .toContain("80");
-    expect(within(terminalCard).getByLabelText("lualine preview").textContent)
+    expect(within(appearanceCard).getByLabelText("lualine preview").textContent)
       .toContain("NORMAL");
-    expect(within(terminalCard).getByLabelText("lualine preview").textContent)
+    expect(within(appearanceCard).getByLabelText("lualine preview").textContent)
       .toContain("");
-    expect(within(terminalCard).getByLabelText("tmux status preview").textContent)
+    expect(within(appearanceCard).getByLabelText("tmux status preview").textContent)
       .toContain("nvim *");
-    expect(within(terminalCard).getByLabelText("Cell width adjustment").getAttribute("min"))
+    expect(within(appearanceCard).getByLabelText("Cell width adjustment").getAttribute("min"))
       .toBe("-5");
-    expect(within(terminalCard).getByLabelText("Cell width adjustment").getAttribute("max"))
+    expect(within(appearanceCard).getByLabelText("Cell width adjustment").getAttribute("max"))
       .toBe("5");
 
-    fireEvent.click(within(diffCard).getByRole("button", { name: /^System monospace/ }));
-    fireEvent.change(within(diffCard).getByLabelText("Font size"), {
+    const systemFonts = within(appearanceCard).getAllByRole("button", {
+      name: /^System monospace/,
+    });
+    fireEvent.click(systemFonts[0]!);
+    const fontSizes = within(appearanceCard).getAllByLabelText("Font size");
+    fireEvent.change(fontSizes[0]!, {
       target: { value: "14" },
     });
-    fireEvent.change(within(diffCard).getByLabelText("Line height adjustment"), {
+    fireEvent.change(within(appearanceCard).getByLabelText("Line height adjustment"), {
       target: { value: "3.5" },
     });
-    fireEvent.change(within(diffCard).getByLabelText("Width adjustment"), {
+    fireEvent.change(within(appearanceCard).getByLabelText("Width adjustment"), {
       target: { value: "0.4" },
     });
 
-    fireEvent.click(within(terminalCard).getByRole("button", { name: /^System monospace/ }));
-    fireEvent.change(within(terminalCard).getByLabelText("Font size"), {
+    fireEvent.click(systemFonts[1]!);
+    fireEvent.change(fontSizes[1]!, {
       target: { value: "18" },
     });
-    fireEvent.change(within(terminalCard).getByLabelText("Cell height adjustment"), {
+    fireEvent.change(within(appearanceCard).getByLabelText("Cell height adjustment"), {
       target: { value: "4" },
     });
-    fireEvent.change(within(terminalCard).getByLabelText("Cell width adjustment"), {
+    fireEvent.change(within(appearanceCard).getByLabelText("Cell width adjustment"), {
       target: { value: "-5" },
     });
 
-    expect(within(diffCard).getByTestId("diff-typography-preview").style.fontFamily)
+    expect(within(appearanceCard).getByTestId("diff-typography-preview").style.fontFamily)
       .toStartWith("ui-monospace");
     await waitFor(() => expect(previewRendererState.configs.at(-1)).toMatchObject({
       fontFamily: "system",
@@ -1203,48 +1492,20 @@ describe("Couchview app", () => {
       cellHeightAdjustment: 4,
       cellWidthAdjustment: -5,
     }));
-    expect(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)).toBeNull();
-    const defaultTerminal = {
-      fontFamily: "iosevka",
-      fontSize: 15,
-      cellHeightAdjustment: 0,
-      cellWidthAdjustment: 0,
-    } as const;
-    const applyDiff = within(diffCard).getByRole("button", {
-      name: "Apply diff changes",
+    expect(localStorage.getItem("couchview:typography:v1")).toBeNull();
+    const save = within(settings).getByRole("button", {
+      name: "Save changes",
     }) as HTMLButtonElement;
-    expect(applyDiff.disabled).toBe(false);
-    expect(applyDiff.closest("header")?.classList.contains("settings-card-header"))
-      .toBe(true);
-    expect(within(diffCard).getByText(/review is unchanged/)).toBeTruthy();
-
-    fireEvent.click(applyDiff);
-    expect(applyDiff.disabled).toBe(true);
-    const diffApplied = JSON.parse(
-      localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!,
-    ) as TypographyPreferences;
-    expect(diffApplied.diff).toEqual({
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+    await waitFor(() => expect(save.disabled).toBe(true));
+    expect(settingsProfiles[0]!.data.typography.diff).toEqual({
       fontFamily: "system",
       fontSize: 14,
       lineHeightAdjustment: 3.5,
       widthAdjustment: 0.4,
     });
-    expect(diffApplied.terminal).toEqual(defaultTerminal);
-
-    const applyTerminal = within(terminalCard).getByRole("button", {
-      name: "Apply terminal changes",
-    }) as HTMLButtonElement;
-    expect(applyTerminal.disabled).toBe(false);
-    expect(applyTerminal.closest("header")?.classList.contains("settings-card-header"))
-      .toBe(true);
-    expect(within(terminalCard).getByText(/running terminal is unchanged/)).toBeTruthy();
-
-    fireEvent.click(applyTerminal);
-    expect(applyTerminal.disabled).toBe(true);
-    const stored = JSON.parse(
-      localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!,
-    ) as TypographyPreferences;
-    expect(stored.terminal).toEqual({
+    expect(settingsProfiles[0]!.data.typography.terminal).toEqual({
       fontFamily: "system",
       fontSize: 18,
       cellHeightAdjustment: 4,
@@ -1261,7 +1522,9 @@ describe("Couchview app", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
     await waitFor(() => expect(rendererState.calls).toBe(1));
-    expect(rendererState.options?.config).toMatchObject(stored.terminal);
+    expect(rendererState.options?.config).toMatchObject(
+      settingsProfiles[0]!.data.typography.terminal,
+    );
   });
 
   test("migrates pre-rename display preferences", async () => {
@@ -1272,15 +1535,12 @@ describe("Couchview app", () => {
     render(<App />);
 
     await screen.findByText("src/first.ts");
-    expect(screen.getByText("13px")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Hide line numbers" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
-    expect(
-      (JSON.parse(localStorage.getItem(TYPOGRAPHY_STORAGE_KEY)!) as TypographyPreferences)
-        .diff.fontSize,
-    ).toBe(13);
-    expect(localStorage.getItem("couchview:line-numbers")).toBe("true");
-    expect(localStorage.getItem("couchview:line-wrap")).toBe("true");
+    expect(screen.getByText("11px")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show line numbers" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Wrap long lines" })).toBeTruthy();
+    expect(localStorage.getItem("couch-review:font-size")).toBe("13");
+    expect(localStorage.getItem("couch-review:line-numbers")).toBe("true");
+    expect(localStorage.getItem("couch-review:line-wrap")).toBe("true");
   });
 
   test("preloads adjacent diffs and reuses them for instant back-and-forth navigation", async () => {
@@ -2169,7 +2429,9 @@ describe("Couchview app", () => {
     expect(screen.queryByRole("button", { name: "Select old line 1" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
     expect(await screen.findByRole("button", { name: "Select old line 1" })).toBeTruthy();
-    expect(localStorage.getItem("couchview:line-numbers")).toBe("true");
+    await waitFor(() => expect(
+      settingsProfiles[0]?.data.display.lineNumbersVisible,
+    ).toBe(true));
 
     cleanup();
     render(<App />);
@@ -2186,7 +2448,9 @@ describe("Couchview app", () => {
     fireEvent.click(screen.getByRole("button", { name: "Wrap long lines" }));
     expect(screen.getByRole("button", { name: "Keep long lines on one line" })).toBeTruthy();
     expect(screen.getByTestId("pierre-code-view").dataset.lineWrap).toBe("true");
-    expect(localStorage.getItem("couchview:line-wrap")).toBe("true");
+    await waitFor(() => expect(
+      settingsProfiles[0]?.data.display.lineWrapEnabled,
+    ).toBe(true));
 
     cleanup();
     render(<App />);

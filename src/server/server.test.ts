@@ -24,9 +24,15 @@ import {
   type ServerEvent,
   type StageFileResponse,
   type StageFilesResponse,
+  type SettingsProfileResponse,
+  type SettingsProfilesResponse,
   type RemoteBridgeProfile,
   type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
+import {
+  createDefaultSettingsProfileData,
+  DEFAULT_SETTINGS_PROFILE_ID,
+} from "../shared/settings.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
@@ -141,6 +147,125 @@ async function nextPackageRunEvent(
 }
 
 describe("Couchview HTTP security and routes", () => {
+  test("serves protected profile CRUD with validation and optimistic revisions", async () => {
+    const app = await fixture();
+    const bootstrap = await (
+      await app.fetch(request(API_ROUTES.bootstrap))
+    ).json() as BootstrapResponse;
+    expect(bootstrap.settingsProfiles).toEqual([
+      expect.objectContaining({
+        id: DEFAULT_SETTINGS_PROFILE_ID,
+        name: "Default",
+        data: createDefaultSettingsProfileData(),
+        revision: 1,
+      }),
+    ]);
+    const listed = await (
+      await app.fetch(request(API_ROUTES.settingsProfiles))
+    ).json() as SettingsProfilesResponse;
+    expect(listed.profiles).toEqual(bootstrap.settingsProfiles);
+
+    const withoutCsrf = await app.fetch(request(API_ROUTES.settingsProfiles, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Desk" }),
+    }));
+    expect(withoutCsrf.status).toBe(403);
+    const mutationHeaders = {
+      "content-type": "application/json",
+      origin: "http://127.0.0.1:3001",
+      [CSRF_HEADER]: app.csrfToken,
+    };
+    const malformedCreate = await app.fetch(request(API_ROUTES.settingsProfiles, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({ name: "   " }),
+    }));
+    expect(malformedCreate.status).toBe(400);
+
+    const createdResponse = await app.fetch(request(API_ROUTES.settingsProfiles, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({
+        name: "Desk",
+        sourceProfileId: DEFAULT_SETTINGS_PROFILE_ID,
+      }),
+    }));
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as SettingsProfileResponse;
+    expect(created.profile).toMatchObject({ name: "Desk", revision: 1 });
+
+    const duplicateName = await app.fetch(request(API_ROUTES.settingsProfiles, {
+      method: "POST",
+      headers: mutationHeaders,
+      body: JSON.stringify({ name: "dEsK" }),
+    }));
+    expect(duplicateName.status).toBe(409);
+    expect((await duplicateName.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "settings_profile_name_conflict" },
+    });
+
+    const malformedUpdate = await app.fetch(request(
+      API_ROUTES.settingsProfile(created.profile.id),
+      {
+        method: "PUT",
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          name: "Desk",
+          data: { ...created.profile.data, typography: undefined },
+          expectedRevision: 1,
+        }),
+      },
+    ));
+    expect(malformedUpdate.status).toBe(400);
+
+    const changedData = structuredClone(created.profile.data);
+    changedData.keyboard.layout = "dvorak";
+    const updatedResponse = await app.fetch(request(
+      API_ROUTES.settingsProfile(created.profile.id),
+      {
+        method: "PUT",
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          name: "Desk keyboard",
+          data: changedData,
+          expectedRevision: 1,
+        }),
+      },
+    ));
+    expect(updatedResponse.status).toBe(200);
+    expect((await updatedResponse.json()) as SettingsProfileResponse).toMatchObject({
+      profile: {
+        name: "Desk keyboard",
+        data: { keyboard: { layout: "dvorak" } },
+        revision: 2,
+      },
+    });
+    const stale = await app.fetch(request(API_ROUTES.settingsProfile(created.profile.id), {
+      method: "PUT",
+      headers: mutationHeaders,
+      body: JSON.stringify({ name: "Old draft", data: changedData, expectedRevision: 1 }),
+    }));
+    expect(stale.status).toBe(409);
+    expect((await stale.json()) as ApiErrorBody).toMatchObject({
+      error: { code: "stale_settings_profile" },
+    });
+
+    const deleteDefault = await app.fetch(request(
+      API_ROUTES.settingsProfile(DEFAULT_SETTINGS_PROFILE_ID),
+      { method: "DELETE", headers: mutationHeaders },
+    ));
+    expect(deleteDefault.status).toBe(409);
+    const deleted = await app.fetch(request(API_ROUTES.settingsProfile(created.profile.id), {
+      method: "DELETE",
+      headers: mutationHeaders,
+    }));
+    expect(deleted.status).toBe(204);
+    expect((await (
+      await app.fetch(request(API_ROUTES.settingsProfiles))
+    ).json() as SettingsProfilesResponse).profiles).toHaveLength(1);
+  });
+
   test("guards tmux APIs and upgrades only authenticated sockets", async () => {
     const attachmentCalls: Array<{
       repositoryId: string;

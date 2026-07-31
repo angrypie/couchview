@@ -54,6 +54,69 @@ test.describe("mobile fixture review", () => {
     expect(response.ok()).toBe(true);
   });
 
+  test("uses the touch command palette across review, terminal, and Settings", async ({
+    page,
+  }) => {
+    await openFixture(page);
+    await page.getByRole("button", { name: "Open command palette" }).click();
+    const palette = page.getByRole("dialog", { name: "Couchview command palette" });
+    await expect(palette).toBeVisible();
+    await expect(palette).toBeInViewport();
+    await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("terminal");
+    await palette.getByText("Go to terminal", { exact: true }).click();
+
+    const terminal = page.getByRole("region", { name: "tmux terminal" });
+    await expect(terminal).toBeVisible();
+    await terminal.getByRole("button", { name: "Open command palette" }).click();
+    await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("settings");
+    await palette.getByText("Go to settings", { exact: true }).click();
+
+    const settings = page.getByRole("region", { name: "Settings" });
+    await expect(settings).toBeVisible();
+    await settings.getByRole("button", {
+      name: "Open command palette",
+      exact: true,
+    }).click();
+    await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("diff review");
+    await palette.getByText("Go to diff review", { exact: true }).click();
+    await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+  });
+
+  test("keeps the selected host profile browser-specific", async ({
+    browser,
+    page,
+    request,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "Browser-local profile selection needs one isolated-context pass.",
+    );
+    const createdResponse = await request.post("/api/settings/profiles", {
+      headers: { "x-couchview-csrf": fixtureCsrf },
+      data: { name: "Phone" },
+    });
+    expect(createdResponse.ok()).toBe(true);
+    const created = (await createdResponse.json()).profile;
+
+    await page.goto("/settings");
+    const selector = page.getByLabel("Active profile");
+    await selector.selectOption(created.id);
+    await expect(selector).toHaveValue(created.id);
+    await page.reload();
+    await expect(page.getByLabel("Active profile")).toHaveValue(created.id);
+
+    const otherBrowser = await browser.newContext();
+    try {
+      const otherPage = await otherBrowser.newPage();
+      await otherPage.goto(new URL("/settings", page.url()).href);
+      await expect(otherPage.getByLabel("Active profile")).toHaveValue("default");
+      await expect(otherPage.getByLabel("Active profile").locator("option"))
+        .toHaveCount(2);
+    } finally {
+      await otherBrowser.close();
+    }
+  });
+
   test("keeps focused form controls from triggering mobile page zoom", async ({
     page,
   }) => {
@@ -108,15 +171,16 @@ test.describe("mobile fixture review", () => {
     await expect.poll(() => new URL(page.url()).pathname).toBe("/settings");
 
     const settings = page.getByRole("region", { name: "Settings" });
-    const diffCard = settings.getByRole("region", { name: "Diff view", exact: true });
-    const terminalCard = settings.getByRole("region", { name: "Terminal", exact: true });
-    await expect(settings.getByRole("heading", { name: "Typography" })).toBeVisible();
-    await expect(diffCard.getByTestId("diff-column-ruler")).toContainText("80");
-    await expect(terminalCard.getByTestId("terminal-column-ruler")).toContainText("80");
-    await expect(terminalCard.getByLabel("lualine preview")).toContainText("NORMAL");
-    await expect(terminalCard.getByLabel("lualine preview")).toContainText("");
-    await expect(terminalCard.getByLabel("tmux status preview")).toContainText("nvim *");
-    const terminalPreview = terminalCard.getByTestId("terminal-typography-preview");
+    const appearance = settings.getByRole("region", { name: "Appearance" });
+    await expect(settings.getByRole("heading", { name: "Profiles" })).toBeVisible();
+    await expect(settings.getByText(/Profile contents are shared by this Couchview host/))
+      .toBeVisible();
+    await expect(appearance.getByTestId("diff-column-ruler")).toContainText("80");
+    await expect(appearance.getByTestId("terminal-column-ruler")).toContainText("80");
+    await expect(appearance.getByLabel("lualine preview")).toContainText("NORMAL");
+    await expect(appearance.getByLabel("lualine preview")).toContainText("");
+    await expect(appearance.getByLabel("tmux status preview")).toContainText("nvim *");
+    const terminalPreview = appearance.getByTestId("terminal-typography-preview");
     await expect(terminalPreview).toHaveAttribute("data-renderer", "ghostty-web");
     const terminalPreviewCanvas = terminalPreview.locator("canvas");
     await expect(terminalPreviewCanvas).toBeVisible({ timeout: 15_000 });
@@ -129,44 +193,26 @@ test.describe("mobile fixture review", () => {
     const initialTerminalPreview = await terminalPreviewCanvas.evaluate(
       (canvas) => (canvas as HTMLCanvasElement).toDataURL(),
     );
-    await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("min", "-5");
-    await expect(terminalCard.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
-    await diffCard.getByRole("button", { name: /^System monospace/ }).click();
-    await setRangeValue(diffCard.getByLabel("Font size"), 14);
-    await setRangeValue(diffCard.getByLabel("Line height adjustment"), 3.5);
-    await setRangeValue(diffCard.getByLabel("Width adjustment"), 0.4);
-    const applyDiff = diffCard.getByRole("button", {
-      name: "Apply diff changes",
-    });
-    await expect(applyDiff).toBeEnabled();
-    await expect(diffCard.getByText(/review is unchanged/)).toBeVisible();
-    expect(await applyDiff.evaluate((button) => (
-      button.closest("header")?.classList.contains("settings-card-header") ?? false
-    ))).toBe(true);
-    await applyDiff.click();
-    await expect(applyDiff).toBeDisabled();
-    await expect(
-      terminalCard.getByRole("button", { name: /^Iosevka/ }),
-    ).toHaveAttribute("aria-pressed", "true");
+    await expect(appearance.getByLabel("Cell width adjustment")).toHaveAttribute("min", "-5");
+    await expect(appearance.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
+    const systemFonts = appearance.getByRole("button", { name: /^System monospace/ });
+    await systemFonts.nth(0).click();
+    await setRangeValue(appearance.locator("#diff-font-size"), 14);
+    await setRangeValue(appearance.getByLabel("Line height adjustment"), 3.5);
+    await setRangeValue(appearance.getByLabel("Width adjustment", { exact: true }), 0.4);
 
-    await terminalCard.getByRole("button", { name: /^System monospace/ }).click();
-    await setRangeValue(terminalCard.getByLabel("Font size"), 18);
-    await setRangeValue(terminalCard.getByLabel("Cell height adjustment"), 4);
-    await setRangeValue(terminalCard.getByLabel("Cell width adjustment"), -5);
+    await systemFonts.nth(1).click();
+    await setRangeValue(appearance.locator("#terminal-font-size"), 18);
+    await setRangeValue(appearance.getByLabel("Cell height adjustment"), 4);
+    await setRangeValue(appearance.getByLabel("Cell width adjustment"), -5);
     await expect.poll(() => terminalPreviewCanvas.evaluate(
       (canvas) => (canvas as HTMLCanvasElement).toDataURL(),
     )).not.toBe(initialTerminalPreview);
-    const applyTerminal = terminalCard.getByRole("button", {
-      name: "Apply terminal changes",
-    });
-    await expect(applyTerminal).toBeEnabled();
-    await expect(terminalCard.getByText(/running terminal is unchanged/)).toBeVisible();
-    expect(await applyTerminal.evaluate((button) => (
-      button.closest("header")?.classList.contains("settings-card-header") ?? false
-    ))).toBe(true);
-    await applyTerminal.click();
-    await expect(applyTerminal).toBeDisabled();
-    await settings.getByRole("button", { name: "Review" }).click();
+    const save = settings.getByRole("button", { name: "Save changes" });
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(save).toBeDisabled();
+    await settings.getByRole("button", { name: "Review", exact: true }).click();
     await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 
     const renderedFont = await page.locator("diffs-container").first().evaluate((host) => {
@@ -190,24 +236,21 @@ test.describe("mobile fixture review", () => {
     await page.reload();
     await page.getByRole("button", { name: "Open settings" }).click();
     const reloadedSettings = page.getByRole("region", { name: "Settings" });
-    const reloadedDiff = reloadedSettings.getByRole("region", {
-      name: "Diff view",
-      exact: true,
+    const reloadedAppearance = reloadedSettings.getByRole("region", { name: "Appearance" });
+    const reloadedSystemFonts = reloadedAppearance.getByRole("button", {
+      name: /^System monospace/,
     });
-    const reloadedTerminal = reloadedSettings.getByRole("region", {
-      name: "Terminal",
-      exact: true,
-    });
-    await expect(reloadedDiff.getByRole("button", { name: /^System monospace/ }))
+    await expect(reloadedSystemFonts.nth(0))
       .toHaveAttribute("aria-pressed", "true");
-    await expect(reloadedDiff.getByLabel("Font size")).toHaveValue("14");
-    await expect(reloadedDiff.getByLabel("Line height adjustment")).toHaveValue("3.5");
-    await expect(reloadedDiff.getByLabel("Width adjustment")).toHaveValue("0.4");
-    await expect(reloadedTerminal.getByRole("button", { name: /^System monospace/ }))
+    await expect(reloadedAppearance.locator("#diff-font-size")).toHaveValue("14");
+    await expect(reloadedAppearance.getByLabel("Line height adjustment")).toHaveValue("3.5");
+    await expect(reloadedAppearance.getByLabel("Width adjustment", { exact: true }))
+      .toHaveValue("0.4");
+    await expect(reloadedSystemFonts.nth(1))
       .toHaveAttribute("aria-pressed", "true");
-    await expect(reloadedTerminal.getByLabel("Font size")).toHaveValue("18");
-    await expect(reloadedTerminal.getByLabel("Cell height adjustment")).toHaveValue("4");
-    await expect(reloadedTerminal.getByLabel("Cell width adjustment")).toHaveValue("-5");
+    await expect(reloadedAppearance.locator("#terminal-font-size")).toHaveValue("18");
+    await expect(reloadedAppearance.getByLabel("Cell height adjustment")).toHaveValue("4");
+    await expect(reloadedAppearance.getByLabel("Cell width adjustment")).toHaveValue("-5");
   });
 
   test("keeps review actions at the screen bottom across orientation changes", async ({
@@ -258,6 +301,7 @@ test.describe("mobile fixture review", () => {
 
   test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
     page,
+    request,
   }, testInfo) => {
     const currentFile = await openFixture(page);
     await dismissPwaNotices(page);
@@ -387,9 +431,11 @@ test.describe("mobile fixture review", () => {
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
       .toBeLessThanOrEqual(1);
-    expect(
-      await page.evaluate(() => localStorage.getItem("couchview:line-wrap")),
-    ).toBe("true");
+    await expect.poll(async () => {
+      const response = await request.get("/api/settings/profiles");
+      return (await response.json()).profiles[0].data.display.lineWrapEnabled;
+    }).toBe(true);
+    expect(await page.evaluate(() => localStorage.getItem("couchview:line-wrap"))).toBeNull();
     await expect(page.getByRole("button", { name: "Find “load” in project" }).first()).toBeVisible();
     expect(
       await codeHost.evaluate((host) =>
@@ -765,6 +811,14 @@ test.describe("mobile fixture review", () => {
 });
 
 test.describe("production PWA", () => {
+  test.beforeEach(async ({ request }) => {
+    if (!localFixture) return;
+    const response = await request.post("/api/e2e/reset", {
+      headers: { "x-couchview-csrf": fixtureCsrf },
+    });
+    expect(response.ok()).toBe(true);
+  });
+
   test("guides an expired Cloudflare Access session back through sign-in", async ({
     page,
   }, testInfo) => {

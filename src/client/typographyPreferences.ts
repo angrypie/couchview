@@ -1,25 +1,27 @@
+import {
+  DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
+  normalizeTypographyPreferences,
+  TYPOGRAPHY_LIMITS,
+  type CodeFontFamily,
+  type TerminalTypographyPreferences,
+  type TypographyPreferences,
+} from "../shared/settings.ts";
+
+export {
+  DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
+  DEFAULT_TYPOGRAPHY_PREFERENCES,
+  normalizeTypographyPreferences,
+  TYPOGRAPHY_LIMITS,
+};
+export type {
+  CodeFontFamily,
+  DiffTypographyPreferences,
+  TerminalTypographyPreferences,
+  TypographyPreferences,
+} from "../shared/settings.ts";
+
 export const TYPOGRAPHY_STORAGE_KEY = "couchview:typography:v1";
-
-export type CodeFontFamily = "iosevka" | "system";
-
-export interface DiffTypographyPreferences {
-  fontFamily: CodeFontFamily;
-  fontSize: number;
-  lineHeightAdjustment: number;
-  widthAdjustment: number;
-}
-
-export interface TerminalTypographyPreferences {
-  fontFamily: CodeFontFamily;
-  fontSize: number;
-  cellHeightAdjustment: number;
-  cellWidthAdjustment: number;
-}
-
-export interface TypographyPreferences {
-  diff: DiffTypographyPreferences;
-  terminal: TerminalTypographyPreferences;
-}
 
 export interface TerminalRendererTheme {
   background: string;
@@ -35,42 +37,6 @@ export interface TerminalRendererConfig extends TerminalTypographyPreferences {
   cursorBlink: boolean;
   theme: TerminalRendererTheme;
 }
-
-interface NumericLimit {
-  min: number;
-  max: number;
-  step: number;
-}
-
-export const TYPOGRAPHY_LIMITS = {
-  diff: {
-    fontSize: { min: 9, max: 24, step: 1 },
-    lineHeightAdjustment: { min: -5, max: 5, step: 0.5 },
-    widthAdjustment: { min: -1, max: 2, step: 0.1 },
-  },
-  terminal: {
-    fontSize: { min: 8, max: 32, step: 1 },
-    cellHeightAdjustment: { min: -4, max: 16, step: 1 },
-    cellWidthAdjustment: { min: -5, max: 5, step: 1 },
-  },
-} as const;
-
-export const DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER = 1.55;
-
-export const DEFAULT_TYPOGRAPHY_PREFERENCES: TypographyPreferences = {
-  diff: {
-    fontFamily: "iosevka",
-    fontSize: 11,
-    lineHeightAdjustment: 0,
-    widthAdjustment: 0,
-  },
-  terminal: {
-    fontFamily: "iosevka",
-    fontSize: 15,
-    cellHeightAdjustment: 0,
-    cellWidthAdjustment: 0,
-  },
-};
 
 const TERMINAL_THEME: TerminalRendererTheme = {
   background: "#1e1e2e",
@@ -105,78 +71,6 @@ export const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
 
 export function codeFontStack(fontFamily: CodeFontFamily): string {
   return CODE_FONT_STACKS[fontFamily];
-}
-
-function boundedNumber(
-  value: unknown,
-  fallback: number,
-  limit: NumericLimit,
-): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  const clamped = Math.min(limit.max, Math.max(limit.min, value));
-  const stepped = Math.round(clamped / limit.step) * limit.step;
-  return Number(stepped.toFixed(limit.step < 1 ? 2 : 0));
-}
-
-function fontFamily(value: unknown, fallback: CodeFontFamily): CodeFontFamily {
-  return value === "iosevka" || value === "system" ? value : fallback;
-}
-
-export function normalizeTypographyPreferences(value: unknown): TypographyPreferences {
-  const candidate = value && typeof value === "object"
-    ? value as Partial<TypographyPreferences>
-    : {};
-  const diff: Partial<DiffTypographyPreferences> & {
-    letterSpacing?: unknown;
-    lineHeight?: unknown;
-  } = candidate.diff && typeof candidate.diff === "object" ? candidate.diff : {};
-  const terminal: Partial<TerminalTypographyPreferences> =
-    candidate.terminal && typeof candidate.terminal === "object"
-    ? candidate.terminal
-    : {};
-  const defaults = DEFAULT_TYPOGRAPHY_PREFERENCES;
-  const diffFontSize = boundedNumber(
-    diff.fontSize,
-    defaults.diff.fontSize,
-    TYPOGRAPHY_LIMITS.diff.fontSize,
-  );
-  const legacyLineHeightAdjustment = typeof diff.lineHeight === "number"
-    ? diffFontSize * (diff.lineHeight - DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER)
-    : undefined;
-  return {
-    diff: {
-      fontFamily: fontFamily(diff.fontFamily, defaults.diff.fontFamily),
-      fontSize: diffFontSize,
-      lineHeightAdjustment: boundedNumber(
-        diff.lineHeightAdjustment ?? legacyLineHeightAdjustment,
-        defaults.diff.lineHeightAdjustment,
-        TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment,
-      ),
-      widthAdjustment: boundedNumber(
-        diff.widthAdjustment ?? diff.letterSpacing,
-        defaults.diff.widthAdjustment,
-        TYPOGRAPHY_LIMITS.diff.widthAdjustment,
-      ),
-    },
-    terminal: {
-      fontFamily: fontFamily(terminal.fontFamily, defaults.terminal.fontFamily),
-      fontSize: boundedNumber(
-        terminal.fontSize,
-        defaults.terminal.fontSize,
-        TYPOGRAPHY_LIMITS.terminal.fontSize,
-      ),
-      cellHeightAdjustment: boundedNumber(
-        terminal.cellHeightAdjustment,
-        defaults.terminal.cellHeightAdjustment,
-        TYPOGRAPHY_LIMITS.terminal.cellHeightAdjustment,
-      ),
-      cellWidthAdjustment: boundedNumber(
-        terminal.cellWidthAdjustment,
-        defaults.terminal.cellWidthAdjustment,
-        TYPOGRAPHY_LIMITS.terminal.cellWidthAdjustment,
-      ),
-    },
-  };
 }
 
 export function loadTypographyPreferences(

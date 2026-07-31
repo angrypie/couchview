@@ -22,6 +22,7 @@ import {
   type CodexTurnResponse,
   type CommitRequest,
   type ClaimRemoteBridgePairingRequest,
+  type CreateSettingsProfileRequest,
   type CreateRemoteBridgePairingRequest,
   type GenerateCommitMessageRequest,
   type GenerateCommitMessageResponse,
@@ -47,8 +48,14 @@ import {
   type StageFilesRequest,
   type TerminalAttachmentRequest,
   type TerminalLeaseRequest,
+  type UpdateSettingsProfileRequest,
   type UpdateCommentRequest,
 } from "../shared/contracts.ts";
+import {
+  DEFAULT_SETTINGS_PROFILE_ID,
+  normalizeSettingsProfileName,
+  parseSettingsProfileData,
+} from "../shared/settings.ts";
 import {
   CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
 } from "./cloudflareAccess.ts";
@@ -766,6 +773,7 @@ export async function createCouchviewApp(
         repositories: await repositories.list(),
         defaultRepositoryId,
         catalogRevision: database.catalogRevision(),
+        settingsProfiles: database.settingsProfiles(),
         restart: {
           available: restart.available,
           reason: restart.reason,
@@ -800,6 +808,81 @@ export async function createCouchviewApp(
         repositories: await repositories.list(),
         catalogRevision: database.catalogRevision(),
       });
+    }
+    if (url.pathname === API_ROUTES.settingsProfiles && request.method === "GET") {
+      return json({ profiles: database.settingsProfiles() });
+    }
+    if (url.pathname === API_ROUTES.settingsProfiles && request.method === "POST") {
+      const input = await readJsonObject<CreateSettingsProfileRequest>(request);
+      if (
+        input.sourceProfileId !== undefined &&
+        (typeof input.sourceProfileId !== "string" || input.sourceProfileId.length > 512)
+      ) {
+        throw new HttpError(400, "invalid_settings_profile", "Source profile is invalid");
+      }
+      try {
+        const name = normalizeSettingsProfileName(input.name);
+        const profile = database.createSettingsProfile(name, input.sourceProfileId);
+        return json({ profile }, { status: 201 });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Settings profile is invalid";
+        if (/UNIQUE constraint failed/i.test(message)) {
+          throw new HttpError(409, "settings_profile_name_conflict", "That profile name is already in use");
+        }
+        if (/does not exist/i.test(message)) {
+          throw new HttpError(404, "settings_profile_not_found", message);
+        }
+        throw new HttpError(400, "invalid_settings_profile", message);
+      }
+    }
+    const settingsProfileRoute = /^\/api\/settings\/profiles\/([^/]+)$/.exec(url.pathname);
+    if (settingsProfileRoute) {
+      const profileId = decodeSegment(settingsProfileRoute[1] ?? "");
+      if (request.method === "PUT") {
+        const input = await readJsonObject<UpdateSettingsProfileRequest>(request);
+        if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+          throw new HttpError(400, "invalid_settings_profile", "Profile revision is invalid");
+        }
+        try {
+          const name = profileId === DEFAULT_SETTINGS_PROFILE_ID
+            ? "Default"
+            : normalizeSettingsProfileName(input.name);
+          const data = parseSettingsProfileData(input.data);
+          const result = database.updateSettingsProfile(
+            profileId,
+            name,
+            data,
+            input.expectedRevision,
+          );
+          if (result.status === "missing") {
+            throw new HttpError(404, "settings_profile_not_found", "Settings profile not found");
+          }
+          if (result.status === "stale") {
+            throw new HttpError(
+              409,
+              "stale_settings_profile",
+              "This profile changed in another browser. Reload it before saving.",
+            );
+          }
+          return json({ profile: result.profile });
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          const message = error instanceof Error ? error.message : "Settings profile is invalid";
+          if (/UNIQUE constraint failed/i.test(message)) {
+            throw new HttpError(409, "settings_profile_name_conflict", "That profile name is already in use");
+          }
+          throw new HttpError(400, "invalid_settings_profile", message);
+        }
+      }
+      if (request.method === "DELETE") {
+        if (profileId === DEFAULT_SETTINGS_PROFILE_ID) {
+          throw new HttpError(409, "default_profile_required", "The Default profile cannot be deleted");
+        }
+        if (!database.deleteSettingsProfile(profileId)) {
+          throw new HttpError(404, "settings_profile_not_found", "Settings profile not found");
+        }
+        return new Response(null, { status: 204 });
+      }
     }
     if (controlRegistration) {
       const input = await readJsonObject<RegisterRepositoryRequest>(request);

@@ -3,7 +3,6 @@ import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
 import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
 import { installTerminalClipboardPaste } from "./terminalClipboardPaste.ts";
-import { installTerminalFontShortcuts } from "./terminalFontShortcuts.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 import {
   codeFontStack,
@@ -46,7 +45,6 @@ interface CreateBrowserTerminalPreviewOptions {
 let initialization: Promise<import("ghostty-web").Ghostty> | null = null;
 const encoder = new TextEncoder();
 const BUNDLED_TEXT_FONT_FAMILY = "Iosevka";
-const FONT_RESIZE_SETTLE_MS = 75;
 
 async function loadGhostty() {
   const ghostty = await import("ghostty-web");
@@ -274,7 +272,6 @@ export async function createBrowserTerminal(
   let hostWriteDepth = 0;
   let pendingCanvasRenders: BrowserTerminalWriteProfile[] | null = null;
   let keySubscription: { dispose(): void } | null = null;
-  let fontRefitTimer: number | null = null;
   const setLatencyKeyHandler = (handler: ((event: KeyboardEvent) => void) | null) => {
     keySubscription?.dispose();
     keySubscription = null;
@@ -312,23 +309,6 @@ export async function createBrowserTerminal(
   });
   fitAddon.observeResize();
   fitAddon.fit();
-  const disposeFontShortcuts = installTerminalFontShortcuts(options.container, {
-    initialFontSize: config.fontSize,
-    onFontSizeChange(fontSize) {
-      terminal.options.fontSize = fontSize;
-      applyAdjustedMetrics();
-      fitAddon.fit();
-      if (fontRefitTimer !== null) window.clearTimeout(fontRefitTimer);
-      // ghostty-web 0.4 ignores fit calls for 50ms after it resizes. Reconcile
-      // once a hotkey burst settles so the final font metrics fill the surface.
-      fontRefitTimer = window.setTimeout(() => {
-        fontRefitTimer = null;
-        fitAddon.fit();
-      }, FONT_RESIZE_SETTLE_MS);
-      terminal.focus();
-    },
-  });
-
   return {
     get cols() {
       return terminal.cols;
@@ -370,8 +350,6 @@ export async function createBrowserTerminal(
     },
     dispose() {
       disposeClipboardPaste();
-      disposeFontShortcuts();
-      if (fontRefitTimer !== null) window.clearTimeout(fontRefitTimer);
       disposeKeyRepeat();
       echoPaintController.reset();
       dataSubscription.dispose();

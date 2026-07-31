@@ -70,8 +70,17 @@ import {
   type SearchMatch,
   type SearchResponse,
   type ServerEvent,
+  type SettingsProfile,
+  type SettingsProfileData,
   type SourcePreviewResponse,
 } from "../shared/contracts.ts";
+import {
+  createDefaultSettingsProfileData,
+  DEFAULT_SETTINGS_PROFILE_ID,
+  effectiveKeybindings,
+  SETTINGS_PROFILE_SELECTION_KEY,
+  type CommandId,
+} from "../shared/settings.ts";
 import { ApiError, api } from "./api.ts";
 import { CodexCommentsPanel } from "./CodexCommentsPanel.tsx";
 import {
@@ -89,16 +98,19 @@ import {
   selectedRangeFromEndpoints,
 } from "./diffAdapter.ts";
 import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
-import { SettingsPage } from "./SettingsWorkspace.tsx";
+import { ProfileSettingsPage } from "./ProfileSettingsWorkspace.tsx";
 import { RemoteBridgeSheet } from "./RemoteBridgeSheet.tsx";
 import {
   codeFontStack,
-  loadTypographyPreferences,
-  saveTypographyPreferences,
   terminalRendererConfig,
   TYPOGRAPHY_LIMITS,
-  type TypographyPreferences,
 } from "./typographyPreferences.ts";
+import { CommandPalette } from "./CommandPalette.tsx";
+import {
+  COMMAND_DEFINITIONS,
+  type RuntimeCommand,
+} from "./commands.ts";
+import { formatShortcut, useShortcutEngine } from "./shortcutEngine.ts";
 
 type AppPhase = "loading" | "ready" | "error";
 type ReviewFilter = "all" | "unreviewed" | "reviewed";
@@ -110,6 +122,26 @@ type RestartPhase = "building" | "restarting" | "loading" | null;
 type WorkspaceMode = "review" | "terminal" | "settings";
 
 const SETTINGS_PATH = "/settings";
+
+function fallbackSettingsProfile(): SettingsProfile {
+  return {
+    id: DEFAULT_SETTINGS_PROFILE_ID,
+    name: "Default",
+    data: createDefaultSettingsProfileData(),
+    revision: 1,
+    createdAt: "",
+    updatedAt: "",
+  };
+}
+
+function storedSettingsProfileId(): string {
+  try {
+    return localStorage.getItem(SETTINGS_PROFILE_SELECTION_KEY) ??
+      DEFAULT_SETTINGS_PROFILE_ID;
+  } catch {
+    return DEFAULT_SETTINGS_PROFILE_ID;
+  }
+}
 
 function isSettingsPath(pathname = window.location.pathname): boolean {
   return pathname.replace(/\/+$/, "") === SETTINGS_PATH;
@@ -617,18 +649,14 @@ export function App() {
   const [fileQuery, setFileQuery] = useState("");
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [stageFilter, setStageFilter] = useState<StageFilter>("all");
-  const [typographyPreferences, setTypographyPreferencesState] =
-    useState<TypographyPreferences>(loadTypographyPreferences);
-  const [lineNumbersVisible, setLineNumbersVisible] = useStoredBoolean(
-    "couchview:line-numbers",
-    false,
-    "couch-review:line-numbers",
-  );
-  const [lineWrapEnabled, setLineWrapEnabled] = useStoredBoolean(
-    "couchview:line-wrap",
-    false,
-    "couch-review:line-wrap",
-  );
+  const [settingsProfiles, setSettingsProfiles] = useState<SettingsProfile[]>(() => [
+    fallbackSettingsProfile(),
+  ]);
+  const [activeSettingsProfileId, setActiveSettingsProfileId] =
+    useState(storedSettingsProfileId);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [shortcutRecording, setShortcutRecording] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [hunkNavigation, setHunkNavigation] = useState<HunkNavigation>(
     navigationBeforeFirstHunk,
   );
@@ -693,15 +721,20 @@ export function App() {
     setWorkspaceMode("review");
   }, []);
 
-  const setTypographyPreferences = useCallback((next: TypographyPreferences) => {
-    setTypographyPreferencesState(saveTypographyPreferences(next));
-  }, []);
-  const setFontSize = useCallback((fontSize: number) => {
-    setTypographyPreferencesState((current) => saveTypographyPreferences({
-      ...current,
-      diff: { ...current.diff, fontSize },
-    }));
-  }, []);
+  const activeSettingsProfile = useMemo(
+    () => settingsProfiles.find((profile) => profile.id === activeSettingsProfileId) ??
+      settingsProfiles.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID) ??
+      settingsProfiles[0] ??
+      fallbackSettingsProfile(),
+    [activeSettingsProfileId, settingsProfiles],
+  );
+  const typographyPreferences = activeSettingsProfile.data.typography;
+  const lineNumbersVisible = activeSettingsProfile.data.display.lineNumbersVisible;
+  const lineWrapEnabled = activeSettingsProfile.data.display.lineWrapEnabled;
+  const commandBindings = useMemo(
+    () => effectiveKeybindings(activeSettingsProfile.data.keyboard),
+    [activeSettingsProfile.data.keyboard],
+  );
   const fontSize = typographyPreferences.diff.fontSize;
   const terminalConfig = useMemo(
     () => terminalRendererConfig(typographyPreferences.terminal),
@@ -723,6 +756,11 @@ export function App() {
   const repositoryIdRef = useRef<string | null>(null);
   const operationRevisionRef = useRef("");
   const repositoryCatalogRef = useRef<RepositoryCatalogEntry[]>([]);
+  const settingsProfilesRef = useRef(settingsProfiles);
+  settingsProfilesRef.current = settingsProfiles;
+  const activeSettingsProfileIdRef = useRef(activeSettingsProfileId);
+  activeSettingsProfileIdRef.current = activeSettingsProfileId;
+  const settingsMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
   const repositoryLoadGenerationRef = useRef(0);
   const repositoryRequestRef = useRef<AbortController | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -925,6 +963,206 @@ export function App() {
     toastCounter.current += 1;
     setToast({ id: toastCounter.current, message, undo, details });
   }, []);
+
+  const applySettingsProfiles = useCallback((profiles?: SettingsProfile[]) => {
+    const next = profiles && profiles.length > 0 ? profiles : [fallbackSettingsProfile()];
+    settingsProfilesRef.current = next;
+    setSettingsProfiles(next);
+    setBootstrap((current) => current ? { ...current, settingsProfiles: next } : current);
+    const selectedId = activeSettingsProfileIdRef.current;
+    if (!next.some((profile) => profile.id === selectedId)) {
+      const fallback = next.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID) ?? next[0]!;
+      activeSettingsProfileIdRef.current = fallback.id;
+      setActiveSettingsProfileId(fallback.id);
+      try {
+        localStorage.setItem(SETTINGS_PROFILE_SELECTION_KEY, fallback.id);
+      } catch {
+        // The in-memory selection remains usable when local storage is unavailable.
+      }
+    }
+  }, []);
+
+  const replaceSettingsProfile = useCallback((profile: SettingsProfile) => {
+    const current = settingsProfilesRef.current;
+    const next = current.some((item) => item.id === profile.id)
+      ? current.map((item) => item.id === profile.id ? profile : item)
+      : [...current, profile];
+    applySettingsProfiles(next);
+  }, [applySettingsProfiles]);
+
+  const selectSettingsProfile = useCallback((profileId: string) => {
+    const selected = settingsProfilesRef.current.find((profile) => profile.id === profileId) ??
+      settingsProfilesRef.current.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID);
+    if (!selected) return;
+    activeSettingsProfileIdRef.current = selected.id;
+    setActiveSettingsProfileId(selected.id);
+    try {
+      localStorage.setItem(SETTINGS_PROFILE_SELECTION_KEY, selected.id);
+    } catch {
+      // The selection remains active for this page lifetime.
+    }
+  }, []);
+
+  const refreshSettingsProfiles = useCallback(async () => {
+    const response = await api.settingsProfiles();
+    applySettingsProfiles(response.profiles);
+    return response.profiles;
+  }, [applySettingsProfiles]);
+
+  const saveSettingsProfile = useCallback(async (
+    profileId: string,
+    name: string,
+    data: SettingsProfileData,
+    expectedRevision: number,
+  ) => {
+    if (!bootstrap || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      await settingsMutationQueueRef.current.catch(() => undefined);
+      const response = await api.updateSettingsProfile(
+        profileId,
+        { name, data, expectedRevision },
+        bootstrap.csrfToken,
+      );
+      replaceSettingsProfile(response.profile);
+      showToast(`Saved ${response.profile.name}`);
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "stale_settings_profile") {
+        await refreshSettingsProfiles().catch(() => undefined);
+      }
+      throw error;
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [
+    bootstrap,
+    refreshSettingsProfiles,
+    replaceSettingsProfile,
+    settingsBusy,
+    showToast,
+  ]);
+
+  const createSettingsProfile = useCallback(async (
+    name: string,
+    sourceProfileId?: string,
+  ) => {
+    if (!bootstrap || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      const response = await api.createSettingsProfile(
+        { name, ...(sourceProfileId ? { sourceProfileId } : {}) },
+        bootstrap.csrfToken,
+      );
+      replaceSettingsProfile(response.profile);
+      selectSettingsProfile(response.profile.id);
+      showToast(`Created ${response.profile.name}`);
+    } catch (error) {
+      showToast(messageOf(error));
+      throw error;
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [
+    bootstrap,
+    replaceSettingsProfile,
+    selectSettingsProfile,
+    settingsBusy,
+    showToast,
+  ]);
+
+  const deleteSettingsProfile = useCallback(async (profileId: string) => {
+    if (!bootstrap || settingsBusy) return;
+    setSettingsBusy(true);
+    try {
+      await api.deleteSettingsProfile(profileId, bootstrap.csrfToken);
+      applySettingsProfiles(
+        settingsProfilesRef.current.filter((profile) => profile.id !== profileId),
+      );
+      selectSettingsProfile(DEFAULT_SETTINGS_PROFILE_ID);
+      showToast("Deleted settings profile");
+    } catch (error) {
+      showToast(messageOf(error));
+      throw error;
+    } finally {
+      setSettingsBusy(false);
+    }
+  }, [
+    applySettingsProfiles,
+    bootstrap,
+    selectSettingsProfile,
+    settingsBusy,
+    showToast,
+  ]);
+
+  const updateActiveProfileData = useCallback((
+    update: (current: SettingsProfileData) => SettingsProfileData,
+  ) => {
+    const profileId = activeSettingsProfileIdRef.current;
+    const current = settingsProfilesRef.current.find((profile) => profile.id === profileId);
+    if (!current || !bootstrap) return;
+    const data = update(structuredClone(current.data));
+    const optimistic = { ...current, data };
+    replaceSettingsProfile(optimistic);
+    settingsMutationQueueRef.current = settingsMutationQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const latest = settingsProfilesRef.current.find((profile) => profile.id === profileId);
+        if (!latest) return;
+        const sentData = structuredClone(latest.data);
+        const response = await api.updateSettingsProfile(
+          profileId,
+          {
+            name: latest.name,
+            data: sentData,
+            expectedRevision: latest.revision,
+          },
+          bootstrap.csrfToken,
+        );
+        const after = settingsProfilesRef.current.find((profile) => profile.id === profileId);
+        const hasNewerOptimisticData = after &&
+          JSON.stringify(after.data) !== JSON.stringify(sentData);
+        replaceSettingsProfile(hasNewerOptimisticData
+          ? { ...response.profile, data: after.data }
+          : response.profile);
+      })
+      .catch(async (error) => {
+        await refreshSettingsProfiles().catch(() => undefined);
+        showToast(messageOf(error));
+      });
+  }, [bootstrap, refreshSettingsProfiles, replaceSettingsProfile, showToast]);
+
+  const setFontSize = useCallback((fontSize: number) => {
+    updateActiveProfileData((next) => {
+      next.typography.diff.fontSize = fontSize;
+      return next;
+    });
+  }, [updateActiveProfileData]);
+  const setLineNumbersVisible = useCallback((visible: boolean) => {
+    updateActiveProfileData((next) => {
+      next.display.lineNumbersVisible = visible;
+      return next;
+    });
+  }, [updateActiveProfileData]);
+  const setLineWrapEnabled = useCallback((enabled: boolean) => {
+    updateActiveProfileData((next) => {
+      next.display.lineWrapEnabled = enabled;
+      return next;
+    });
+  }, [updateActiveProfileData]);
+
+  useEffect(() => {
+    if (workspaceMode !== "settings" || !bootstrap) return;
+    let cancelled = false;
+    void settingsMutationQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!cancelled) await refreshSettingsProfiles();
+      })
+      .catch((error) => showToast(messageOf(error)));
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrap?.csrfToken, refreshSettingsProfiles, showToast, workspaceMode]);
 
   const reportFailure = useCallback(
     (error: unknown, context: string, toastMessage = true): FailureState => {
@@ -1404,6 +1642,7 @@ export function App() {
       clearAccessRefreshMarker();
       repositoryCatalogRef.current = nextBootstrap.repositories;
       setBootstrap(nextBootstrap);
+      applySettingsProfiles(nextBootstrap.settingsProfiles);
       const requestedId = currentUrl.searchParams.get("repo");
       const selected =
         nextBootstrap.repositories.find(
@@ -1431,7 +1670,7 @@ export function App() {
       setConnected(!(error instanceof ApiError && error.status === 0));
       setPhase("error");
     }
-  }, [clearRepositorySelection, loadRepository]);
+  }, [applySettingsProfiles, clearRepositorySelection, loadRepository]);
 
   const resetAppCache = useCallback(async () => {
     if (appCacheResetBusy) return;
@@ -1474,6 +1713,16 @@ export function App() {
   useEffect(() => {
     const onPopState = () => {
       const currentUrl = new URL(window.location.href);
+      if (
+        workspaceMode === "settings" &&
+        settingsDirty &&
+        !isSettingsPath(currentUrl.pathname) &&
+        !window.confirm("Discard unsaved profile changes?")
+      ) {
+        currentUrl.pathname = SETTINGS_PATH;
+        window.history.pushState({ couchviewPage: "settings" }, "", currentUrl);
+        return;
+      }
       setWorkspaceMode(isSettingsPath(currentUrl.pathname) ? "settings" : "review");
       const requestedId = currentUrl.searchParams.get("repo");
       const selected = repositoryCatalogRef.current.find(
@@ -1491,7 +1740,17 @@ export function App() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [clearRepositorySelection, loadRepository]);
+  }, [clearRepositorySelection, loadRepository, settingsDirty, workspaceMode]);
+
+  useEffect(() => {
+    if (!settingsDirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [settingsDirty]);
 
   useEffect(() => {
     if (phase !== "ready" || repositoryLoading || !repositoryId) return;
@@ -2444,6 +2703,15 @@ export function App() {
     ],
   );
 
+  const openCommitComposer = useCallback(() => {
+    commitMessageRequestRef.current?.abort();
+    commitMessageRequestRef.current = null;
+    setCommitMessageBusy(false);
+    setDrawerOpen(false);
+    setCommitMessage("");
+    setCommitComposerOpen(true);
+  }, []);
+
   const closeCommitComposer = useCallback(() => {
     commitMessageRequestRef.current?.abort();
     commitMessageRequestRef.current = null;
@@ -2965,67 +3233,6 @@ export function App() {
     setPendingCommentJump(null);
   }, [diff, pendingCommentJump, rows]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (workspaceMode === "terminal") return;
-      const overlayOpen =
-        repositoryPickerOpen ||
-        remoteBridgeOpen ||
-        searchOpen ||
-        failureDetailsOpen ||
-        commitComposerOpen ||
-        Boolean(selectedPackageRunId) ||
-        commentComposerOpen ||
-        commentTrayOpen ||
-        Boolean(copyFallbackText) ||
-        (!desktop && drawerOpen);
-      if (event.key === "Escape" && overlayOpen) {
-        event.preventDefault();
-        if (copyFallbackText) setCopyFallbackText("");
-        else if (failureDetailsOpen) setFailureDetailsOpen(false);
-        else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
-        else if (remoteBridgeOpen) setRemoteBridgeOpen(false);
-        else if (commitComposerOpen) closeCommitComposer();
-        else if (selectedPackageRunId) setSelectedPackageRunId(null);
-        else if (commentComposerOpen) setCommentComposerOpen(false);
-        else if (commentTrayOpen) setCommentTrayOpen(false);
-        else if (searchOpen) setSearchOpen(false);
-        else setDrawerOpen(false);
-        return;
-      }
-      if (overlayOpen) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
-      if (event.key === "]") navigateFile(1);
-      if (event.key === "[") navigateFile(-1);
-      if (event.key.toLocaleLowerCase() === "j") navigateHunk(1);
-      if (event.key.toLocaleLowerCase() === "k") navigateHunk(-1);
-      if (event.key.toLocaleLowerCase() === "r" && activeFile) {
-        void setReviewed(activeFile, !activeFile.reviewed, false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    activeFile,
-    closeCommitComposer,
-    commitComposerOpen,
-    commentComposerOpen,
-    commentTrayOpen,
-    copyFallbackText,
-    desktop,
-    drawerOpen,
-    failureDetailsOpen,
-    navigateFile,
-    navigateHunk,
-    repositoryPickerOpen,
-    remoteBridgeOpen,
-    searchOpen,
-    selectedPackageRunId,
-    setReviewed,
-    workspaceMode,
-  ]);
-
   const overlayVisible =
     repositoryPickerOpen ||
     remoteBridgeOpen ||
@@ -3037,6 +3244,258 @@ export function App() {
     commentTrayOpen ||
     Boolean(copyFallbackText) ||
     (!desktop && drawerOpen);
+
+  const dismissCommandOverlays = useCallback(() => {
+    setRepositoryPickerOpen(false);
+    setRemoteBridgeOpen(false);
+    setSearchOpen(false);
+    setFailureDetailsOpen(false);
+    closeCommitComposer();
+    setSelectedPackageRunId(null);
+    setCommentComposerOpen(false);
+    setCommentTrayOpen(false);
+    setCopyFallbackText("");
+    setDrawerOpen(false);
+  }, [closeCommitComposer]);
+
+  const showReviewWorkspace = useCallback((): boolean => {
+    if (
+      workspaceMode === "settings" &&
+      settingsDirty &&
+      !window.confirm("Discard unsaved profile changes?")
+    ) {
+      return false;
+    }
+    const url = new URL(window.location.href);
+    if (isSettingsPath(url.pathname)) {
+      url.pathname = "/";
+      window.history.replaceState(null, "", url);
+    }
+    setWorkspaceMode("review");
+    return true;
+  }, [settingsDirty, workspaceMode]);
+
+  const runtimeCommands = useMemo(() => {
+    const command = (
+      id: CommandId,
+      enabled: boolean,
+      disabledReason: string | null,
+      perform: () => void,
+    ): RuntimeCommand => ({
+      ...COMMAND_DEFINITIONS[id],
+      binding: commandBindings[id],
+      enabled,
+      disabledReason: enabled ? null : disabledReason,
+      perform,
+    });
+    const hasRepository = Boolean(repositoryId && repository);
+    return {
+      "palette.open": command("palette.open", true, null, () => {
+        setCommandPaletteOpen((current) => !current);
+      }),
+      "navigate.review": command("navigate.review", true, null, () => {
+        if (!showReviewWorkspace()) return;
+        dismissCommandOverlays();
+      }),
+      "navigate.terminal": command(
+        "navigate.terminal",
+        hasRepository && terminalCapability.available,
+        terminalCapability.reason ?? "Select a repository first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          openTerminalWorkspace();
+        },
+      ),
+      "navigate.remote": command(
+        "navigate.remote",
+        hasRepository,
+        "Select a repository first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          setRemoteBridgeOpen(true);
+        },
+      ),
+      "navigate.settings": command("navigate.settings", true, null, () => {
+        dismissCommandOverlays();
+        openSettingsPage();
+      }),
+      "repository.switch": command(
+        "repository.switch",
+        bootstrap !== null,
+        "Couchview is still loading",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          openRepositoryPicker();
+        },
+      ),
+      "panel.files": command(
+        "panel.files",
+        hasRepository,
+        "Select a repository first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          setDrawerView("files");
+          setDrawerOpen(true);
+        },
+      ),
+      "panel.packageCommands": command(
+        "panel.packageCommands",
+        hasRepository,
+        "Select a repository first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          setDrawerView("commands");
+          setDrawerOpen(true);
+        },
+      ),
+      "search.open": command(
+        "search.open",
+        Boolean(activeFile && repositoryId),
+        "Open a changed file first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          setSearchQuery("");
+          setSearchScope("current");
+          setSourcePreview(null);
+          setSearchOpen(true);
+          window.setTimeout(() => searchInputRef.current?.focus(), 30);
+        },
+      ),
+      "commit.open": command(
+        "commit.open",
+        stagedCount > 0 && !commitBusy,
+        stagedCount === 0 ? "Stage changes before committing" : "A commit is already running",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          openCommitComposer();
+        },
+      ),
+      "comments.open": command(
+        "comments.open",
+        hasRepository,
+        "Select a repository first",
+        () => {
+          if (!showReviewWorkspace()) return;
+          dismissCommandOverlays();
+          setFocusedCommentId(null);
+          setCommentTrayOpen(true);
+        },
+      ),
+      "file.toggleStage": command(
+        "file.toggleStage",
+        Boolean(activeFile) && !stageBusy && bulkStageBusy === null,
+        activeFile ? "A staging operation is already running" : "Open a changed file first",
+        () => void toggleStageActiveFile(),
+      ),
+      "file.toggleReviewed": command(
+        "file.toggleReviewed",
+        Boolean(activeFile) && !reviewBusy,
+        activeFile ? "A review update is already running" : "Open a changed file first",
+        () => {
+          if (activeFile) void setReviewed(activeFile, !activeFile.reviewed, false);
+        },
+      ),
+      "file.previous": command(
+        "file.previous",
+        activeFileIndex > 0,
+        "This is the first file",
+        () => navigateFile(-1),
+      ),
+      "file.next": command(
+        "file.next",
+        activeFileIndex >= 0 && activeFileIndex < files.length - 1,
+        "This is the last file",
+        () => navigateFile(1),
+      ),
+      "hunk.previous": command(
+        "hunk.previous",
+        workspaceMode === "review" && canNavigatePreviousHunk,
+        workspaceMode === "review" ? "There is no previous hunk" : "Open diff review first",
+        () => navigateHunk(-1),
+      ),
+      "hunk.next": command(
+        "hunk.next",
+        workspaceMode === "review" && canNavigateNextHunk,
+        workspaceMode === "review" ? "There is no next hunk" : "Open diff review first",
+        () => navigateHunk(1),
+      ),
+    } satisfies Record<CommandId, RuntimeCommand>;
+  }, [
+    activeFile,
+    activeFileIndex,
+    bootstrap,
+    bulkStageBusy,
+    canNavigateNextHunk,
+    canNavigatePreviousHunk,
+    commandBindings,
+    commitBusy,
+    dismissCommandOverlays,
+    files.length,
+    navigateFile,
+    navigateHunk,
+    openCommitComposer,
+    openRepositoryPicker,
+    openSettingsPage,
+    openTerminalWorkspace,
+    repository,
+    repositoryId,
+    reviewBusy,
+    setReviewed,
+    showReviewWorkspace,
+    stageBusy,
+    stagedCount,
+    terminalCapability.available,
+    terminalCapability.reason,
+    toggleStageActiveFile,
+    workspaceMode,
+  ]);
+
+  const { pending: pendingShortcut } = useShortcutEngine({
+    bindings: commandBindings,
+    commands: runtimeCommands,
+    paletteOpen: commandPaletteOpen,
+    recording: shortcutRecording,
+    restricted: workspaceMode === "terminal" || overlayVisible,
+  });
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (commandPaletteOpen || event.key !== "Escape" || !overlayVisible) return;
+      event.preventDefault();
+      if (copyFallbackText) setCopyFallbackText("");
+      else if (failureDetailsOpen) setFailureDetailsOpen(false);
+      else if (repositoryPickerOpen) setRepositoryPickerOpen(false);
+      else if (remoteBridgeOpen) setRemoteBridgeOpen(false);
+      else if (commitComposerOpen) closeCommitComposer();
+      else if (selectedPackageRunId) setSelectedPackageRunId(null);
+      else if (commentComposerOpen) setCommentComposerOpen(false);
+      else if (commentTrayOpen) setCommentTrayOpen(false);
+      else if (searchOpen) setSearchOpen(false);
+      else setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    closeCommitComposer,
+    commandPaletteOpen,
+    commitComposerOpen,
+    commentComposerOpen,
+    commentTrayOpen,
+    copyFallbackText,
+    failureDetailsOpen,
+    overlayVisible,
+    remoteBridgeOpen,
+    repositoryPickerOpen,
+    searchOpen,
+    selectedPackageRunId,
+  ]);
 
   useEffect(() => {
     if (!overlayVisible) return;
@@ -3092,10 +3551,12 @@ export function App() {
     <TerminalWorkspace
       active={workspaceMode === "terminal"}
       capability={terminalCapability}
+      commandPaletteShortcut={formatShortcut(commandBindings["palette.open"])}
       csrfToken={bootstrap.csrfToken}
       onBack={() => setWorkspaceMode("review")}
       onEnded={() => showToast("tmux session ended")}
       onNotice={showToast}
+      onOpenCommandPalette={() => setCommandPaletteOpen(true)}
       rendererConfig={terminalConfig}
       repositoryId={repositoryId}
       repositoryName={repository.name}
@@ -3114,17 +3575,41 @@ export function App() {
       </span>
     </div>
   ) : null;
+  const globalCommandUi = (
+    <>
+      <CommandPalette
+        commands={runtimeCommands}
+        onOpenChange={setCommandPaletteOpen}
+        open={commandPaletteOpen}
+      />
+      {pendingShortcut.length > 0 && (
+        <div aria-live="polite" className="shortcut-pending-hud" role="status">
+          {formatShortcut(pendingShortcut)}
+        </div>
+      )}
+    </>
+  );
 
-  if (workspaceMode === "settings") {
+  if (workspaceMode === "settings" && phase === "ready" && bootstrap) {
     return (
       <>
         {terminalWorkspace}
-        <SettingsPage
+        <ProfileSettingsPage
+          busy={settingsBusy}
+          commandPaletteShortcut={formatShortcut(commandBindings["palette.open"])}
           onBack={closeSettingsPage}
-          onChange={setTypographyPreferences}
+          onCreate={(name) => createSettingsProfile(name)}
+          onDelete={deleteSettingsProfile}
           onDirtyChange={setSettingsDirty}
-          preferences={typographyPreferences}
+          onDuplicate={(profileId, name) => createSettingsProfile(name, profileId)}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onRecordingChange={setShortcutRecording}
+          onSave={saveSettingsProfile}
+          onSelect={selectSettingsProfile}
+          profile={activeSettingsProfile}
+          profiles={settingsProfiles}
         />
+        {globalCommandUi}
         {pwaRefreshToast && (
           <div className="toast-stack" aria-live="polite">
             {pwaRefreshToast}
@@ -3136,13 +3621,16 @@ export function App() {
 
   if (phase === "loading") {
     return (
-      <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
-        <div className="loading-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
-          <LoaderCircle className="state-icon spinner" size={30} />
-          <h1 className="state-title">Opening repository…</h1>
-          <p className="state-copy">Reading changed files and restoring review notes.</p>
-        </div>
-      </main>
+      <>
+        <main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
+          <div className="loading-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
+            <LoaderCircle className="state-icon spinner" size={30} />
+            <h1 className="state-title">Opening repository…</h1>
+            <p className="state-copy">Reading changed files and restoring settings.</p>
+          </div>
+        </main>
+        {globalCommandUi}
+      </>
     );
   }
 
@@ -3249,6 +3737,7 @@ export function App() {
   return (
     <>
       {terminalWorkspace}
+      {globalCommandUi}
       <main
         className={`app-shell ${compactLandscape ? "compact-landscape" : ""} ${workspaceMode === "terminal" ? "terminal-active" : ""}`}
       >
@@ -3544,14 +4033,7 @@ export function App() {
                   <button
                     className="action-button commit-action"
                     disabled={stagedCount === 0 || commitBusy}
-                    onClick={() => {
-                      commitMessageRequestRef.current?.abort();
-                      commitMessageRequestRef.current = null;
-                      setCommitMessageBusy(false);
-                      setDrawerOpen(false);
-                      setCommitMessage("");
-                      setCommitComposerOpen(true);
-                    }}
+                    onClick={openCommitComposer}
                     type="button"
                   >
                     <GitCommitHorizontal size={16} />
@@ -3676,6 +4158,16 @@ export function App() {
             </button>
           </div>
         )}
+        <button
+          aria-label="Open command palette"
+          className="icon-button command-palette-trigger"
+          onClick={() => setCommandPaletteOpen(true)}
+          title={`Open command palette (${formatShortcut(commandBindings["palette.open"])})`}
+          type="button"
+        >
+          <Search size={18} />
+          {desktop && <kbd>{formatShortcut(commandBindings["palette.open"])}</kbd>}
+        </button>
         <button
           aria-label="Set up native IDE"
           className="icon-button remote-bridge-launch-button"

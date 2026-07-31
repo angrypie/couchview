@@ -22,6 +22,7 @@ import {
   type ReviewStateResponse,
   type RepositoryCatalogResponse,
   type CreateRemoteBridgePairingRequest,
+  type CreateSettingsProfileRequest,
   type RemoteBridgeDevicesResponse,
   type RemoteBridgePairingResponse,
   type ForgetRepositoryResponse,
@@ -38,6 +39,8 @@ import {
   type StageFileResponse,
   type StageFilesRequest,
   type StageFilesResponse,
+  type SettingsProfileResponse,
+  type SettingsProfilesResponse,
   type StartPackageRunRequest,
   type TerminalAttachmentRequest,
   type TerminalAttachmentResponse,
@@ -46,6 +49,7 @@ import {
   type TerminalLeaseResponse,
   type TerminalSessionStatus,
   type UpdateCommentRequest,
+  type UpdateSettingsProfileRequest,
 } from "../shared/contracts.ts";
 
 export class ApiError extends Error {
@@ -164,6 +168,47 @@ export const api = {
 
   repositories(signal?: AbortSignal) {
     return request<RepositoryCatalogResponse>(API_ROUTES.repositories, { signal });
+  },
+
+  settingsProfiles(signal?: AbortSignal) {
+    return request<SettingsProfilesResponse>(API_ROUTES.settingsProfiles, { signal });
+  },
+
+  createSettingsProfile(
+    body: CreateSettingsProfileRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<SettingsProfileResponse>(
+      API_ROUTES.settingsProfiles,
+      { method: "POST", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  updateSettingsProfile(
+    profileId: string,
+    body: UpdateSettingsProfileRequest,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<SettingsProfileResponse>(
+      API_ROUTES.settingsProfile(profileId),
+      { method: "PUT", body: JSON.stringify(body), signal },
+      csrfToken,
+    );
+  },
+
+  deleteSettingsProfile(
+    profileId: string,
+    csrfToken: string,
+    signal?: AbortSignal,
+  ) {
+    return request<void>(
+      API_ROUTES.settingsProfile(profileId),
+      { method: "DELETE", signal },
+      csrfToken,
+    );
   },
 
   remoteBridgeDevices(repositoryId: string, signal?: AbortSignal) {

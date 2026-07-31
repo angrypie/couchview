@@ -5,6 +5,7 @@ import {
   Bug,
   LoaderCircle,
   RotateCw,
+  Search,
   ShieldCheck,
   SquareTerminal,
   Trash2,
@@ -52,11 +53,13 @@ type ConnectionState =
 interface TerminalWorkspaceProps {
   active: boolean;
   capability: TerminalCapability;
+  commandPaletteShortcut?: string;
   csrfToken: string;
   rendererConfig: TerminalRendererConfig;
   repositoryId: string;
   repositoryName: string;
   onBack(): void;
+  onOpenCommandPalette?(): void;
   onEnded(): void;
   onNotice(message: string): void;
 }
@@ -117,11 +120,13 @@ function transportLabel(status: TerminalTransportStatus): string {
 export function TerminalWorkspace({
   active,
   capability,
+  commandPaletteShortcut = "",
   csrfToken,
   rendererConfig,
   repositoryId,
   repositoryName,
   onBack,
+  onOpenCommandPalette = () => undefined,
   onEnded,
   onNotice,
 }: TerminalWorkspaceProps) {
@@ -732,6 +737,18 @@ export function TerminalWorkspace({
           </span>
         </div>
         <div className="terminal-toolbar-actions">
+          <button
+            aria-label="Open command palette"
+            className="terminal-toolbar-button command-palette-trigger"
+            onClick={onOpenCommandPalette}
+            type="button"
+          >
+            <Search size={15} />
+            <span className="workspace-command-label">Commands</span>
+            {commandPaletteShortcut && (
+              <kbd className="workspace-command-shortcut">{commandPaletteShortcut}</kbd>
+            )}
+          </button>
           {transportStatus === "fallback" && webRtcConfigurationRef.current && (
             <button
               className="terminal-toolbar-button"
