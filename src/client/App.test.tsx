@@ -21,10 +21,15 @@ import {
   type TypographyPreferences,
 } from "./typographyPreferences.ts";
 
+let pwaNeedRefresh = false;
+let pwaUpdateCalls = 0;
+
 mock.module("virtual:pwa-register/react", () => ({
   useRegisterSW: () => ({
-    needRefresh: [false, () => undefined],
-    updateServiceWorker: async () => undefined,
+    needRefresh: [pwaNeedRefresh, () => undefined],
+    updateServiceWorker: async () => {
+      pwaUpdateCalls += 1;
+    },
   }),
 }));
 
@@ -474,6 +479,8 @@ describe("Couchview app", () => {
     remoteBridgeAvailable = false;
     remoteBridgeDevices = [];
     bootstrapFailureStatus = null;
+    pwaNeedRefresh = false;
+    pwaUpdateCalls = 0;
     resetRendererState();
     resetFakeTerminalWebSockets();
     EventSourceStub.instances.length = 0;
@@ -933,6 +940,28 @@ describe("Couchview app", () => {
       configurable: true,
       value: originalWebSocket,
     });
+  });
+
+  test("applies a safe launch update silently", async () => {
+    pwaNeedRefresh = true;
+    render(<App />);
+
+    await waitFor(() => expect(pwaUpdateCalls).toBe(1));
+    expect(screen.queryByText("An app update is ready.")).toBeNull();
+  });
+
+  test("keeps the update prompt when Settings may contain unapplied changes", async () => {
+    window.history.replaceState(null, "", "/settings");
+    const view = render(<App />);
+
+    await screen.findByRole("region", { name: "Settings" });
+    fireEvent.change(screen.getAllByLabelText("Font size")[0]!, {
+      target: { value: "14" },
+    });
+    pwaNeedRefresh = true;
+    view.rerender(<App />);
+    expect(screen.getByText("An app update is ready.")).toBeTruthy();
+    expect(pwaUpdateCalls).toBe(0);
   });
 
   test("resizes, reviews and advances, then navigates back", async () => {

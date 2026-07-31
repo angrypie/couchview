@@ -376,7 +376,7 @@ outbound connections to Cloudflare. If the token is disclosed, refresh it in the
 tunnel's **Overview** page and reinstall the connector service with the replacement
 token.
 
-### Native IDE bridge (Zed)
+### Native SSH bridge (Zed and Codex CLI)
 
 Couchview can make a repository on the host Mac available to a normal remote IDE
 without publishing TCP port 22. Zed invokes the system OpenSSH client, OpenSSH invokes
@@ -523,6 +523,44 @@ Then pair the MacBook Air:
 4. Choose **Open in Zed** after the device appears, or open the printed `zed://ssh/...`
    URL. Zed performs its normal remote-server installation through OpenSSH on first
    connection.
+
+To keep the Codex terminal UI on the Air while Codex reads files and runs commands on
+the Mini, use the profile ID printed by the pairing command:
+
+```sh
+couchview bridge codex --profile <profile-id>
+```
+
+Pairing authorizes the Couchview transport but does not replace macOS SSH
+authentication. Before the first Codex launch, connect to the printed SSH host once
+to verify its host key and login:
+
+```sh
+ssh <couchview-ssh-host>
+```
+
+For password-free launches, install the Air's public key on the Mini first, for
+example with `ssh-copy-id <couchview-ssh-host>`, and confirm that the plain `ssh`
+command succeeds.
+
+When only one bridge profile is stored, `--profile` can be omitted. An SSH host alias
+can also be used in place of the profile ID. Arguments after `--` are forwarded to the
+Air's Codex CLI, for example:
+
+```sh
+couchview bridge codex --profile couchview-project-name-12345678 -- \
+  --model gpt-5.4
+```
+
+The launcher selects private loopback ports, starts
+`codex app-server --listen ws://127.0.0.1:<port>` in the paired repository through the
+Mini's login shell, waits for its readiness endpoint through an OpenSSH local forward,
+and then runs `codex --remote ws://127.0.0.1:<local-port>` on the Air. The app-server
+and forward stop when the local Codex TUI exits. The Air and Mini both need a compatible
+Codex CLI, and the Mini must already be authenticated with `codex login`. No Codex TCP
+port is exposed beyond loopback. Because the forward is an ordinary SSH channel, it
+automatically uses Couchview's WebRTC path when available and its protected WebSocket
+fallback otherwise.
 
 The automation keeps Couchview profiles in
 `${XDG_CONFIG_HOME:-$HOME/.config}/couchview/remote-bridges.json`, writes managed SSH

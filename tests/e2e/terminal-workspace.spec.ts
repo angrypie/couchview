@@ -190,9 +190,27 @@ test.describe("desktop tmux terminal", () => {
       "hello-from-browser",
     );
 
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.evaluate(() => navigator.clipboard.writeText("pasted-with-primary-v"));
-    await page.keyboard.press(`${primaryModifier}+V`);
+    const pasteDefaultPreserved = await terminalSurface.evaluate((surface) => {
+      const textarea = surface.querySelector("textarea");
+      if (!textarea) return false;
+      const keydown = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        code: "KeyK",
+        key: "v",
+        metaKey: true,
+      });
+      textarea.dispatchEvent(keydown);
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "pasted-with-primary-v");
+      textarea.dispatchEvent(new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }));
+      return !keydown.defaultPrevented;
+    });
+    expect(pasteDefaultPreserved).toBe(true);
     await expect.poll(async () => (await state()).inputs.join("")).toContain(
       "pasted-with-primary-v",
     );

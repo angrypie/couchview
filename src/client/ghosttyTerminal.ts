@@ -266,11 +266,7 @@ export async function createBrowserTerminal(
   const fitAddon = new ghostty.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(options.container);
-  const disposeClipboardPaste = installTerminalClipboardPaste(options.container, {
-    onPaste(text) {
-      terminal.paste(text);
-    },
-  });
+  const disposeClipboardPaste = installTerminalClipboardPaste(options.container);
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
   const terminalRenderer = terminal.renderer;
   const originalRender = terminalRenderer?.render;

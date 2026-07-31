@@ -155,8 +155,8 @@ const optionDefinitions: readonly CliOptionDefinition[] = [
   {
     name: "profile",
     type: "string",
-    valueName: "id",
-    description: "Saved bridge profile used by the SSH ProxyCommand.",
+    valueName: "id-or-host",
+    description: "Saved bridge profile ID or managed SSH host alias.",
     commands: ["bridge"],
   },
   {
@@ -227,6 +227,11 @@ export type CliInvocation =
   | {
       kind: "bridge-proxy";
       profileId: string;
+    }
+  | {
+      kind: "bridge-codex";
+      profileSelector: string | null;
+      codexArgs: string[];
     }
   | {
       kind: "help";
@@ -521,13 +526,16 @@ function parseCompletionArguments(args: string[]): {
 }
 
 function parseBridgeArguments(args: string[]): CliInvocation {
-  const parsed = parseOptions("bridge", args);
+  const separatorIndex = args.indexOf("--");
+  const bridgeArgs = separatorIndex >= 0 ? args.slice(0, separatorIndex) : args;
+  const passthroughArgs = separatorIndex >= 0 ? args.slice(separatorIndex + 1) : [];
+  const parsed = parseOptions("bridge", bridgeArgs);
   rejectDuplicateOptions("bridge", parsed.tokens);
   if (booleanValue(parsed.values, "help")) return { kind: "help", command: "bridge" };
   if (booleanValue(parsed.values, "version")) return { kind: "version" };
   if (parsed.positionals.length !== 1) {
     throw new CliUsageError(
-      "The bridge command requires exactly one action: pair or proxy.",
+      "The bridge command requires exactly one action: pair, proxy, or codex.",
       "bridge",
     );
   }
@@ -555,6 +563,12 @@ function parseBridgeArguments(args: string[]): CliInvocation {
     );
   }
   if (action === "pair") {
+    if (passthroughArgs.length > 0) {
+      throw new CliUsageError(
+        "Arguments after '--' are only valid for bridge codex.",
+        "bridge",
+      );
+    }
     if (!origin || !code) {
       throw new CliUsageError(
         "The pair action requires --url and --code.",
@@ -562,11 +576,20 @@ function parseBridgeArguments(args: string[]): CliInvocation {
       );
     }
     if (profileId) {
-      throw new CliUsageError("--profile is only valid for bridge proxy.", "bridge");
+      throw new CliUsageError(
+        "--profile is only valid for bridge proxy or bridge codex.",
+        "bridge",
+      );
     }
     return { kind: "bridge-pair", origin, code, originAccess };
   }
   if (action === "proxy") {
+    if (passthroughArgs.length > 0) {
+      throw new CliUsageError(
+        "Arguments after '--' are only valid for bridge codex.",
+        "bridge",
+      );
+    }
     if (!profileId) {
       throw new CliUsageError("The proxy action requires --profile.", "bridge");
     }
@@ -578,7 +601,20 @@ function parseBridgeArguments(args: string[]): CliInvocation {
     }
     return { kind: "bridge-proxy", profileId };
   }
-  const suggestion = nearestValue(action ?? "", ["pair", "proxy"]);
+  if (action === "codex") {
+    if (origin || code || explicitOriginAccess || cloudflareAccess) {
+      throw new CliUsageError(
+        "--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
+        "bridge",
+      );
+    }
+    return {
+      kind: "bridge-codex",
+      profileSelector: profileId ?? null,
+      codexArgs: passthroughArgs,
+    };
+  }
+  const suggestion = nearestValue(action ?? "", ["pair", "proxy", "codex"]);
   throw new CliUsageError(
     `Unknown bridge action '${action ?? ""}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
     "bridge",
@@ -729,14 +765,14 @@ Usage:
   couchview [options]
   couchview serve [repository] [options]
   couchview restart [options]
-  couchview bridge <pair|proxy> [options]
+  couchview bridge <pair|proxy|codex> [options]
   couchview completion <shell> [--install]
   couchview help [command]
 
 Commands:
   serve       Start Couchview or add a repository to the running server.
   restart     Rebuild and restart the running production server.
-  bridge      Pair an IDE device or run its SSH transport proxy.
+  bridge      Pair a native client or connect Zed and Codex through SSH.
   completion  Print a zsh, bash, or fish completion script.
   help        Show general or command-specific help.
 
@@ -780,18 +816,21 @@ Examples:
   }
 
   if (command === "bridge") {
-    return `Pair a development device or run Couchview's SSH transport proxy.
+    return `Pair a development device, run the SSH proxy, or connect Codex remotely.
 
 Usage:
   couchview bridge pair --url <origin> --code <code> [--origin-access <provider>]
   couchview bridge proxy --profile <id>
+  couchview bridge codex [--profile <id-or-host>] [-- <codex-arguments>]
 
 Options:
 ${renderOptionList(optionsFor("bridge"))}
 
 The pair command stores a private device credential and installs a managed
 OpenSSH host alias. The proxy command is invoked automatically by OpenSSH and
-must not be run interactively.`;
+must not be run interactively. The codex command keeps the terminal UI on this
+computer while Codex executes in the paired repository through SSH. Verify the
+managed host with plain ssh first; normal SSH host-key and login checks apply.`;
   }
 
   return `Start Couchview or add a repository to the running server.
@@ -899,7 +938,7 @@ _couchview() {
       ;;
     bridge)
       _arguments ${specs("bridge")} \\
-        '1:action:(pair proxy)'
+        '1:action:(pair proxy codex)'
       ;;
     help)
       _arguments '1:command:(serve restart bridge completion)'
@@ -965,7 +1004,7 @@ _couchview() {
       COMPREPLY=( $(compgen -W 'zsh bash fish' -- "$cur") )
       ;;
     bridge)
-      COMPREPLY=( $(compgen -W 'pair proxy' -- "$cur") )
+      COMPREPLY=( $(compgen -W 'pair proxy codex' -- "$cur") )
       ;;
     help)
       COMPREPLY=( $(compgen -W 'serve restart bridge completion' -- "$cur") )
@@ -1023,7 +1062,7 @@ end
 
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a serve -d 'Start Couchview'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a restart -d 'Restart the running server'
-complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a bridge -d 'Pair a native IDE bridge'
+complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a bridge -d 'Connect native tools through SSH'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a completion -d 'Print shell completion'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a help -d 'Show command help'
 
@@ -1033,7 +1072,7 @@ complete -c couchview -n '__fish_couchview_using_explicit_command serve' -f -a '
 ${fishOptionLines("restart")}
 
 ${fishOptionLines("bridge")}
-complete -c couchview -n '__fish_couchview_using_command bridge' -f -a 'pair proxy' -d 'Bridge action'
+complete -c couchview -n '__fish_couchview_using_command bridge' -f -a 'pair proxy codex' -d 'Bridge action'
 
 ${fishOptionLines("completion")}
 complete -c couchview -n '__fish_couchview_using_command completion' -f -a 'zsh bash fish' -d 'Shell'

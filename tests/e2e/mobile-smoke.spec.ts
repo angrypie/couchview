@@ -846,7 +846,7 @@ test.describe("production PWA", () => {
     await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
   });
 
-  test("keeps documents and APIs network-only while preserving install and update affordances", async ({
+  test("keeps documents and APIs network-only while guarding unsaved work during updates", async ({
     context,
     page,
   }) => {
@@ -953,6 +953,18 @@ test.describe("production PWA", () => {
     });
     await expect(page.getByText("Install Couchview for full-screen access.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Not now" }).click();
+
+    await page.getByRole("button", { name: "Show line numbers" }).click();
+    await page.getByRole("button", { name: "Select old line 2" }).click();
+    await page.getByRole("button", { name: "Select new line 2" }).click();
+    const selection = page.getByRole("status").filter({
+      hasText: "Old lines 2 / new lines 2",
+    });
+    await selection.getByRole("button", { name: "Comment" }).click();
+    await page
+      .getByPlaceholder("Describe the issue and the expected correction…")
+      .fill("Unsaved update-guard draft");
 
     await page.evaluate(async () => {
       const registration = await navigator.serviceWorker.register(
@@ -976,6 +988,7 @@ test.describe("production PWA", () => {
     });
     await expect(page.getByText("An app update is ready.")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
+    await page.getByRole("button", { name: "Later" }).click();
 
     await context.setOffline(true);
     try {

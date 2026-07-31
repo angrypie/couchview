@@ -1,7 +1,5 @@
 interface TerminalClipboardPasteOptions {
   isApplePlatform?: boolean;
-  onPaste(text: string): void;
-  readText?: () => Promise<string>;
 }
 
 function applePlatform(navigator: Navigator | undefined): boolean {
@@ -15,35 +13,29 @@ function applePlatform(navigator: Navigator | undefined): boolean {
 
 export function installTerminalClipboardPaste(
   container: HTMLElement,
-  options: TerminalClipboardPasteOptions,
+  options: TerminalClipboardPasteOptions = {},
 ): () => void {
   const browserNavigator = container.ownerDocument.defaultView?.navigator;
   const isApplePlatform = options.isApplePlatform ?? applePlatform(browserNavigator);
-  const canReadText = options.readText !== undefined || Boolean(browserNavigator?.clipboard?.readText);
-  const readText = options.readText ?? (() => browserNavigator!.clipboard.readText());
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (
-      event.code !== "KeyV" ||
+      event.key.toLowerCase() !== "v" ||
       event.altKey ||
       event.shiftKey ||
       event.isComposing ||
       (isApplePlatform
         ? !event.metaKey || event.ctrlKey
-        : !event.ctrlKey || event.metaKey) ||
-      !canReadText
+        : !event.ctrlKey || event.metaKey)
     ) {
       return;
     }
 
-    event.preventDefault();
+    // ghostty-web 0.4 recognizes paste by the physical KeyV code. Stop its
+    // key encoder for layouts where the V character lives on another key,
+    // but preserve the browser default so it can dispatch a trusted paste
+    // event without requesting Clipboard API access.
     event.stopImmediatePropagation();
-    void readText().then((text) => {
-      if (text) options.onPaste(text);
-    }).catch(() => {
-      // Clipboard reads can be denied by browser or OS policy. Keep the
-      // terminal focused and leave its contents unchanged in that case.
-    });
   };
 
   container.addEventListener("keydown", onKeyDown, true);

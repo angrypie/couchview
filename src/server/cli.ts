@@ -40,6 +40,7 @@ import {
   remoteBridgeZedUrl,
   runRemoteBridgeProxy,
 } from "./remoteBridgeClient.ts";
+import { runRemoteCodex } from "./remoteCodexClient.ts";
 import {
   createCouchviewApp,
   hostForUrl,
@@ -120,6 +121,10 @@ interface RunCliRuntime {
     originAccess: string;
   }): Promise<RemoteBridgeProfile>;
   proxyBridge(profileId: string): Promise<number>;
+  codexBridge(options: {
+    profileSelector: string | null;
+    codexArgs: string[];
+  }): Promise<number>;
   installCompletion(shell: CompletionShell): Promise<string>;
   createPrompter(): InteractivePrompter;
   stdout(message: string): void;
@@ -1202,6 +1207,8 @@ export async function runCli(
     restart: runtimeOverrides.restart ?? restartRunningServer,
     pairBridge: runtimeOverrides.pairBridge ?? pairRemoteBridge,
     proxyBridge: runtimeOverrides.proxyBridge ?? runRemoteBridgeProxy,
+    codexBridge: runtimeOverrides.codexBridge ?? ((options) =>
+      runRemoteCodex(options)),
     installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
     createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
     stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
@@ -1243,11 +1250,21 @@ export async function runCli(
       });
       runtime.stdout(`Paired '${profile.deviceLabel}' as SSH host ${profile.sshAlias}.`);
       runtime.stdout(`Open in Zed: ${remoteBridgeZedUrl(profile)}`);
+      runtime.stdout(
+        `Open in Codex CLI: couchview bridge codex --profile ${profile.id}`,
+      );
       return 0;
     }
     if (invocation.kind === "bridge-proxy") {
       action = "run the native bridge proxy";
       return await runtime.proxyBridge(invocation.profileId);
+    }
+    if (invocation.kind === "bridge-codex") {
+      action = "connect Codex through the native bridge";
+      return await runtime.codexBridge({
+        profileSelector: invocation.profileSelector,
+        codexArgs: invocation.codexArgs,
+      });
     }
     if (invocation.kind === "restart") {
       action = "restart";

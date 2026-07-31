@@ -1,7 +1,11 @@
 /// <reference types="vite-plugin-pwa/react" />
 
 import { useRegisterSW } from "virtual:pwa-register/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  shouldApplyPwaUpdate,
+  shouldShowPwaUpdatePrompt,
+} from "./pwaUpdatePolicy.ts";
 
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -11,7 +15,11 @@ interface InstallPromptEvent extends Event {
 const INSTALL_DISMISSED_KEY = "couchview:install-hint-dismissed";
 const LEGACY_INSTALL_DISMISSED_KEY = "couch-review:install-hint-dismissed";
 
-export function usePwaUpdate() {
+interface PwaUpdateOptions {
+  updateSafe: boolean;
+}
+
+export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [installDismissed, setInstallDismissed] = useState(() => {
     try {
@@ -33,6 +41,8 @@ export function usePwaUpdate() {
       console.warn("Service worker registration failed", error);
     },
   });
+  const launchedAtRef = useRef(window.performance.now());
+  const updateRequestedRef = useRef(false);
 
   const standalone =
     window.matchMedia("(display-mode: standalone)").matches ||
@@ -48,6 +58,30 @@ export function usePwaUpdate() {
     return () => window.removeEventListener("beforeinstallprompt", onInstallPrompt);
   }, []);
 
+  useEffect(() => {
+    if (!needRefresh || updateRequestedRef.current) return;
+    const applyWhenAppropriate = () => {
+      if (
+        updateRequestedRef.current ||
+        !shouldApplyPwaUpdate(
+          updateSafe,
+          document.visibilityState,
+          window.performance.now() - launchedAtRef.current,
+        )
+      ) {
+        return;
+      }
+      updateRequestedRef.current = true;
+      void updateServiceWorker(true).catch((error) => {
+        updateRequestedRef.current = false;
+        console.warn("Service worker activation failed", error);
+      });
+    };
+    applyWhenAppropriate();
+    document.addEventListener("visibilitychange", applyWhenAppropriate);
+    return () => document.removeEventListener("visibilitychange", applyWhenAppropriate);
+  }, [needRefresh, updateSafe, updateServiceWorker]);
+
   const dismissInstall = () => {
     setInstallDismissed(true);
     try {
@@ -58,7 +92,7 @@ export function usePwaUpdate() {
   };
 
   return {
-    needRefresh,
+    needRefresh: shouldShowPwaUpdatePrompt(needRefresh, updateSafe),
     dismissRefresh: () => setNeedRefresh(false),
     update: () => void updateServiceWorker(true),
     canInstall: Boolean(installPrompt) && !standalone && !installDismissed,

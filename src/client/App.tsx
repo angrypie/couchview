@@ -674,6 +674,7 @@ export function App() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() =>
     isSettingsPath() ? "settings" : "review"
   );
+  const [settingsDirty, setSettingsDirty] = useState(false);
   const [terminalOpened, setTerminalOpened] = useState(false);
 
   const openSettingsPage = useCallback(() => {
@@ -743,7 +744,21 @@ export function App() {
   const restartRequestRef = useRef<AbortController | null>(null);
   const visibleLineRef = useRef<{ lineNumber: number; side: SelectableSide } | null>(null);
   const hunkNavigationLockUntilRef = useRef(0);
-  const pwa = usePwaUpdate();
+  const pwaUpdateSafe =
+    !(workspaceMode === "settings" && settingsDirty) &&
+    !commentComposerOpen &&
+    !commitComposerOpen &&
+    !commentBusy &&
+    !reviewBusy &&
+    !stageBusy &&
+    bulkStageBusy === null &&
+    !commitBusy &&
+    !commitMessageBusy &&
+    packageRunBusy === null &&
+    forgetRepositoryBusy === null &&
+    restartPhase === null &&
+    !copyFallbackText;
+  const pwa = usePwaUpdate({ updateSafe: pwaUpdateSafe });
 
   filesRef.current = files;
 
@@ -3086,6 +3101,19 @@ export function App() {
       repositoryName={repository.name}
     />
   ) : null;
+  const pwaRefreshToast = pwa.needRefresh ? (
+    <div className="toast update-toast">
+      <span>An app update is ready.</span>
+      <span>
+        <button className="text-button" onClick={pwa.dismissRefresh} type="button">
+          Later
+        </button>
+        <button className="text-button" onClick={pwa.update} type="button">
+          Reload
+        </button>
+      </span>
+    </div>
+  ) : null;
 
   if (workspaceMode === "settings") {
     return (
@@ -3094,8 +3122,14 @@ export function App() {
         <SettingsPage
           onBack={closeSettingsPage}
           onChange={setTypographyPreferences}
+          onDirtyChange={setSettingsDirty}
           preferences={typographyPreferences}
         />
+        {pwaRefreshToast && (
+          <div className="toast-stack" aria-live="polite">
+            {pwaRefreshToast}
+          </div>
+        )}
       </>
     );
   }
@@ -4806,19 +4840,7 @@ export function App() {
             )}
           </div>
         )}
-        {pwa.needRefresh && (
-          <div className="toast update-toast">
-            <span>An app update is ready.</span>
-            <span>
-              <button className="text-button" onClick={pwa.dismissRefresh} type="button">
-                Later
-              </button>
-              <button className="text-button" onClick={pwa.update} type="button">
-                Reload
-              </button>
-            </span>
-          </div>
-        )}
+        {pwaRefreshToast}
         {pwa.canInstall && (
           <div className="toast">
             <span>Install Couchview for full-screen access.</span>

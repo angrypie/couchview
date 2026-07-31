@@ -15,78 +15,69 @@ function keydown(options: KeyboardEventInit): KeyboardEvent {
 }
 
 describe("terminal clipboard paste", () => {
-  test("pastes with Command on Apple platforms and Control elsewhere", async () => {
+  test("preserves native paste with Command on Apple platforms and Control elsewhere", () => {
     const cases = [
-      { isApplePlatform: true, event: { code: "KeyV", key: "v", metaKey: true } },
-      { isApplePlatform: false, event: { code: "KeyV", key: "v", ctrlKey: true } },
+      { isApplePlatform: true, event: { code: "KeyK", key: "v", metaKey: true } },
+      { isApplePlatform: false, event: { code: "KeyK", key: "v", ctrlKey: true } },
     ];
 
     for (const testCase of cases) {
       const container = document.createElement("div");
-      const pasted: string[] = [];
       let terminalKeyEvents = 0;
       container.addEventListener("keydown", () => {
         terminalKeyEvents += 1;
       });
       const dispose = installTerminalClipboardPaste(container, {
         isApplePlatform: testCase.isApplePlatform,
-        readText: () => Promise.resolve("one\ntwo"),
-        onPaste: (text) => pasted.push(text),
       });
 
       const event = keydown(testCase.event);
       container.dispatchEvent(event);
-      await Promise.resolve();
 
-      expect(event.defaultPrevented).toBe(true);
+      expect(event.defaultPrevented).toBe(false);
       expect(terminalKeyEvents).toBe(0);
-      expect(pasted).toEqual(["one\ntwo"]);
       dispose();
     }
   });
 
-  test("leaves native paste shortcuts and unrelated keys unchanged", async () => {
+  test("uses the typed character instead of the physical keyboard position", () => {
     const cases: Array<{ isApplePlatform: boolean; event: KeyboardEventInit }> = [
       { isApplePlatform: true, event: { code: "KeyV", key: "v", ctrlKey: true } },
       { isApplePlatform: true, event: { code: "KeyV", key: "V", metaKey: true, shiftKey: true } },
       { isApplePlatform: false, event: { code: "KeyV", key: "v", metaKey: true } },
       { isApplePlatform: false, event: { code: "KeyC", key: "c", ctrlKey: true } },
+      { isApplePlatform: true, event: { code: "KeyV", key: "x", metaKey: true } },
     ];
 
     for (const testCase of cases) {
       const container = document.createElement("div");
-      let reads = 0;
+      let terminalKeyEvents = 0;
+      container.addEventListener("keydown", () => {
+        terminalKeyEvents += 1;
+      });
       installTerminalClipboardPaste(container, {
         isApplePlatform: testCase.isApplePlatform,
-        readText: async () => {
-          reads += 1;
-          return "clipboard";
-        },
-        onPaste: () => undefined,
       });
       const event = keydown(testCase.event);
       container.dispatchEvent(event);
-      await Promise.resolve();
       expect(event.defaultPrevented).toBe(false);
-      expect(reads).toBe(0);
+      expect(terminalKeyEvents).toBe(1);
     }
   });
 
-  test("consumes the shortcut without inserting anything when clipboard access fails", async () => {
+  test("removes the keyboard interception when disposed", () => {
     const container = document.createElement("div");
-    const pasted: string[] = [];
-    installTerminalClipboardPaste(container, {
-      isApplePlatform: true,
-      readText: () => Promise.reject(new DOMException("Denied", "NotAllowedError")),
-      onPaste: (text) => pasted.push(text),
+    let terminalKeyEvents = 0;
+    container.addEventListener("keydown", () => {
+      terminalKeyEvents += 1;
     });
+    const dispose = installTerminalClipboardPaste(container, {
+      isApplePlatform: true,
+    });
+    dispose();
 
-    const event = keydown({ code: "KeyV", key: "v", metaKey: true });
-    container.dispatchEvent(event);
-    await Promise.resolve();
-    await Promise.resolve();
+    container.dispatchEvent(keydown({ code: "KeyK", key: "v", metaKey: true }));
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(pasted).toEqual([]);
+    expect(terminalKeyEvents).toBe(1);
   });
 });

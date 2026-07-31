@@ -392,6 +392,10 @@ describe("CLI entrypoint", () => {
     const installed: CompletionShell[] = [];
     const bridgePairs: Array<{ origin: string; code: string; originAccess: string }> = [];
     const bridgeProxies: string[] = [];
+    const bridgeCodex: Array<{
+      profileSelector: string | null;
+      codexArgs: string[];
+    }> = [];
     return {
       stdout,
       stderr,
@@ -401,6 +405,7 @@ describe("CLI entrypoint", () => {
       installed,
       bridgePairs,
       bridgeProxies,
+      bridgeCodex,
       runtime: {
         stdout(message: string) {
           stdout.push(message);
@@ -440,6 +445,13 @@ describe("CLI entrypoint", () => {
         },
         async proxyBridge(profileId: string) {
           bridgeProxies.push(profileId);
+          return 0;
+        },
+        async codexBridge(options: {
+          profileSelector: string | null;
+          codexArgs: string[];
+        }) {
+          bridgeCodex.push(options);
           return 0;
         },
         async installCompletion(shell: CompletionShell) {
@@ -518,6 +530,9 @@ describe("CLI entrypoint", () => {
       originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     }]);
     expect(pairing.stdout.join("\n")).toContain("Open in Zed: zed://ssh/");
+    expect(pairing.stdout.join("\n")).toContain(
+      "Open in Codex CLI: couchview bridge codex --profile device-profile",
+    );
     expect(pairing.stdout.join("\n")).not.toContain("t".repeat(43));
 
     const proxy = entrypointRuntime();
@@ -529,6 +544,21 @@ describe("CLI entrypoint", () => {
     ], proxy.runtime)).toBe(0);
     expect(proxy.bridgeProxies).toEqual(["device-profile"]);
     expect(proxy.stdout).toEqual([]);
+
+    const codex = entrypointRuntime();
+    expect(await runCli([
+      "bridge",
+      "codex",
+      "--profile",
+      "couchview-project-one",
+      "--",
+      "--model",
+      "gpt-5.4",
+    ], codex.runtime)).toBe(0);
+    expect(codex.bridgeCodex).toEqual([{
+      profileSelector: "couchview-project-one",
+      codexArgs: ["--model", "gpt-5.4"],
+    }]);
   });
 
   test("reports usage errors with suggestions and exit code 2", async () => {

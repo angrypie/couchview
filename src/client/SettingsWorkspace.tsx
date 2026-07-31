@@ -23,6 +23,7 @@ import {
 interface SettingsWorkspaceProps {
   onBack(): void;
   onChange(preferences: TypographyPreferences): void;
+  onDirtyChange(dirty: boolean): void;
   preferences: TypographyPreferences;
 }
 
@@ -156,6 +157,7 @@ function terminalTypographyEqual(
 export function SettingsPage({
   onBack,
   onChange,
+  onDirtyChange,
   preferences,
 }: SettingsWorkspaceProps) {
   const [diffDraft, setDiffDraft] = useState(preferences.diff);
@@ -178,6 +180,10 @@ export function SettingsPage({
   ]);
   const diffDirty = !diffTypographyEqual(diffDraft, preferences.diff);
   const terminalDirty = !terminalTypographyEqual(terminalDraft, preferences.terminal);
+  useEffect(() => {
+    onDirtyChange(diffDirty || terminalDirty);
+  }, [diffDirty, onDirtyChange, terminalDirty]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
   const updateDiff = (patch: Partial<DiffTypographyPreferences>) => {
     setDiffDraft((current) => ({ ...current, ...patch }));
   };
