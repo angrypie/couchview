@@ -2,6 +2,7 @@ import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
 import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
+import { installTerminalClipboardPaste } from "./terminalClipboardPaste.ts";
 import { installTerminalFontShortcuts } from "./terminalFontShortcuts.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 import {
@@ -265,6 +266,11 @@ export async function createBrowserTerminal(
   const fitAddon = new ghostty.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(options.container);
+  const disposeClipboardPaste = installTerminalClipboardPaste(options.container, {
+    onPaste(text) {
+      terminal.paste(text);
+    },
+  });
   const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
   const terminalRenderer = terminal.renderer;
   const originalRender = terminalRenderer?.render;
@@ -367,6 +373,7 @@ export async function createBrowserTerminal(
       fitAddon.fit();
     },
     dispose() {
+      disposeClipboardPaste();
       disposeFontShortcuts();
       if (fontRefitTimer !== null) window.clearTimeout(fontRefitTimer);
       disposeKeyRepeat();

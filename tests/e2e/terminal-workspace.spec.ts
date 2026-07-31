@@ -27,6 +27,16 @@ test.describe("desktop tmux terminal", () => {
     page,
     request,
   }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "platform", {
+        configurable: true,
+        get: () => "MacIntel",
+      });
+      Object.defineProperty(Navigator.prototype, "userAgentData", {
+        configurable: true,
+        get: () => ({ platform: "macOS" }),
+      });
+    });
     const loadedAssets: string[] = [];
     page.on("requestfinished", (networkRequest) => {
       loadedAssets.push(new URL(networkRequest.url()).pathname);
@@ -178,6 +188,13 @@ test.describe("desktop tmux terminal", () => {
     await page.keyboard.type("hello-from-browser");
     await expect.poll(async () => (await state()).inputs.join("")).toContain(
       "hello-from-browser",
+    );
+
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.evaluate(() => navigator.clipboard.writeText("pasted-with-primary-v"));
+    await page.keyboard.press(`${primaryModifier}+V`);
+    await expect.poll(async () => (await state()).inputs.join("")).toContain(
+      "pasted-with-primary-v",
     );
 
     const resizeCount = (await state()).resizes.length;
