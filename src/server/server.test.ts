@@ -378,7 +378,7 @@ describe("Couchview HTTP security and routes", () => {
       devices: [{ id: profile.deviceId, label: "MacBook Air" }],
     });
     const missingCredential = await app.fetch(request(
-      API_ROUTES.remoteBridgeTickets(app.repository.id),
+      API_ROUTES.remoteBridgeHostTickets,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -399,7 +399,7 @@ describe("Couchview HTTP security and routes", () => {
     ));
     expect(legacyCredential.status).toBe(201);
     const ticketResponse = await app.fetch(request(
-      API_ROUTES.remoteBridgeTickets(app.repository.id),
+      API_ROUTES.remoteBridgeHostTickets,
       {
         method: "POST",
         headers: {
@@ -422,7 +422,7 @@ describe("Couchview HTTP security and routes", () => {
         return true;
       },
     } as unknown as Bun.Server<CouchviewSocketData>;
-    const socketRequest = request(API_ROUTES.remoteBridgeSocket(app.repository.id), {
+    const socketRequest = request(API_ROUTES.remoteBridgeHostSocket, {
       headers: {
         upgrade: "websocket",
         connection: "Upgrade",

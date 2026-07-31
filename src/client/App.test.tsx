@@ -1611,10 +1611,16 @@ describe("Couchview app", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Native IDE setup" });
     expect(within(dialog).getByText("Direct WebRTC preferred")).toBeTruthy();
-    const zedLink = within(dialog).getByRole("link", { name: "Open in Zed" });
+    const zedLink = within(dialog).getByRole("link", { name: "Open" });
     expect(zedLink.getAttribute("href")).toBe(
       "zed://ssh/couchview-fixture-device-one/fixture",
     );
+    expect(within(dialog).getByText(
+      "zed 'ssh://couchview-fixture-device-one/fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge codex --profile couchview-fixture-device-one --repo '/fixture'",
+    )).toBeTruthy();
 
     fireEvent.change(within(dialog).getByLabelText("Device name"), {
       target: { value: "Travel Air" },
@@ -1634,6 +1640,48 @@ describe("Couchview app", () => {
       body: null,
     }));
     await waitFor(() => expect(within(dialog).queryByText("MacBook Air")).toBeNull());
+  });
+
+  test("reuses one native IDE pairing for another registered repository", async () => {
+    remoteBridgeAvailable = true;
+    remoteBridgeDevices = [{
+      id: "device-one",
+      repositoryId: repository.id,
+      label: "MacBook Air",
+      sshAlias: "couchview-fixture-device-one",
+      createdAt: "2026-07-29T10:00:00.000Z",
+      lastUsedAt: null,
+    }];
+    render(<App />);
+    await screen.findByText("src/first.ts");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+    const picker = await screen.findByRole("dialog", { name: "Repositories" });
+    fireEvent.click(
+      within(picker).getByRole("button", {
+        name: /second-fixture \/second-fixture/,
+      }),
+    );
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
+        "second-fixture",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up native IDE" }));
+    const dialog = await screen.findByRole("dialog", { name: "Native IDE setup" });
+    expect(within(dialog).getByText("MacBook Air")).toBeTruthy();
+    expect(within(dialog).getByText(
+      "zed 'ssh://couchview-fixture-device-one/second-fixture'",
+    )).toBeTruthy();
+    expect(within(dialog).getByText(
+      "couchview bridge codex --profile couchview-fixture-device-one --repo '/second-fixture'",
+    )).toBeTruthy();
+    expect(requests).toContainEqual({
+      path: "/api/repositories/repo-two/remote-bridge/pairings",
+      method: "GET",
+      body: null,
+    });
   });
 
   test("switches repositories through the picker and follows URL history", async () => {

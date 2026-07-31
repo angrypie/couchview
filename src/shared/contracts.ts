@@ -63,6 +63,10 @@ export const API_ROUTES = {
   remoteBridgePairing: (repositoryId: string, deviceId: string) =>
     `${repositoryApiPath(repositoryId)}/remote-bridge/pairings/${encodeURIComponent(deviceId)}`,
   remoteBridgeClaim: "/api/remote-bridge/pairings/claim",
+  remoteBridgeHostTickets: "/api/remote-bridge/tickets",
+  remoteBridgeHostLease: "/api/remote-bridge/lease",
+  remoteBridgeHostSocket: "/api/remote-bridge/socket",
+  // Kept for clients paired before host-wide bridge profiles were introduced.
   remoteBridgeTickets: (repositoryId: string) =>
     `${repositoryApiPath(repositoryId)}/remote-bridge/tickets`,
   remoteBridgeLease: (repositoryId: string) =>

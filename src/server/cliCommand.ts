@@ -56,8 +56,8 @@ const optionDefinitions: readonly CliOptionDefinition[] = [
     short: "r",
     type: "string",
     valueName: "path",
-    description: "Repository to review (default: current directory).",
-    commands: ["serve"],
+    description: "Repository path to serve or open with remote Codex.",
+    commands: ["serve", "bridge"],
     completion: "directory",
   },
   {
@@ -231,6 +231,7 @@ export type CliInvocation =
   | {
       kind: "bridge-codex";
       profileSelector: string | null;
+      repositoryRoot: string | null;
       codexArgs: string[];
     }
   | {
@@ -543,6 +544,7 @@ function parseBridgeArguments(args: string[]): CliInvocation {
   const origin = stringValue(parsed.values, "url");
   const code = stringValue(parsed.values, "code");
   const profileId = stringValue(parsed.values, "profile");
+  const repositoryRoot = stringValue(parsed.values, "repo");
   const explicitOriginAccess = stringValue(parsed.values, "origin-access");
   const cloudflareAccess = booleanValue(parsed.values, "cloudflare-access");
   if (explicitOriginAccess && cloudflareAccess) {
@@ -581,6 +583,12 @@ function parseBridgeArguments(args: string[]): CliInvocation {
         "bridge",
       );
     }
+    if (repositoryRoot) {
+      throw new CliUsageError(
+        "--repo is only valid for bridge codex.",
+        "bridge",
+      );
+    }
     return { kind: "bridge-pair", origin, code, originAccess };
   }
   if (action === "proxy") {
@@ -592,6 +600,12 @@ function parseBridgeArguments(args: string[]): CliInvocation {
     }
     if (!profileId) {
       throw new CliUsageError("The proxy action requires --profile.", "bridge");
+    }
+    if (repositoryRoot) {
+      throw new CliUsageError(
+        "--repo is only valid for bridge codex.",
+        "bridge",
+      );
     }
     if (origin || code || explicitOriginAccess || cloudflareAccess) {
       throw new CliUsageError(
@@ -608,9 +622,16 @@ function parseBridgeArguments(args: string[]): CliInvocation {
         "bridge",
       );
     }
+    if (repositoryRoot !== undefined && !path.isAbsolute(repositoryRoot)) {
+      throw new CliUsageError(
+        "The bridge codex repository path must be absolute.",
+        "bridge",
+      );
+    }
     return {
       kind: "bridge-codex",
       profileSelector: profileId ?? null,
+      repositoryRoot: repositoryRoot ?? null,
       codexArgs: passthroughArgs,
     };
   }
@@ -821,15 +842,16 @@ Examples:
 Usage:
   couchview bridge pair --url <origin> --code <code> [--origin-access <provider>]
   couchview bridge proxy --profile <id>
-  couchview bridge codex [--profile <id-or-host>] [-- <codex-arguments>]
+  couchview bridge codex [--profile <id-or-host>] [--repo <absolute-path>] [-- <codex-arguments>]
 
 Options:
 ${renderOptionList(optionsFor("bridge"))}
 
 The pair command stores a private device credential and installs a managed
 OpenSSH host alias. The proxy command is invoked automatically by OpenSSH and
-must not be run interactively. The codex command keeps the terminal UI on this
-computer while Codex executes in the paired repository through SSH. Verify the
+must not be run interactively. One pairing can open every repository registered
+on that Couchview host. The codex command keeps the terminal UI on this computer
+while Codex executes in the selected remote repository through SSH. Verify the
 managed host with plain ssh first; normal SSH host-key and login checks apply.`;
   }
 

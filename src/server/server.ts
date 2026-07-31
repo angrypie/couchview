@@ -651,7 +651,11 @@ export async function createCouchviewApp(
       url.pathname === API_ROUTES.remoteBridgeClaim && request.method === "POST";
     const remoteBridgeCredentialMutation =
       request.method === "POST" &&
-      /^\/api\/repositories\/[^/]+\/remote-bridge\/(?:tickets|lease)$/.test(url.pathname);
+      (
+        url.pathname === API_ROUTES.remoteBridgeHostTickets ||
+        url.pathname === API_ROUTES.remoteBridgeHostLease ||
+        /^\/api\/repositories\/[^/]+\/remote-bridge\/(?:tickets|lease)$/.test(url.pathname)
+      );
     if (controlRegistration || controlRestart) {
       if (!tokenMatches(bearerToken(request), controlToken)) {
         throw new HttpError(403, "control_token_failed", "CLI control request is not authorized");
@@ -700,6 +704,41 @@ export async function createCouchviewApp(
     if (remoteBridgeClaim) {
       const input = await readJsonObject<ClaimRemoteBridgePairingRequest>(request);
       return json(remoteBridge.claimPairing(input), { status: 201 });
+    }
+    if (
+      url.pathname === API_ROUTES.remoteBridgeHostTickets &&
+      request.method === "POST"
+    ) {
+      const input = await readJsonObject<RemoteBridgeTicketRequest>(request);
+      return json(
+        remoteBridge.issueTicket(
+          remoteBridgeDeviceToken(request),
+          input,
+          {
+            host: normalizeRequestHost(
+              request.headers.get("host") ?? new URL(request.url).host,
+            ),
+          },
+        ),
+        { status: 201 },
+      );
+    }
+    if (
+      url.pathname === API_ROUTES.remoteBridgeHostLease &&
+      request.method === "POST"
+    ) {
+      const input = await readJsonObject<RemoteBridgeLeaseRequest>(request);
+      return json(
+        remoteBridge.renewLease(
+          remoteBridgeDeviceToken(request),
+          input,
+          {
+            host: normalizeRequestHost(
+              request.headers.get("host") ?? new URL(request.url).host,
+            ),
+          },
+        ),
+      );
     }
     if (url.pathname === API_ROUTES.instance && request.method === "GET") {
       const response: InstanceResponse = {
@@ -839,7 +878,7 @@ export async function createCouchviewApp(
       return json(await terminalSessions.end(repositoryId));
     }
     if (nestedPath === "remote-bridge/pairings" && request.method === "GET") {
-      return json(remoteBridge.listDevices(repositoryId));
+      return json(remoteBridge.listDevices());
     }
     if (nestedPath === "remote-bridge/pairings" && request.method === "POST") {
       const origin = request.headers.get("origin");
@@ -874,7 +913,6 @@ export async function createCouchviewApp(
     const remoteBridgePairingRoute = /^remote-bridge\/pairings\/([^/]+)$/.exec(nestedPath);
     if (remoteBridgePairingRoute && request.method === "DELETE") {
       remoteBridge.revokeDevice(
-        repositoryId,
         decodeSegment(remoteBridgePairingRoute[1] ?? ""),
       );
       return new Response(null, { status: 204 });
@@ -883,8 +921,6 @@ export async function createCouchviewApp(
       const input = await readJsonObject<RemoteBridgeTicketRequest>(request);
       return json(
         remoteBridge.issueTicket(
-          repositoryId,
-          repository.root,
           remoteBridgeDeviceToken(request),
           input,
           {
@@ -900,7 +936,6 @@ export async function createCouchviewApp(
       const input = await readJsonObject<RemoteBridgeLeaseRequest>(request);
       return json(
         remoteBridge.renewLease(
-          repositoryId,
           remoteBridgeDeviceToken(request),
           input,
           {
@@ -1405,9 +1440,14 @@ export async function createCouchviewApp(
         return undefined;
       }
 
-      const remoteBridgeSocketRoute =
+      const legacyRemoteBridgeSocketRoute =
         /^\/api\/repositories\/([^/]+)\/remote-bridge\/socket$/.exec(url.pathname);
-      if (remoteBridgeSocketRoute && request.method === "GET") {
+      const remoteBridgeHostSocket =
+        url.pathname === API_ROUTES.remoteBridgeHostSocket;
+      if (
+        (remoteBridgeHostSocket || legacyRemoteBridgeSocketRoute) &&
+        request.method === "GET"
+      ) {
         if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
           throw new HttpError(
             426,
@@ -1422,9 +1462,13 @@ export async function createCouchviewApp(
             "The current server cannot upgrade this request",
           );
         }
-        const repositoryId = decodeSegment(remoteBridgeSocketRoute[1] ?? "");
-        await repositories.get(repositoryId);
-        const data = remoteBridge.consumeUpgrade(repositoryId, request, {
+        if (legacyRemoteBridgeSocketRoute) {
+          const repositoryId = decodeSegment(
+            legacyRemoteBridgeSocketRoute[1] ?? "",
+          );
+          await repositories.get(repositoryId);
+        }
+        const data = remoteBridge.consumeUpgrade(request, {
           host: normalizedHost,
         });
         const upgraded = server.upgrade(request, {

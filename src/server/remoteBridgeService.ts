@@ -113,8 +113,6 @@ interface BridgeAttachment {
 
 export interface RemoteBridgeSocketData {
   kind: "remote-bridge";
-  repositoryId: string;
-  repositoryRoot: string;
   connectionId: string;
   deviceId: string;
   host: string;
@@ -270,9 +268,9 @@ export class RemoteBridgeService {
     }
   }
 
-  listDevices(repositoryId: string): RemoteBridgeDevicesResponse {
+  listDevices(): RemoteBridgeDevicesResponse {
     this.assertAvailable();
-    return { devices: this.database.remoteBridgeDevices(repositoryId) };
+    return { devices: this.database.remoteBridgeDevices() };
   }
 
   createPairing(
@@ -365,9 +363,9 @@ export class RemoteBridgeService {
     };
   }
 
-  revokeDevice(repositoryId: string, deviceId: string): void {
+  revokeDevice(deviceId: string): void {
     this.assertAvailable();
-    if (!this.database.deleteRemoteBridgeDevice(repositoryId, deviceId)) {
+    if (!this.database.deleteRemoteBridgeDevice(deviceId)) {
       throw new HttpError(404, "remote_bridge_device_not_found", "The paired device was not found");
     }
     for (const [connectionId, attachment] of this.attachments) {
@@ -384,7 +382,6 @@ export class RemoteBridgeService {
   }
 
   private authenticateDevice(
-    repositoryId: string,
     token: string | null,
   ): { device: RemoteBridgeDevice; tokenHash: string } {
     if (!token || !/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
@@ -392,15 +389,13 @@ export class RemoteBridgeService {
     }
     const tokenHash = hash(token);
     const device = this.database.remoteBridgeDeviceByTokenHash(tokenHash);
-    if (!device || device.repositoryId !== repositoryId) {
+    if (!device) {
       throw new HttpError(403, "remote_bridge_token_invalid", "The bridge device credential is missing or invalid");
     }
     return { device, tokenHash };
   }
 
   issueTicket(
-    repositoryId: string,
-    repositoryRoot: string,
     token: string | null,
     input: RemoteBridgeTicketRequest,
     binding: { host: string },
@@ -409,13 +404,11 @@ export class RemoteBridgeService {
     if (typeof input.connectionId !== "string" || !validConnectionId(input.connectionId)) {
       throw new HttpError(400, "remote_bridge_connection_invalid", "The bridge connection ID is invalid");
     }
-    const { device, tokenHash } = this.authenticateDevice(repositoryId, token);
+    const { device, tokenHash } = this.authenticateDevice(token);
     const rawTicket = this.tokenFactory();
     const expiresAt = this.now() + TICKET_TTL_MS;
     this.tickets.set(hash(rawTicket), {
       kind: "remote-bridge",
-      repositoryId,
-      repositoryRoot,
       connectionId: input.connectionId,
       deviceId: device.id,
       deviceTokenHash: tokenHash,
@@ -447,7 +440,6 @@ export class RemoteBridgeService {
   }
 
   renewLease(
-    repositoryId: string,
     token: string | null,
     input: RemoteBridgeLeaseRequest,
     binding: { host: string },
@@ -456,13 +448,12 @@ export class RemoteBridgeService {
     if (typeof input.connectionId !== "string" || !validConnectionId(input.connectionId)) {
       throw new HttpError(400, "remote_bridge_connection_invalid", "The bridge connection ID is invalid");
     }
-    const { device } = this.authenticateDevice(repositoryId, token);
+    const { device } = this.authenticateDevice(token);
     const attachment = this.attachments.get(input.connectionId);
     if (
       !attachment ||
       attachment.deviceId !== device.id ||
-      attachment.host !== binding.host ||
-      attachment.socket.data.repositoryId !== repositoryId
+      attachment.host !== binding.host
     ) {
       throw new HttpError(403, "remote_bridge_lease_forbidden", "The bridge lease does not match this connection");
     }
@@ -473,7 +464,6 @@ export class RemoteBridgeService {
   }
 
   consumeUpgrade(
-    repositoryId: string,
     request: Request,
     binding: { host: string },
   ): RemoteBridgeSocketData {
@@ -498,7 +488,6 @@ export class RemoteBridgeService {
       !device ||
       device.id !== ticket.deviceId ||
       ticket.expiresAt <= this.now() ||
-      ticket.repositoryId !== repositoryId ||
       ticket.host !== binding.host
     ) {
       throw new HttpError(403, "remote_bridge_ticket_invalid", "The native bridge ticket is invalid or expired");
@@ -991,18 +980,8 @@ export class RemoteBridgeService {
   }
 
   closeRepository(repositoryId: string): void {
-    for (const [connectionId, attachment] of this.attachments) {
-      if (attachment.socket.data.repositoryId !== repositoryId) continue;
-      this.destroyAttachment(connectionId, attachment, {
-        code: 4004,
-        reason: "remote_bridge_repository_forgotten",
-      });
-    }
     for (const [key, pairing] of this.pairings) {
       if (pairing.repositoryId === repositoryId) this.pairings.delete(key);
-    }
-    for (const [key, ticket] of this.tickets) {
-      if (ticket.repositoryId === repositoryId) this.tickets.delete(key);
     }
   }
 

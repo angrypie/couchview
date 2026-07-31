@@ -28,6 +28,10 @@ import {
   type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
 import {
+  remoteBridgeCodexCommand as buildRemoteBridgeCodexCommand,
+  remoteBridgeZedUrl as buildRemoteBridgeZedUrl,
+} from "../shared/remoteBridgeCommands.ts";
+import {
   CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
   cloudflareOriginAccessProvider,
 } from "./cloudflareAccess.ts";
@@ -293,11 +297,17 @@ export async function storeRemoteBridgeProfile(
 }
 
 export function remoteBridgeZedUrl(profile: RemoteBridgeProfile): string {
-  const encodedPath = profile.repositoryRoot
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `zed://ssh/${encodeURIComponent(profile.sshAlias)}${encodedPath}`;
+  return buildRemoteBridgeZedUrl(
+    profile.sshAlias,
+    profile.repositoryRoot,
+  );
+}
+
+export function remoteBridgeCodexCommand(
+  profile: RemoteBridgeProfile,
+  repositoryRoot = profile.repositoryRoot,
+): string {
+  return buildRemoteBridgeCodexCommand(profile.sshAlias, repositoryRoot);
 }
 
 function defaultExecutableCommand(): string {
@@ -411,7 +421,7 @@ async function loadProfile(
 }
 
 function webSocketUrl(profile: RemoteBridgeProfile): string {
-  const url = new URL(API_ROUTES.remoteBridgeSocket(profile.repositoryId), profile.origin);
+  const url = new URL(API_ROUTES.remoteBridgeHostSocket, profile.origin);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }
@@ -491,7 +501,7 @@ export async function runRemoteBridgeProxy(
   const connectionId = randomUUID();
   const ticketResponse = await authenticatedBridgeRequest(
     profile,
-    API_ROUTES.remoteBridgeTickets(profile.repositoryId),
+    API_ROUTES.remoteBridgeHostTickets,
     { connectionId },
     originAccess,
     runtime,
@@ -701,7 +711,7 @@ export async function runRemoteBridgeProxy(
     const renewLease = async (): Promise<void> => {
       const response = await authenticatedBridgeRequest(
         profile,
-        API_ROUTES.remoteBridgeLease(profile.repositoryId),
+        API_ROUTES.remoteBridgeHostLease,
         { connectionId },
         originAccess,
         runtime,

@@ -1,5 +1,6 @@
 import { randomInt } from "node:crypto";
 import { createServer } from "node:net";
+import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
 import {
@@ -50,6 +51,7 @@ export interface RemoteCodexClientRuntime {
 
 export interface RunRemoteCodexOptions {
   profileSelector?: string | null;
+  repositoryRoot?: string | null;
   codexArgs?: readonly string[];
 }
 
@@ -306,11 +308,16 @@ export function remoteCodexLaunchCommands(
     codexExecutable: string;
     localPort: number;
     remotePort: number;
+    repositoryRoot?: string;
     codexArgs?: readonly string[];
   },
 ): RemoteCodexLaunchCommands {
   const codexArgs = [...(options.codexArgs ?? [])];
   assertCodexArguments(codexArgs);
+  const repositoryRoot = options.repositoryRoot ?? profile.repositoryRoot;
+  if (!path.isAbsolute(repositoryRoot)) {
+    throw new Error("The remote Codex repository path must be absolute");
+  }
   const remoteEndpoint = `ws://127.0.0.1:${options.remotePort}`;
   const localEndpoint = `ws://127.0.0.1:${options.localPort}`;
   const unavailableMessage =
@@ -323,7 +330,7 @@ export function remoteCodexLaunchCommands(
     `printf '%s\\n' ${shellQuote(unavailableMessage)} >&2;`,
     "exit 127;",
     "fi;",
-    `cd -- ${shellQuote(profile.repositoryRoot)} &&`,
+    `cd -- ${shellQuote(repositoryRoot)} &&`,
     `exec "$codex_executable" app-server --listen ${shellQuote(remoteEndpoint)}`,
   ].join(" ");
   const remoteShellCommand =
@@ -344,7 +351,7 @@ export function remoteCodexLaunchCommands(
       "--remote",
       localEndpoint,
       "--cd",
-      profile.repositoryRoot,
+      repositoryRoot,
       ...codexArgs,
     ],
     readyUrl: `http://127.0.0.1:${options.localPort}/readyz`,
@@ -372,6 +379,10 @@ export async function runRemoteCodex(
     options.profileSelector,
     runtime.paths,
   );
+  const repositoryRoot = options.repositoryRoot ?? profile.repositoryRoot;
+  if (!path.isAbsolute(repositoryRoot)) {
+    throw new Error("The remote Codex repository path must be absolute");
+  }
   const sshExecutable = runtime.which("ssh");
   if (!sshExecutable) {
     throw new Error("OpenSSH is not available on this computer");
@@ -396,7 +407,7 @@ export async function runRemoteCodex(
   runtime.onExit(killChildren);
   try {
     runtime.stderr(
-      `Couchview bridge: starting Codex for '${profile.repositoryName}' on ${profile.sshAlias}…`,
+      `Couchview bridge: starting Codex in ${repositoryRoot} on ${profile.sshAlias}…`,
     );
     for (let attempt = 1; attempt <= MAX_CODEX_START_ATTEMPTS; attempt += 1) {
       const localPort = await runtime.allocateLocalPort();
@@ -406,6 +417,7 @@ export async function runRemoteCodex(
         codexExecutable,
         localPort,
         remotePort,
+        repositoryRoot,
         codexArgs: options.codexArgs,
       });
       tunnelExitCode = null;

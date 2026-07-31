@@ -22,6 +22,11 @@ import type {
   RemoteBridgeDevice,
   RemoteBridgePairingResponse,
 } from "../shared/contracts.ts";
+import {
+  remoteBridgeCodexCommand,
+  remoteBridgeZedCommand,
+  remoteBridgeZedUrl,
+} from "../shared/remoteBridgeCommands.ts";
 import { api } from "./api.ts";
 
 interface RemoteBridgeSheetProps {
@@ -58,14 +63,6 @@ async function copyText(text: string): Promise<void> {
   const copied = document.execCommand("copy");
   field.remove();
   if (!copied) throw new Error("Copy was blocked. Select and copy the command manually.");
-}
-
-function zedRemoteUrl(sshAlias: string, repositoryRoot: string): string {
-  const encodedPath = repositoryRoot
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-  return `zed://ssh/${encodeURIComponent(sshAlias)}${encodedPath}`;
 }
 
 function formatDeviceTime(value: string | null): string {
@@ -253,7 +250,9 @@ export function RemoteBridgeSheet({
                 <div className="remote-bridge-card-heading">
                   <div>
                     <h3>Paired Macs</h3>
-                    <p>Each device can be revoked independently.</p>
+                    <p>
+                      Pair once, then use the same Mac with every repository registered here.
+                    </p>
                   </div>
                   <button
                     aria-label="Refresh paired Macs"
@@ -266,35 +265,81 @@ export function RemoteBridgeSheet({
                   </button>
                 </div>
                 <div className="remote-bridge-devices">
-                  {devices.map((device) => (
-                    <div className="remote-bridge-device" key={device.id}>
-                      <Laptop size={18} />
-                      <div>
-                        <strong>{device.label}</strong>
-                        <span>{formatDeviceTime(device.lastUsedAt)}</span>
+                  {devices.map((device) => {
+                    const zedUrl = remoteBridgeZedUrl(
+                      device.sshAlias,
+                      repositoryRoot,
+                    );
+                    const zedCommand = remoteBridgeZedCommand(
+                      device.sshAlias,
+                      repositoryRoot,
+                    );
+                    const codexCommand = remoteBridgeCodexCommand(
+                      device.sshAlias,
+                      repositoryRoot,
+                    );
+                    return (
+                      <div className="remote-bridge-device" key={device.id}>
+                        <Laptop className="remote-bridge-device-icon" size={18} />
+                        <div className="remote-bridge-device-meta">
+                          <strong>{device.label}</strong>
+                          <span>{formatDeviceTime(device.lastUsedAt)}</span>
+                        </div>
+                        <button
+                          aria-label={`Revoke ${device.label}`}
+                          className="icon-button remote-bridge-revoke"
+                          disabled={revokingId !== null}
+                          onClick={() => void revoke(device)}
+                          type="button"
+                        >
+                          {revokingId === device.id ? (
+                            <LoaderCircle className="spinner" size={16} />
+                          ) : (
+                            <Trash2 size={16} />
+                          )}
+                        </button>
+                        <div className="remote-bridge-device-commands">
+                          <div className="remote-bridge-launch-heading">
+                            <strong>Zed</strong>
+                            <a
+                              className="remote-bridge-open"
+                              href={zedUrl}
+                              title={`Open ${repositoryName} through ${device.sshAlias}`}
+                            >
+                              <ExternalLink size={13} /> Open
+                            </a>
+                            <button
+                              aria-label={`Copy Zed command for ${device.label}`}
+                              className="icon-button remote-bridge-copy"
+                              onClick={() => void copyText(zedCommand)
+                                .then(() => onNotice("Zed command copied"))
+                                .catch((nextError) => setError(messageOf(nextError)))}
+                              title="Copy Zed command"
+                              type="button"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                          <pre className="remote-bridge-command">{zedCommand}</pre>
+                          <div className="remote-bridge-launch-heading">
+                            <strong>Codex</strong>
+                            <button
+                              aria-label={`Copy Codex command for ${device.label}`}
+                              className="icon-button remote-bridge-copy"
+                              onClick={() => void copyText(codexCommand)
+                                .then(() => onNotice("Codex command copied"))
+                                .catch((nextError) => setError(messageOf(nextError)))}
+                              title="Copy Codex command"
+                              type="button"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                          <pre className="remote-bridge-command">{codexCommand}</pre>
+                        </div>
                       </div>
-                      <a
-                        className="action-button remote-bridge-open"
-                        href={zedRemoteUrl(device.sshAlias, repositoryRoot)}
-                        title={`Open ${repositoryName} through ${device.sshAlias}`}
-                      >
-                        <ExternalLink size={14} /> Open in Zed
-                      </a>
-                      <button
-                        aria-label={`Revoke ${device.label}`}
-                        className="icon-button remote-bridge-revoke"
-                        disabled={revokingId !== null}
-                        onClick={() => void revoke(device)}
-                        type="button"
-                      >
-                        {revokingId === device.id ? (
-                          <LoaderCircle className="spinner" size={16} />
-                        ) : (
-                          <Trash2 size={16} />
-                        )}
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {!loading && devices.length === 0 && (
                     <p className="remote-bridge-empty">No development Macs are paired yet.</p>
                   )}
@@ -302,8 +347,11 @@ export function RemoteBridgeSheet({
               </section>
 
               <section className="remote-bridge-card">
-                <h3>Pair this Mac</h3>
-                <p>Generate a one-use command, then run it once in Terminal on your MacBook Air.</p>
+                <h3>{devices.length > 0 ? "Pair another Mac" : "Pair this Mac"}</h3>
+                <p>
+                  Generate a one-use command and run it once in Terminal on your MacBook Air.
+                  The pairing works for every registered repository.
+                </p>
                 <form className="remote-bridge-form" onSubmit={(event) => void createPairing(event)}>
                   <label htmlFor="remote-bridge-label">Device name</label>
                   <div>
@@ -345,6 +393,7 @@ export function RemoteBridgeSheet({
               <p className="remote-bridge-footnote">
                 The bridge exposes only the Mini’s loopback SSH service. SSH authentication and
                 host-key verification still apply; Couchview never stores your SSH private key.
+                Revoking a Mac removes its access to every repository on this Couchview host.
               </p>
             </>
           )}

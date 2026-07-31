@@ -110,7 +110,7 @@ describe("global SQLite state", () => {
       "wal",
     );
     expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-      2,
+      3,
     );
     expect(
       raw
@@ -118,7 +118,7 @@ describe("global SQLite state", () => {
           "SELECT value FROM metadata WHERE key = 'schema_version'",
         )
         .get()?.value,
-    ).toBe(2);
+    ).toBe(3);
     raw.close();
 
     const reopened = await StateDatabase.open(filePath);
@@ -160,7 +160,7 @@ describe("global SQLite state", () => {
     const migrated = await StateDatabase.open(filePath);
     try {
       expect(migrated.repository("repo-one")).toMatchObject({ name: "one" });
-      expect(migrated.remoteBridgeDevices("repo-one")).toEqual([]);
+      expect(migrated.remoteBridgeDevices()).toEqual([]);
       migrated.insertRemoteBridgeDevice({
         id: "device-one",
         repositoryId: "repo-one",
@@ -169,16 +169,85 @@ describe("global SQLite state", () => {
         createdAt: "2026-07-29T10:01:00.000Z",
         lastUsedAt: null,
       }, "hash");
-      expect(migrated.remoteBridgeDevices("repo-one")).toHaveLength(1);
+      expect(migrated.remoteBridgeDevices()).toHaveLength(1);
     } finally {
       migrated.close();
     }
     const inspected = new Database(filePath, { readonly: true, strict: true });
     expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version)
-      .toBe(2);
+      .toBe(3);
     expect(inspected.query<{ value: number }, []>(
       "SELECT value FROM metadata WHERE key = 'schema_version'",
-    ).get()?.value).toBe(2);
+    ).get()?.value).toBe(3);
+    inspected.close();
+  });
+
+  test("migrates repository-scoped bridge devices to host-wide credentials", async () => {
+    const filePath = await databasePath();
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const raw = new Database(filePath, { create: true, strict: true });
+    raw.run(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL UNIQUE,
+        git_directory TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        state_revision INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE remote_bridge_devices (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        ssh_alias TEXT NOT NULL UNIQUE,
+        token_hash TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT
+      );
+      INSERT INTO metadata(key, value) VALUES ('schema_version', 2);
+      INSERT INTO metadata(key, value) VALUES ('catalog_revision', 1);
+      INSERT INTO repositories(
+        id, name, root, git_directory, added_at, updated_at, state_revision
+      ) VALUES (
+        'repo-one', 'one', '/projects/one', '/projects/one/.git',
+        '2026-07-29T10:00:00.000Z', '2026-07-29T10:00:00.000Z', 0
+      );
+      INSERT INTO remote_bridge_devices(
+        id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+      ) VALUES (
+        'device-one', 'repo-one', 'Air', 'couchview-one-device',
+        'hashed-secret', '2026-07-29T10:01:00.000Z', NULL
+      );
+      PRAGMA user_version = 2;
+    `);
+    raw.close();
+
+    const migrated = await StateDatabase.open(filePath);
+    try {
+      expect(migrated.remoteBridgeDevices()).toEqual([
+        expect.objectContaining({
+          id: "device-one",
+          repositoryId: "repo-one",
+          sshAlias: "couchview-one-device",
+        }),
+      ]);
+      expect(migrated.forgetRepository("repo-one")).toBe(true);
+      expect(migrated.remoteBridgeDeviceByTokenHash("hashed-secret")).toMatchObject({
+        id: "device-one",
+      });
+    } finally {
+      migrated.close();
+    }
+
+    const inspected = new Database(filePath, { readonly: true, strict: true });
+    expect(inspected.query<{ user_version: number }, []>(
+      "PRAGMA user_version",
+    ).get()?.user_version).toBe(3);
+    expect(inspected.query<{ table: string }, []>(
+      "PRAGMA foreign_key_list(remote_bridge_devices)",
+    ).all()).toEqual([]);
     inspected.close();
   });
 
@@ -277,7 +346,7 @@ describe("global SQLite state", () => {
     }
   });
 
-  test("stores only hashed native bridge credentials and cascades paired devices", async () => {
+  test("stores only hashed host-wide bridge credentials independently of repositories", async () => {
     const database = StateDatabase.memory();
     try {
       database.registerRepository({
@@ -295,19 +364,23 @@ describe("global SQLite state", () => {
         lastUsedAt: null,
       };
       database.insertRemoteBridgeDevice(device, "hashed-secret");
-      expect(database.remoteBridgeDevices("repo-one")).toEqual([device]);
+      expect(database.remoteBridgeDevices()).toEqual([device]);
       expect(database.remoteBridgeDeviceByTokenHash("raw-secret")).toBeNull();
       expect(database.remoteBridgeDeviceByTokenHash("hashed-secret")).toEqual(device);
       expect(database.touchRemoteBridgeDevice(
         device.id,
         "2026-07-29T10:01:00.000Z",
       )).toBe(true);
-      expect(database.remoteBridgeDevices("repo-one")[0]?.lastUsedAt).toBe(
+      expect(database.remoteBridgeDevices()[0]?.lastUsedAt).toBe(
         "2026-07-29T10:01:00.000Z",
       );
       expect(database.forgetRepository("repo-one")).toBe(true);
-      expect(database.remoteBridgeDevices("repo-one")).toEqual([]);
-      expect(database.remoteBridgeDeviceByTokenHash("hashed-secret")).toBeNull();
+      expect(database.remoteBridgeDevices()).toEqual([
+        { ...device, lastUsedAt: "2026-07-29T10:01:00.000Z" },
+      ]);
+      expect(database.remoteBridgeDeviceByTokenHash("hashed-secret")).toMatchObject({
+        id: "device-one",
+      });
     } finally {
       database.close();
     }

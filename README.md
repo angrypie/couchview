@@ -418,8 +418,8 @@ does not require an extra gateway login, or install a different origin-access ad
 
 A transparent tunnel or relay requires no Couchview-specific adapter when it forwards:
 
-- POST requests for pairing claim, ticket issue, and lease renewal;
-- WebSocket upgrades for `/api/repositories/<id>/remote-bridge/socket`;
+- POST requests for pairing claim, host-wide ticket issue, and lease renewal;
+- WebSocket upgrades for `/api/remote-bridge/socket`;
 - `Host`, `Upgrade`, and `Sec-WebSocket-Protocol` without rewriting their meaning.
 
 After WebRTC activates, the origin carries only control traffic and lease renewal. It
@@ -513,22 +513,31 @@ Then pair the MacBook Air:
 1. Install or link this Couchview CLI on the Air. Install `cloudflared` only when the
    generated command selects the `cloudflare-access` provider. LAN, VPS, transparent
    tunnel, and other provider paths do not call it.
-2. Open the repository in Couchview, choose **Native IDE**, enter a device name, and
-   generate a one-use command.
+2. Open any repository in Couchview, choose **Native IDE**, enter a device name, and
+   generate a one-use command. Pairing is host-wide: the same device can open every
+   repository registered in that Couchview server.
 3. Run that command once in Terminal on the Air. The selected origin-access adapter
    supplies any gateway headers, then Couchview stores a private device credential,
    creates a managed OpenSSH host alias, and prints the Zed URL. With Cloudflare Access,
    `cloudflared` is used only for login and token retrieval; IDE traffic still uses
    Couchview's WebRTC path or the origin WebSocket fallback.
-4. Choose **Open in Zed** after the device appears, or open the printed `zed://ssh/...`
-   URL. Zed performs its normal remote-server installation through OpenSSH on first
-   connection.
+4. After the device appears, select any repository and reopen **Native IDE**. Couchview
+   shows copyable Zed and Codex commands containing that repository's remote path. Zed
+   performs its normal remote-server installation through OpenSSH on first connection.
+   The Zed command follows its
+   [remote-development SSH URL format](https://zed.dev/docs/remote-development):
+
+   ```sh
+   zed 'ssh://<managed-ssh-host>/absolute/path/to/registered/project'
+   ```
 
 To keep the Codex terminal UI on the Air while Codex reads files and runs commands on
 the Mini, use the managed SSH host printed by the pairing command:
 
 ```sh
-couchview bridge codex --profile <managed-ssh-host>
+couchview bridge codex \
+  --profile <managed-ssh-host> \
+  --repo /absolute/path/to/registered/project
 ```
 
 Pairing authorizes the Couchview transport but does not replace macOS SSH
@@ -543,18 +552,21 @@ For password-free launches, install the Air's public key on the Mini first, for
 example with `ssh-copy-id <couchview-ssh-host>`, and confirm that the plain `ssh`
 command succeeds.
 
-When only one bridge profile is stored, `--profile` can be omitted. The machine-local
+When only one bridge profile is stored, `--profile` can be omitted. Omitting `--repo`
+uses the repository from which the pairing was originally created. The machine-local
 profile ID is also accepted, but the managed SSH alias is easier to match with the host
 used for `ssh-copy-id`. Arguments after `--` are forwarded to the Air's Codex CLI, for
 example:
 
 ```sh
-couchview bridge codex --profile couchview-project-name-12345678 -- \
+couchview bridge codex \
+  --profile couchview-project-name-12345678 \
+  --repo '/Users/mini/Code/Another Project' -- \
   --model gpt-5.4
 ```
 
 The launcher selects private loopback ports, starts
-`codex app-server --listen ws://127.0.0.1:<port>` in the paired repository through the
+`codex app-server --listen ws://127.0.0.1:<port>` in the selected repository through the
 Mini's login shell, waits for its readiness endpoint through an OpenSSH local forward,
 and then runs `codex --remote ws://127.0.0.1:<local-port>` on the Air. The app-server
 and forward stop when the local Codex TUI exits. The Air and Mini both need a compatible
@@ -570,11 +582,12 @@ to `~/.ssh/config`. Directories and credential files use user-only permissions. 
 generated `couchview bridge proxy` command is an OpenSSH transport helper and should
 not be run manually.
 
-Pairing codes are single-use and expire after five minutes. Persistent device secrets
-are stored only as hashes on the Mini, transport tickets expire after 30 seconds, and
-active connections require a short renewable authorization lease. Revoking a device
-from **Native IDE** removes its credential and disconnects its current bridge. The
-bridge cannot select another TCP destination and never stores SSH private keys.
+Pairing codes are single-use and expire after five minutes. Persistent host-wide device
+secrets are stored only as hashes on the Mini, transport tickets expire after 30
+seconds, and active connections require a short renewable authorization lease.
+Revoking a device from any repository's **Native IDE** removes its access to every
+registered repository and disconnects its current bridge. The bridge cannot select
+another TCP destination and never stores SSH private keys.
 
 As with terminal P2P, WebRTC can expose the Mini and Air's peer addresses to each other,
 has no TURN relay, and may be unavailable behind symmetric NAT or restrictive UDP

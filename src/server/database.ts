@@ -10,7 +10,7 @@ import type {
   ReviewRecord,
 } from "../shared/contracts.ts";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 interface RepositoryRow {
   id: string;
@@ -255,22 +255,52 @@ export class StateDatabase {
       return;
     }
 
-    if (version === 1) {
+    if (version === 2) {
       this.database.transaction(() => {
         this.database.run(`
+          ALTER TABLE remote_bridge_devices
+            RENAME TO remote_bridge_devices_repository_scoped;
           CREATE TABLE remote_bridge_devices (
             id TEXT PRIMARY KEY,
-            repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+            repository_id TEXT NOT NULL,
             label TEXT NOT NULL,
             ssh_alias TEXT NOT NULL UNIQUE,
             token_hash TEXT NOT NULL UNIQUE,
             created_at TEXT NOT NULL,
             last_used_at TEXT
           );
-          CREATE INDEX remote_bridge_devices_repository
-            ON remote_bridge_devices(repository_id, created_at);
-          UPDATE metadata SET value = 2 WHERE key = 'schema_version';
-          PRAGMA user_version = 2;
+          INSERT INTO remote_bridge_devices(
+            id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+          )
+          SELECT
+            id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
+          FROM remote_bridge_devices_repository_scoped;
+          DROP TABLE remote_bridge_devices_repository_scoped;
+          CREATE INDEX remote_bridge_devices_created
+            ON remote_bridge_devices(created_at);
+          UPDATE metadata SET value = 3 WHERE key = 'schema_version';
+          PRAGMA user_version = 3;
+        `);
+      })();
+      return;
+    }
+
+    if (version === 1) {
+      this.database.transaction(() => {
+        this.database.run(`
+          CREATE TABLE remote_bridge_devices (
+            id TEXT PRIMARY KEY,
+            repository_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            ssh_alias TEXT NOT NULL UNIQUE,
+            token_hash TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT
+          );
+          CREATE INDEX remote_bridge_devices_created
+            ON remote_bridge_devices(created_at);
+          UPDATE metadata SET value = 3 WHERE key = 'schema_version';
+          PRAGMA user_version = 3;
         `);
       })();
       return;
@@ -337,18 +367,18 @@ export class StateDatabase {
         );
         CREATE TABLE IF NOT EXISTS remote_bridge_devices (
           id TEXT PRIMARY KEY,
-          repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+          repository_id TEXT NOT NULL,
           label TEXT NOT NULL,
           ssh_alias TEXT NOT NULL UNIQUE,
           token_hash TEXT NOT NULL UNIQUE,
           created_at TEXT NOT NULL,
           last_used_at TEXT
         );
-        CREATE INDEX IF NOT EXISTS remote_bridge_devices_repository
-          ON remote_bridge_devices(repository_id, created_at);
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 2);
+        CREATE INDEX IF NOT EXISTS remote_bridge_devices_created
+          ON remote_bridge_devices(created_at);
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 3);
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 3;
       `);
     })();
   }
@@ -580,13 +610,12 @@ export class StateDatabase {
     }).immediate();
   }
 
-  remoteBridgeDevices(repositoryId: string): RemoteBridgeDevice[] {
-    return this.database.query<RemoteBridgeDeviceRow, { repositoryId: string }>(`
+  remoteBridgeDevices(): RemoteBridgeDevice[] {
+    return this.database.query<RemoteBridgeDeviceRow, []>(`
       SELECT id, repository_id, label, ssh_alias, token_hash, created_at, last_used_at
       FROM remote_bridge_devices
-      WHERE repository_id = $repositoryId
       ORDER BY COALESCE(last_used_at, created_at) DESC, created_at DESC, id
-    `).all({ repositoryId }).map(remoteBridgeDeviceFromRow);
+    `).all().map(remoteBridgeDeviceFromRow);
   }
 
   insertRemoteBridgeDevice(
@@ -625,11 +654,10 @@ export class StateDatabase {
     `).run({ id, lastUsedAt }).changes > 0;
   }
 
-  deleteRemoteBridgeDevice(repositoryId: string, id: string): boolean {
-    return this.database.query<unknown, { repositoryId: string; id: string }>(`
-      DELETE FROM remote_bridge_devices
-      WHERE repository_id = $repositoryId AND id = $id
-    `).run({ repositoryId, id }).changes > 0;
+  deleteRemoteBridgeDevice(id: string): boolean {
+    return this.database.query<unknown, { id: string }>(`
+      DELETE FROM remote_bridge_devices WHERE id = $id
+    `).run({ id }).changes > 0;
   }
 
   registerServerInstance(instance: StoredServerInstance): void {

@@ -37,6 +37,7 @@ import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import {
   pairRemoteBridge,
+  remoteBridgeCodexCommand,
   remoteBridgeZedUrl,
   runRemoteBridgeProxy,
 } from "./remoteBridgeClient.ts";
@@ -123,6 +124,7 @@ interface RunCliRuntime {
   proxyBridge(profileId: string): Promise<number>;
   codexBridge(options: {
     profileSelector: string | null;
+    repositoryRoot: string | null;
     codexArgs: string[];
   }): Promise<number>;
   installCompletion(shell: CompletionShell): Promise<string>;
@@ -1251,7 +1253,7 @@ export async function runCli(
       runtime.stdout(`Paired '${profile.deviceLabel}' as SSH host ${profile.sshAlias}.`);
       runtime.stdout(`Open in Zed: ${remoteBridgeZedUrl(profile)}`);
       runtime.stdout(
-        `Open in Codex CLI: couchview bridge codex --profile ${profile.sshAlias}`,
+        `Open in Codex CLI: ${remoteBridgeCodexCommand(profile)}`,
       );
       return 0;
     }
@@ -1263,6 +1265,7 @@ export async function runCli(
       action = "connect Codex through the native bridge";
       return await runtime.codexBridge({
         profileSelector: invocation.profileSelector,
+        repositoryRoot: invocation.repositoryRoot,
         codexArgs: invocation.codexArgs,
       });
     }

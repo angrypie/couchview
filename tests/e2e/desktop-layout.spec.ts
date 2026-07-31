@@ -141,11 +141,19 @@ test.describe("desktop review layout", () => {
     const dialog = page.getByRole("dialog", { name: "Native IDE setup" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByText("Direct WebRTC preferred")).toBeVisible();
-    const zedLink = dialog.getByRole("link", { name: "Open in Zed" });
+    const zedLink = dialog.getByRole("link", { name: "Open" });
     await expect(zedLink).toHaveAttribute(
       "href",
       "zed://ssh/couchview-fixture-device/fixtures/sample-project",
     );
+    await expect(dialog.getByText(
+      "zed 'ssh://couchview-fixture-device/fixtures/sample-project'",
+      { exact: true },
+    )).toBeVisible();
+    await expect(dialog.getByText(
+      "couchview bridge codex --profile couchview-fixture-device --repo '/fixtures/sample-project'",
+      { exact: true },
+    )).toBeVisible();
     await expect.poll(async () => {
       const nextBounds = await dialog.boundingBox();
       return nextBounds ? nextBounds.y + nextBounds.height : Number.POSITIVE_INFINITY;

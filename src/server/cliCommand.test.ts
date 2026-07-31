@@ -107,6 +107,12 @@ describe("CLI command parsing", () => {
       "--url",
       "https://review.example.com",
     ])).toThrow("only valid for bridge pair");
+    expect(() => parseCliInvocation([
+      "bridge",
+      "codex",
+      "--repo",
+      "relative/project",
+    ])).toThrow("must be absolute");
   });
 
   test("dispatches the default command, explicit commands, help, and version", () => {
@@ -173,6 +179,8 @@ describe("CLI command parsing", () => {
       "codex",
       "--profile",
       "couchview-project-one",
+      "--repo",
+      "/Users/mini/Code/Project One",
       "--",
       "--model",
       "gpt-5.4",
@@ -180,11 +188,13 @@ describe("CLI command parsing", () => {
     ])).toEqual({
       kind: "bridge-codex",
       profileSelector: "couchview-project-one",
+      repositoryRoot: "/Users/mini/Code/Project One",
       codexArgs: ["--model", "gpt-5.4", "Inspect the repository"],
     });
     expect(parseCliInvocation(["bridge", "codex"])).toEqual({
       kind: "bridge-codex",
       profileSelector: null,
+      repositoryRoot: null,
       codexArgs: [],
     });
     expect(parseCliInvocation([

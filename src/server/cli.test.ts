@@ -394,6 +394,7 @@ describe("CLI entrypoint", () => {
     const bridgeProxies: string[] = [];
     const bridgeCodex: Array<{
       profileSelector: string | null;
+      repositoryRoot: string | null;
       codexArgs: string[];
     }> = [];
     return {
@@ -449,6 +450,7 @@ describe("CLI entrypoint", () => {
         },
         async codexBridge(options: {
           profileSelector: string | null;
+          repositoryRoot: string | null;
           codexArgs: string[];
         }) {
           bridgeCodex.push(options);
@@ -531,7 +533,7 @@ describe("CLI entrypoint", () => {
     }]);
     expect(pairing.stdout.join("\n")).toContain("Open in Zed: zed://ssh/");
     expect(pairing.stdout.join("\n")).toContain(
-      "Open in Codex CLI: couchview bridge codex --profile couchview-project-one",
+      "Open in Codex CLI: couchview bridge codex --profile couchview-project-one --repo '/projects/one'",
     );
     expect(pairing.stdout.join("\n")).not.toContain("t".repeat(43));
 
@@ -551,12 +553,15 @@ describe("CLI entrypoint", () => {
       "codex",
       "--profile",
       "couchview-project-one",
+      "--repo",
+      "/projects/two",
       "--",
       "--model",
       "gpt-5.4",
     ], codex.runtime)).toBe(0);
     expect(codex.bridgeCodex).toEqual([{
       profileSelector: "couchview-project-one",
+      repositoryRoot: "/projects/two",
       codexArgs: ["--model", "gpt-5.4"],
     }]);
   });

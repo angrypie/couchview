@@ -176,7 +176,7 @@ function fakeSocket(data: RemoteBridgeSocketData) {
 
 function upgradeRequest(ticket: string): Request {
   return new Request(
-    "https://review.example.com/api/repositories/repo-one/remote-bridge/socket",
+    "https://review.example.com/api/remote-bridge/socket",
     {
       headers: {
         host: "review.example.com",
@@ -234,14 +234,11 @@ function pair(service: RemoteBridgeService) {
 
 function attach(service: RemoteBridgeService, deviceToken: string, connectionId = "connection_123") {
   const ticket = service.issueTicket(
-    "repo-one",
-    "/projects/one",
     deviceToken,
     { connectionId },
     { host: "review.example.com" },
   );
   const data = service.consumeUpgrade(
-    "repo-one",
     upgradeRequest(ticket.ticket),
     { host: "review.example.com" },
   );
@@ -261,7 +258,7 @@ describe("native remote bridge authorization", () => {
     const database = StateDatabase.memory();
     const disabled = new RemoteBridgeService({ enabled: false, database });
     expect(disabled.capability).toMatchObject({ available: false, p2pEnabled: false });
-    expect(() => disabled.listDevices("repo-one")).toThrow(
+    expect(() => disabled.listDevices()).toThrow(
       expect.objectContaining({ code: "remote_bridge_disabled" }),
     );
     expect(() => new RemoteBridgeService({
@@ -295,21 +292,17 @@ describe("native remote bridge authorization", () => {
       username: "mini-user",
       originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
     });
-    expect(service.listDevices("repo-one").devices[0]).not.toHaveProperty("deviceToken");
+    expect(service.listDevices().devices[0]).not.toHaveProperty("deviceToken");
     expect(() => service.claimPairing({ code: "a".repeat(43) })).toThrow(
       expect.objectContaining({ code: "remote_bridge_pairing_expired" }),
     );
     expect(() => service.issueTicket(
-      "repo-one",
-      "/projects/one",
       "x".repeat(43),
       { connectionId: "connection_123" },
       { host: "review.example.com" },
     )).toThrow(expect.objectContaining({ code: "remote_bridge_token_invalid" }));
 
     const issued = service.issueTicket(
-      "repo-one",
-      "/projects/one",
       profile.deviceToken,
       { connectionId: "connection_123" },
       { host: "review.example.com" },
@@ -319,12 +312,10 @@ describe("native remote bridge authorization", () => {
       leaseRenewIntervalMs: 30_000,
     });
     expect(() => service.consumeUpgrade(
-      "repo-one",
       upgradeRequest(issued.ticket),
       { host: "other.example.com" },
     )).toThrow(expect.objectContaining({ code: "remote_bridge_ticket_invalid" }));
     expect(() => service.consumeUpgrade(
-      "repo-one",
       upgradeRequest(issued.ticket),
       { host: "review.example.com" },
     )).toThrow(expect.objectContaining({ code: "remote_bridge_ticket_invalid" }));
@@ -351,29 +342,25 @@ describe("native remote bridge transport", () => {
       "ssh-server",
     );
     expect(service.renewLease(
-      "repo-one",
       profile.deviceToken,
       { connectionId: "connection_123" },
       { host: "review.example.com" },
     ).expiresAt).toBeString();
 
     const pending = service.issueTicket(
-      "repo-one",
-      "/projects/one",
       profile.deviceToken,
       { connectionId: "pending_connection" },
       { host: "review.example.com" },
     );
 
-    service.revokeDevice("repo-one", profile.deviceId);
+    service.revokeDevice(profile.deviceId);
     expect(tcp.destroyed).toBe(true);
     expect(socket.closes).toContainEqual({
       code: 4003,
       reason: "remote_bridge_device_revoked",
     });
-    expect(service.listDevices("repo-one").devices).toEqual([]);
+    expect(service.listDevices().devices).toEqual([]);
     expect(() => service.consumeUpgrade(
-      "repo-one",
       upgradeRequest(pending.ticket),
       { host: "review.example.com" },
     )).toThrow(expect.objectContaining({ code: "remote_bridge_ticket_invalid" }));

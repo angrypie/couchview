@@ -235,6 +235,22 @@ describe("remote Codex command construction", () => {
     }
   });
 
+  test("uses one paired host profile with an explicitly selected repository", () => {
+    const commands = remoteCodexLaunchCommands(profile(), {
+      sshExecutable: "/usr/bin/ssh",
+      codexExecutable: "/opt/bin/codex",
+      localPort: 43_210,
+      remotePort: 54_321,
+      repositoryRoot: "/Users/mini/Code/Project Two",
+    });
+
+    expect(commands.tunnel.at(-1)).toContain("Project Two");
+    expect(commands.client.slice(3, 5)).toEqual([
+      "--cd",
+      "/Users/mini/Code/Project Two",
+    ]);
+  });
+
   test("preserves spaces and apostrophes through both remote shell layers", async () => {
     const { home } = await fixture();
     const repositoryRoot = path.join(home, "Project's App");
@@ -370,7 +386,7 @@ describe("remote Codex lifecycle", () => {
     ]);
     expect(tunnel.signals).toContain("SIGTERM");
     expect(setup.errors).toEqual([
-      `Couchview bridge: starting Codex for 'Project One' on ${stored.profile.sshAlias}…`,
+      `Couchview bridge: starting Codex in ${stored.profile.repositoryRoot} on ${stored.profile.sshAlias}…`,
       "Couchview bridge: remote Codex is ready; launching the local terminal UI.",
     ]);
     expect(setup.exitListener()).toBeNull();

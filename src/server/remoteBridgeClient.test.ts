@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
+  API_ROUTES,
   REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
   REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
   REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
@@ -309,6 +310,7 @@ describe("native bridge ProxyCommand", () => {
     const output = new FakeOutput();
     const errors: string[] = [];
     let socket: FakeWebSocket | null = null;
+    let socketUrl = "";
     let socketOptions: Bun.WebSocketOptions | null = null;
     const requests: Request[] = [];
     const accessLoginModes: boolean[] = [];
@@ -336,7 +338,8 @@ describe("native bridge ProxyCommand", () => {
           leaseRenewIntervalMs: 30_000,
         }, { status: 201 });
       }) as typeof globalThis.fetch,
-      createWebSocket: (_url, options) => {
+      createWebSocket: (url, options) => {
+        socketUrl = url;
         socketOptions = options;
         socket = new FakeWebSocket();
         return socket as unknown as WebSocket;
@@ -366,6 +369,12 @@ describe("native bridge ProxyCommand", () => {
 
     expect(requests[0]?.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER)).toBe(
       profile().deviceToken,
+    );
+    expect(new URL(requests[0]!.url).pathname).toBe(
+      API_ROUTES.remoteBridgeHostTickets,
+    );
+    expect(new URL(socketUrl).pathname).toBe(
+      API_ROUTES.remoteBridgeHostSocket,
     );
     expect(requests[0]?.headers.get("authorization")).toBe("Bearer relay-access-token");
     expect(accessLoginModes).toEqual([false, false]);
