@@ -199,7 +199,7 @@ describe("remote Codex command construction", () => {
       "couchview-project-one-11111111",
     ]);
     expect(commands.tunnel.at(-1)).toContain(
-      "codex app-server --listen",
+      "\"$codex_executable\" app-server --listen",
     );
     expect(commands.tunnel.at(-1)).toContain("ws://127.0.0.1:54321");
     expect(commands.tunnel.at(-1)).toContain("Project");
@@ -239,26 +239,19 @@ describe("remote Codex command construction", () => {
     const { home } = await fixture();
     const repositoryRoot = path.join(home, "Project's App");
     const executableDirectory = path.join(home, "bin");
-    const shellPath = path.join(executableDirectory, "test-shell");
     const codexPath = path.join(executableDirectory, "codex");
     const capturePath = path.join(home, "capture.txt");
     await Promise.all([
       mkdir(repositoryRoot, { recursive: true }),
       mkdir(executableDirectory, { recursive: true }),
     ]);
-    await writeFile(shellPath, [
-      "#!/bin/sh",
-      "if [ \"$1\" = \"-l\" ]; then shift; fi",
-      "exec /bin/sh \"$@\"",
-      "",
-    ].join("\n"));
     await writeFile(codexPath, [
       "#!/bin/sh",
       "printf '%s\\n' \"$PWD\" > \"$CAPTURE_PATH\"",
       "printf '%s\\n' \"$@\" >> \"$CAPTURE_PATH\"",
       "",
     ].join("\n"));
-    await Promise.all([chmod(shellPath, 0o700), chmod(codexPath, 0o700)]);
+    await chmod(codexPath, 0o700);
     const commands = remoteCodexLaunchCommands(profile({ repositoryRoot }), {
       sshExecutable: "ssh",
       codexExecutable: "codex",
@@ -271,8 +264,9 @@ describe("remote Codex command construction", () => {
       env: {
         ...process.env,
         CAPTURE_PATH: capturePath,
+        HOME: home,
         PATH: `${executableDirectory}:${process.env.PATH ?? ""}`,
-        SHELL: shellPath,
+        SHELL: "/not/used/by-the-bridge",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -286,6 +280,57 @@ describe("remote Codex command construction", () => {
     expect(stderr).toBe("");
     expect((await readFile(capturePath, "utf8")).split("\n")).toEqual([
       repositoryRoot,
+      "app-server",
+      "--listen",
+      "ws://127.0.0.1:54321",
+      "",
+    ]);
+  });
+
+  test("finds Codex in the Mini user-local bin when SSH omits it from PATH", async () => {
+    const { home } = await fixture();
+    const repositoryRoot = path.join(home, "Project");
+    const localBin = path.join(home, ".local", "bin");
+    const codexPath = path.join(localBin, "codex");
+    const capturePath = path.join(home, "capture.txt");
+    await Promise.all([
+      mkdir(repositoryRoot, { recursive: true }),
+      mkdir(localBin, { recursive: true }),
+    ]);
+    await writeFile(codexPath, [
+      "#!/bin/sh",
+      "printf '%s\\n' \"$0\" > \"$CAPTURE_PATH\"",
+      "printf '%s\\n' \"$@\" >> \"$CAPTURE_PATH\"",
+      "",
+    ].join("\n"));
+    await chmod(codexPath, 0o700);
+    const commands = remoteCodexLaunchCommands(profile({ repositoryRoot }), {
+      sshExecutable: "ssh",
+      codexExecutable: "codex",
+      localPort: 43_210,
+      remotePort: 54_321,
+    });
+
+    const child = Bun.spawn(["/bin/sh", "-c", commands.tunnel.at(-1)!], {
+      cwd: home,
+      env: {
+        CAPTURE_PATH: capturePath,
+        HOME: home,
+        PATH: "/usr/bin:/bin",
+        SHELL: "/not/used/by-the-bridge",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect((await readFile(capturePath, "utf8")).split("\n")).toEqual([
+      codexPath,
       "app-server",
       "--listen",
       "ws://127.0.0.1:54321",

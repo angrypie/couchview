@@ -525,10 +525,10 @@ Then pair the MacBook Air:
    connection.
 
 To keep the Codex terminal UI on the Air while Codex reads files and runs commands on
-the Mini, use the profile ID printed by the pairing command:
+the Mini, use the managed SSH host printed by the pairing command:
 
 ```sh
-couchview bridge codex --profile <profile-id>
+couchview bridge codex --profile <managed-ssh-host>
 ```
 
 Pairing authorizes the Couchview transport but does not replace macOS SSH
@@ -543,9 +543,10 @@ For password-free launches, install the Air's public key on the Mini first, for
 example with `ssh-copy-id <couchview-ssh-host>`, and confirm that the plain `ssh`
 command succeeds.
 
-When only one bridge profile is stored, `--profile` can be omitted. An SSH host alias
-can also be used in place of the profile ID. Arguments after `--` are forwarded to the
-Air's Codex CLI, for example:
+When only one bridge profile is stored, `--profile` can be omitted. The machine-local
+profile ID is also accepted, but the managed SSH alias is easier to match with the host
+used for `ssh-copy-id`. Arguments after `--` are forwarded to the Air's Codex CLI, for
+example:
 
 ```sh
 couchview bridge codex --profile couchview-project-name-12345678 -- \

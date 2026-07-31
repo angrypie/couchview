@@ -1251,7 +1251,7 @@ export async function runCli(
       runtime.stdout(`Paired '${profile.deviceLabel}' as SSH host ${profile.sshAlias}.`);
       runtime.stdout(`Open in Zed: ${remoteBridgeZedUrl(profile)}`);
       runtime.stdout(
-        `Open in Codex CLI: couchview bridge codex --profile ${profile.id}`,
+        `Open in Codex CLI: couchview bridge codex --profile ${profile.sshAlias}`,
       );
       return 0;
     }

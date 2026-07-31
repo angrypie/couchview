@@ -531,7 +531,7 @@ describe("CLI entrypoint", () => {
     }]);
     expect(pairing.stdout.join("\n")).toContain("Open in Zed: zed://ssh/");
     expect(pairing.stdout.join("\n")).toContain(
-      "Open in Codex CLI: couchview bridge codex --profile device-profile",
+      "Open in Codex CLI: couchview bridge codex --profile couchview-project-one",
     );
     expect(pairing.stdout.join("\n")).not.toContain("t".repeat(43));
 

@@ -314,17 +314,20 @@ export function remoteCodexLaunchCommands(
   const remoteEndpoint = `ws://127.0.0.1:${options.remotePort}`;
   const localEndpoint = `ws://127.0.0.1:${options.localPort}`;
   const unavailableMessage =
-    "Codex CLI is not available in the Mini login shell; install it and run codex login there.";
+    "Codex CLI is not available in the Mini login shell or standard user-local bin directories; install it and run codex login there.";
   const appServerCommand = [
-    "if ! command -v codex >/dev/null 2>&1; then",
+    "PATH=\"${HOME}/.local/bin:${HOME}/.bun/bin:${HOME}/.npm-global/bin:${HOME}/.volta/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}\";",
+    "export PATH;",
+    "codex_executable=\"$(command -v codex 2>/dev/null)\";",
+    "if [ -z \"$codex_executable\" ] || [ ! -x \"$codex_executable\" ]; then",
     `printf '%s\\n' ${shellQuote(unavailableMessage)} >&2;`,
     "exit 127;",
     "fi;",
     `cd -- ${shellQuote(profile.repositoryRoot)} &&`,
-    `exec codex app-server --listen ${shellQuote(remoteEndpoint)}`,
+    `exec "$codex_executable" app-server --listen ${shellQuote(remoteEndpoint)}`,
   ].join(" ");
-  const loginShellCommand =
-    `exec "\${SHELL:-/bin/sh}" -l -c ${shellQuote(appServerCommand)}`;
+  const remoteShellCommand =
+    `exec /bin/sh -c ${shellQuote(appServerCommand)}`;
   return {
     tunnel: [
       options.sshExecutable,
@@ -334,7 +337,7 @@ export function remoteCodexLaunchCommands(
       "-L",
       `127.0.0.1:${options.localPort}:127.0.0.1:${options.remotePort}`,
       profile.sshAlias,
-      loginShellCommand,
+      remoteShellCommand,
     ],
     client: [
       options.codexExecutable,
