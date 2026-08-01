@@ -1677,6 +1677,9 @@ describe("Couchview app", () => {
       name: "Changed files",
     });
     expect(
+      within(drawer).getByLabelText("2 changed files, 2 additions, 1 deletion"),
+    ).toBeTruthy();
+    expect(
       within(drawer).getByRole("button", { name: "Stage all files (2)" }),
     ).toBeTruthy();
     fireEvent.click(

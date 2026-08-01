@@ -492,6 +492,49 @@ export function parsePorcelainV2(output: Uint8Array | string): ParsedStatus {
   return { branch, head, unborn, entries: [...mergedEntries.values()] };
 }
 
+export interface NumstatEntry {
+  path: string;
+  previousPath: string | null;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+}
+
+/** Parse `git diff --numstat -z`, including its three-record rename format. */
+export function parseNumstat(output: Uint8Array | string): NumstatEntry[] {
+  const text = typeof output === "string" ? output : decodeGitOutput(output);
+  const records = text.split("\0");
+  const entries: NumstatEntry[] = [];
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    const additionsEnd = record.indexOf("\t");
+    const deletionsEnd = additionsEnd < 0 ? -1 : record.indexOf("\t", additionsEnd + 1);
+    if (additionsEnd < 0 || deletionsEnd < 0) continue;
+
+    const additionsField = record.slice(0, additionsEnd);
+    const deletionsField = record.slice(additionsEnd + 1, deletionsEnd);
+    const inlinePath = record.slice(deletionsEnd + 1);
+    const previousPath = inlinePath ? null : (records[index + 1] || null);
+    const path = inlinePath || records[index + 2] || "";
+    if (!inlinePath) index += 2;
+    if (!path) continue;
+
+    const additions = /^\d+$/.test(additionsField) ? Number(additionsField) : null;
+    const deletions = /^\d+$/.test(deletionsField) ? Number(deletionsField) : null;
+    entries.push({
+      path,
+      previousPath,
+      additions,
+      deletions,
+      binary: additions === null && deletions === null,
+    });
+  }
+
+  return entries;
+}
+
 export interface ParsedDiff {
   header: string[];
   hunks: DiffHunk[];

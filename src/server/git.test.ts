@@ -19,6 +19,7 @@ import path from "node:path";
 import {
   GitCommandError,
   parseGrepOutput,
+  parseNumstat,
   parsePorcelainV2,
   parseUnifiedDiff,
   reconcileGitStdout,
@@ -129,6 +130,51 @@ describe("parsePorcelainV2", () => {
   });
 });
 
+describe("parseNumstat", () => {
+  test("parses text, binary, and renamed files without splitting unusual paths", () => {
+    const output = [
+      "3\t2\tsrc/ordinary file.ts",
+      "-\t-\tpublic/image.bin",
+      "1\t0\t",
+      "src/old name.ts",
+      "src/new name.ts",
+      "2\t1\tline\nfeed.ts",
+      "",
+    ].join("\0");
+
+    expect(parseNumstat(output)).toEqual([
+      {
+        path: "src/ordinary file.ts",
+        previousPath: null,
+        additions: 3,
+        deletions: 2,
+        binary: false,
+      },
+      {
+        path: "public/image.bin",
+        previousPath: null,
+        additions: null,
+        deletions: null,
+        binary: true,
+      },
+      {
+        path: "src/new name.ts",
+        previousPath: "src/old name.ts",
+        additions: 1,
+        deletions: 0,
+        binary: false,
+      },
+      {
+        path: "line\nfeed.ts",
+        previousPath: null,
+        additions: 2,
+        deletions: 1,
+        binary: false,
+      },
+    ]);
+  });
+});
+
 describe("parseUnifiedDiff", () => {
   test("assigns old/new line numbers and newline metadata", () => {
     const parsed = parseUnifiedDiff(
@@ -221,7 +267,14 @@ describe("GitRepository", () => {
       );
       const before = await repository.changes();
       const file = before.files.find((candidate) => candidate.path === "sample file.ts");
-      expect(file).toMatchObject({ kind: "untracked", staged: false, unstaged: true });
+      expect(file).toMatchObject({
+        kind: "untracked",
+        staged: false,
+        unstaged: true,
+        binary: false,
+        additions: 2,
+        deletions: 0,
+      });
       if (!file) throw new Error("fixture file missing from Git status");
 
       const diff = await repository.diff(file.id);
@@ -260,7 +313,15 @@ describe("GitRepository", () => {
         operationRevision: before.operationRevision,
         contentRevision: file.contentRevision,
       });
-      expect(staged.file).toMatchObject({ staged: true, unstaged: false, reviewed: true, commentCount: 1 });
+      expect(staged.file).toMatchObject({
+        staged: true,
+        unstaged: false,
+        reviewed: true,
+        commentCount: 1,
+        binary: false,
+        additions: 2,
+        deletions: 0,
+      });
       expect(staged.file?.contentRevision).toBe(file.contentRevision);
       if (!staged.file) throw new Error("staged fixture disappeared");
       expect(staged.changes).toEqual({
@@ -280,6 +341,9 @@ describe("GitRepository", () => {
         unstaged: true,
         reviewed: true,
         commentCount: 1,
+        binary: false,
+        additions: 2,
+        deletions: 0,
       });
       expect(unstaged.file?.contentRevision).toBe(file.contentRevision);
       if (!unstaged.file) throw new Error("unstaged fixture disappeared");
@@ -1011,10 +1075,24 @@ describe("GitRepository", () => {
         ]),
       );
       const binary = changes.files.find((file) => file.path === "binary.dat");
+      const deleted = changes.files.find((file) => file.path === "delete.txt");
+      const renamed = changes.files.find((file) => file.path === "renamed file.txt");
       const mode = changes.files.find((file) => file.path === "mode.sh");
       const link = changes.files.find((file) => file.path === "link to mode");
       const odd = changes.files.find((file) => file.path === oddPath);
-      if (!binary || !mode || !link || !odd) throw new Error("edge fixture missing");
+      if (!binary || !deleted || !renamed || !mode || !link || !odd) {
+        throw new Error("edge fixture missing");
+      }
+      expect(binary).toMatchObject({
+        binary: true,
+        additions: null,
+        deletions: null,
+      });
+      expect(deleted).toMatchObject({ binary: false, additions: 0, deletions: 1 });
+      expect(renamed).toMatchObject({ binary: false, additions: 1, deletions: 1 });
+      expect(mode).toMatchObject({ binary: false, additions: 0, deletions: 0 });
+      expect(link).toMatchObject({ binary: false, additions: 1, deletions: 0 });
+      expect(odd).toMatchObject({ binary: false, additions: 1, deletions: 0 });
       expect((await repository.diff(binary.id)).diff.binary).toBe(true);
       const modeDiff = await repository.diff(mode.id);
       expect(modeDiff.diff.hunks).toHaveLength(0);

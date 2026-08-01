@@ -834,6 +834,13 @@ export function App() {
 
   const reviewedCount = files.filter((file) => file.reviewed).length;
   const stagedCount = files.filter((file) => file.staged).length;
+  const changeTotals = files.reduce(
+    (totals, file) => ({
+      additions: totals.additions + (file.additions ?? 0),
+      deletions: totals.deletions + (file.deletions ?? 0),
+    }),
+    { additions: 0, deletions: 0 },
+  );
   const commitMessageCapability = bootstrap?.commitMessage ?? {
     available: false,
     reason: "Commit message generation is unavailable from this Couchview server.",
@@ -3757,13 +3764,24 @@ export function App() {
                 <h2 className="drawer-title">
                   {drawerView === "files" ? "Changed files" : "Package commands"}
                 </h2>
-                <div className="repo-meta">
-                  {drawerView === "files"
-                    ? `${files.length} total`
-                    : `${packageScripts.packages.length} ${
-                        packageScripts.packages.length === 1 ? "package" : "packages"
-                      }`}
-                </div>
+                {drawerView === "files" ? (
+                  <div
+                    aria-label={`${files.length} changed ${files.length === 1 ? "file" : "files"}, ${changeTotals.additions} ${changeTotals.additions === 1 ? "addition" : "additions"}, ${changeTotals.deletions} ${changeTotals.deletions === 1 ? "deletion" : "deletions"}`}
+                    className="repo-meta"
+                  >
+                    <span>
+                      {files.length} {files.length === 1 ? "file" : "files"}
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="additions">+{changeTotals.additions}</span>
+                    <span className="deletions">−{changeTotals.deletions}</span>
+                  </div>
+                ) : (
+                  <div className="repo-meta">
+                    {packageScripts.packages.length}{" "}
+                    {packageScripts.packages.length === 1 ? "package" : "packages"}
+                  </div>
+                )}
               </div>
               <button
                 aria-label="Close changed files"

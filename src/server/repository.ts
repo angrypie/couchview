@@ -50,6 +50,7 @@ import {
 	type GitResult,
 	type ParsedStatusEntry,
 	parseGrepOutput,
+	parseNumstat,
 	parsePorcelainV2,
 	parseUnifiedDiff,
 	runGit,
@@ -109,6 +110,27 @@ interface WorkingFile {
 interface ContentRevisionCacheEntry {
 	signature: string;
 	revision: string;
+	workingFileStatistics: WorkingFileStatistics | null;
+}
+
+interface WorkingFileStatistics {
+	binary: boolean;
+	lines: number;
+}
+
+function statisticsForBytes(bytes: Uint8Array): WorkingFileStatistics {
+	let binary = false;
+	let newlines = 0;
+	for (const byte of bytes) {
+		binary ||= byte === 0;
+		if (byte === 10) newlines += 1;
+	}
+	return {
+		binary,
+		lines: bytes.byteLength === 0
+			? 0
+			: newlines + (bytes[bytes.byteLength - 1] === 10 ? 0 : 1),
+	};
 }
 
 function basePathForEntry(entry: ParsedStatusEntry): string {
@@ -1552,13 +1574,20 @@ export class GitRepository {
 					parsed.head,
 					baseEntries.get(basePathForEntry(entry)) ?? "",
 				);
+				const workingFileStatistics = entry.kind === "untracked"
+					? this.contentRevisionCache.get(
+						this.contentRevisionCacheKey(entry, parsed.head),
+					)?.workingFileStatistics ?? null
+					: null;
 				const review = reviews.get(id);
 				return {
 					id,
 					...entry,
-					binary: null,
-					additions: null,
-					deletions: null,
+					binary: workingFileStatistics?.binary ?? null,
+					additions: workingFileStatistics && !workingFileStatistics.binary
+						? workingFileStatistics.lines
+						: null,
+					deletions: workingFileStatistics && !workingFileStatistics.binary ? 0 : null,
 					contentRevision,
 					reviewed: Boolean(
 						review?.reviewed && review.contentRevision === contentRevision,
@@ -1567,6 +1596,7 @@ export class GitRepository {
 				};
 			}),
 		);
+		await this.populateTrackedLineStatistics(files, parsed.entries, parsed.head);
 		const activeRevisionKeys = new Set(
 			parsed.entries.map((entry) =>
 				this.contentRevisionCacheKey(entry, parsed.head)
@@ -1611,6 +1641,68 @@ export class GitRepository {
 				]),
 			),
 		};
+	}
+
+	private async populateTrackedLineStatistics(
+		files: ChangeFile[],
+		entries: readonly ParsedStatusEntry[],
+		head: string | null,
+	): Promise<void> {
+		const entriesByPath = new Map(entries.map((entry) => [entry.path, entry]));
+		const trackedFiles = files.filter((file) => {
+			const entry = entriesByPath.get(file.path);
+			return entry?.kind !== "untracked" && !(
+				entry?.indexStatus === "D" && entry.worktreeStatus === "?"
+			);
+		});
+		if (trackedFiles.length === 0) return;
+
+		const previousById = new Map(
+			(this.lastSnapshot?.files ?? []).map((file) => [file.id, file]),
+		);
+		const canReusePrevious = this.lastSnapshot?.repository.head === head &&
+			trackedFiles.every((file) => {
+				const previous = previousById.get(file.id);
+				return previous?.contentRevision === file.contentRevision &&
+					previous.previousPath === file.previousPath;
+			});
+		if (canReusePrevious) {
+			for (const file of trackedFiles) {
+				const previous = previousById.get(file.id);
+				if (!previous) continue;
+				file.binary = previous.binary;
+				file.additions = previous.additions;
+				file.deletions = previous.deletions;
+			}
+			return;
+		}
+
+		const result = await runGit(this.root, [
+			"-c",
+			"diff.suppressBlankEmpty=false",
+			"diff",
+			"--numstat",
+			"-z",
+			"--no-ext-diff",
+			"--no-textconv",
+			"--find-renames",
+			head ?? this.emptyTree,
+			"--",
+		]).catch((error) => {
+			if (error instanceof GitCommandError) return null;
+			throw error;
+		});
+		if (!result) return;
+		const statisticsByPath = new Map(
+			parseNumstat(result.stdout).map((statistics) => [statistics.path, statistics]),
+		);
+		for (const file of trackedFiles) {
+			const statistics = statisticsByPath.get(file.path);
+			if (!statistics) continue;
+			file.binary = statistics.binary;
+			file.additions = statistics.additions;
+			file.deletions = statistics.deletions;
+		}
 	}
 
 	private requireFile(snapshot: Snapshot, fileId: string): ChangeFile {
@@ -1674,6 +1766,7 @@ export class GitRepository {
 		const absolutePath = this.resolveProjectPath(relativePath);
 		const cacheKey = this.contentRevisionCacheKey(entry, head);
 		const hash = createHash("sha256");
+		const shouldMeasureWorkingFile = entry.kind === "untracked";
 		hash.update(head ? baseEntry : "unborn");
 		hash.update("\0");
 		hash.update(relativePath);
@@ -1701,16 +1794,23 @@ export class GitRepository {
 				metadata.mtimeMs,
 				metadata.ctimeMs,
 			].join("\0");
+			const cached = this.contentRevisionCache.get(cacheKey);
 			if (
 				useCache &&
 				!metadata.isDirectory() &&
-				this.contentRevisionCache.get(cacheKey)?.signature === cacheSignature
+				cached?.signature === cacheSignature &&
+				(!shouldMeasureWorkingFile || cached.workingFileStatistics !== null)
 			) {
-				return this.contentRevisionCache.get(cacheKey)!.revision;
+				return cached.revision;
 			}
+			let workingFileStatistics: WorkingFileStatistics | null = null;
 			if (metadata.isSymbolicLink()) {
+				const target = await readlink(absolutePath);
 				hash.update("symlink\0");
-				hash.update(await readlink(absolutePath));
+				hash.update(target);
+				if (shouldMeasureWorkingFile) {
+					workingFileStatistics = statisticsForBytes(new TextEncoder().encode(target));
+				}
 			} else if (metadata.isFile()) {
 				const containedPath = await this.assertSafeRegularPath(absolutePath);
 				const handle = await open(
@@ -1720,6 +1820,9 @@ export class GitRepository {
 				try {
 					const chunk = Buffer.allocUnsafe(64 * 1024);
 					let position = 0;
+					let binary = false;
+					let newlines = 0;
+					let lastByte = -1;
 					while (true) {
 						const { bytesRead } = await handle.read(
 							chunk,
@@ -1728,8 +1831,22 @@ export class GitRepository {
 							position,
 						);
 						if (bytesRead === 0) break;
-						hash.update(chunk.subarray(0, bytesRead));
+						const bytes = chunk.subarray(0, bytesRead);
+						hash.update(bytes);
+						if (shouldMeasureWorkingFile) {
+							for (const byte of bytes) {
+								binary ||= byte === 0;
+								if (byte === 10) newlines += 1;
+								lastByte = byte;
+							}
+						}
 						position += bytesRead;
+					}
+					if (shouldMeasureWorkingFile) {
+						workingFileStatistics = {
+							binary,
+							lines: position === 0 ? 0 : newlines + (lastByte === 10 ? 0 : 1),
+						};
 					}
 				} finally {
 					await handle.close();
@@ -1749,6 +1866,7 @@ export class GitRepository {
 				this.contentRevisionCache.set(cacheKey, {
 					signature: cacheSignature,
 					revision,
+					workingFileStatistics,
 				});
 			}
 			return revision;
@@ -1765,7 +1883,11 @@ export class GitRepository {
 			const cached = this.contentRevisionCache.get(cacheKey);
 			if (useCache && cached?.signature === signature) return cached.revision;
 			const revision = hash.digest("hex");
-			this.contentRevisionCache.set(cacheKey, { signature, revision });
+			this.contentRevisionCache.set(cacheKey, {
+				signature,
+				revision,
+				workingFileStatistics: null,
+			});
 			return revision;
 		}
 	}
