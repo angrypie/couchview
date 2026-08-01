@@ -2109,11 +2109,11 @@ describe("Couchview app", () => {
     await screen.findByText("src/first.ts");
   });
 
-  test("uses compact landscape actions without advancing and toggles staging", async () => {
+  test("uses portrait-consistent compact landscape actions and toggles staging", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: (query: string) => ({
-        matches: query.includes("orientation: landscape"),
+        matches: query.includes("max-height: 599px"),
         media: query,
         onchange: null,
         addEventListener() {},
@@ -2131,7 +2131,7 @@ describe("Couchview app", () => {
     expect(screen.getAllByRole("button", { name: "Previous file" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Next file" })).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Review current file" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review + next" }));
     await waitFor(() =>
       expect(
         requests.find(
@@ -2139,7 +2139,10 @@ describe("Couchview app", () => {
         )?.body,
       ).toMatchObject({ reviewed: true }),
     );
-    expect(screen.getByText("src/first.ts")).toBeTruthy();
+    await screen.findByText("src/second.ts");
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous file" }));
+    await screen.findByText("src/first.ts");
 
     fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
     await screen.findByRole("button", { name: "Unstage current file" });

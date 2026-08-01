@@ -328,6 +328,14 @@ function useMediaQuery(query: string): boolean {
   return matches;
 }
 
+const SPLIT_VIEW_QUERY = [
+  "(orientation: landscape) and (min-width: 760px) and (min-height: 600px)",
+  "(min-width: 1100px) and (min-height: 600px)",
+].join(", ");
+
+const COMPACT_LANDSCAPE_QUERY =
+  "(orientation: landscape) and (max-height: 599px)";
+
 function useStoredBoolean(
   key: string,
   fallback: boolean,
@@ -746,9 +754,11 @@ export function App() {
     ],
   );
 
-  const desktop = useMediaQuery("(min-width: 760px) and (min-height: 600px)");
-  const landscape = useMediaQuery("(orientation: landscape) and (max-height: 599px)");
-  const compactLandscape = landscape && !desktop;
+  // Portrait tablets keep the diff full width and open the file list as a
+  // drawer. Landscape tablets and genuinely wide portrait windows have enough
+  // room for the persistent split view.
+  const splitView = useMediaQuery(SPLIT_VIEW_QUERY);
+  const compactLandscape = useMediaQuery(COMPACT_LANDSCAPE_QUERY) && !splitView;
   const diffViewerRef = useRef<DiffViewerHandle>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const toastCounter = useRef(0);
@@ -3250,7 +3260,7 @@ export function App() {
     commentComposerOpen ||
     commentTrayOpen ||
     Boolean(copyFallbackText) ||
-    (!desktop && drawerOpen);
+    (!splitView && drawerOpen);
 
   const dismissCommandOverlays = useCallback(() => {
     setRepositoryPickerOpen(false);
@@ -3544,7 +3554,7 @@ export function App() {
     commentComposerOpen,
     commentTrayOpen,
     copyFallbackText,
-    desktop,
+    splitView,
     drawerOpen,
     failureDetailsOpen,
     overlayVisible,
@@ -3732,7 +3742,7 @@ export function App() {
     );
   }
 
-  const drawerVisible = drawerOpen || desktop;
+  const drawerVisible = drawerOpen || splitView;
   const activeSearchMatches =
     searchScope === "current" ? searchResult?.currentFile : searchResult?.otherFiles;
   const activeComments = activeFile
@@ -3750,7 +3760,7 @@ export function App() {
       >
       {drawerVisible && (
         <>
-          {!desktop && (
+          {!splitView && (
             <button
               aria-label="Close changed files"
               className="drawer-scrim"
@@ -4184,7 +4194,7 @@ export function App() {
           type="button"
         >
           <Search size={18} />
-          {desktop && <kbd>{formatShortcut(commandBindings["palette.open"])}</kbd>}
+          {splitView && <kbd>{formatShortcut(commandBindings["palette.open"])}</kbd>}
         </button>
         <button
           aria-label="Set up native IDE"
@@ -4272,7 +4282,7 @@ export function App() {
       </header>
 
       {!connected && !compactLandscape && (
-        <div className="disconnected-banner" style={{ gridColumn: desktop ? 2 : undefined }}>
+        <div className="disconnected-banner" style={{ gridColumn: splitView ? 2 : undefined }}>
           <WifiOff size={12} /> Disconnected — reconnecting to the local server
         </div>
       )}
@@ -4488,11 +4498,11 @@ export function App() {
           </button>
         </div>
         <button
-          aria-label={activeFile?.reviewed ? "Unreview current file" : compactLandscape ? "Review current file" : "Review + next"}
+          aria-label={activeFile?.reviewed ? "Unreview current file" : "Review + next"}
           className={`action-button review-action ${activeFile?.reviewed ? "success" : ""}`}
           disabled={!activeFile || reviewBusy}
-          onClick={() => activeFile && void setReviewed(activeFile, !activeFile.reviewed, !compactLandscape)}
-          title={compactLandscape ? "Toggle reviewed" : "Mark reviewed and advance"}
+          onClick={() => activeFile && void setReviewed(activeFile, !activeFile.reviewed, true)}
+          title="Mark reviewed and advance"
           type="button"
         >
           {reviewBusy ? (
@@ -4503,7 +4513,7 @@ export function App() {
             <Check size={16} />
           )}
           <span className="action-copy">
-            {activeFile?.reviewed ? "Unreview" : compactLandscape ? "Review" : "Review + next"}
+            {activeFile?.reviewed ? "Unreview" : "Review + next"}
           </span>
         </button>
         <button

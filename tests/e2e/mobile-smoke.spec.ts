@@ -343,6 +343,198 @@ test.describe("mobile fixture review", () => {
     await expectActionsAtBottom();
   });
 
+  test("uses an overlay drawer in iPad portrait and a split view in landscape", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The tablet orientation regression only needs one WebKit pass.",
+    );
+
+    await page.setViewportSize({ width: 834, height: 1194 });
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const workspace = page.getByRole("region", { name: "Unified diff" });
+    const drawer = page.getByRole("complementary", { name: "Changed files" });
+    const menuButton = page.getByRole("button", { name: "Open changed files" });
+    const actions = page.getByRole("navigation", { name: "Review actions" });
+    const topBar = page.locator(".top-bar");
+    const fileBar = page.getByRole("region", { name: "Current file" });
+    const displayControls = page.getByLabel("Diff display controls");
+
+    await expect(drawer).toHaveCount(0);
+    await expect(menuButton).toBeVisible();
+    await expect(actions).toHaveCSS("position", "absolute");
+    await expect(displayControls).toBeVisible();
+    await expect.poll(() => topBar.evaluate((element) =>
+      Math.round(element.getBoundingClientRect().height)
+    )).toBeLessThanOrEqual(53);
+    await expect.poll(() => displayControls.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const children = Array.from(element.children).map((child) => {
+        const childBounds = child.getBoundingClientRect();
+        return {
+          center: childBounds.top + childBounds.height / 2,
+          isButton: child.tagName === "BUTTON",
+          left: Math.round(childBounds.left),
+          right: Math.round(childBounds.right),
+          width: Math.round(childBounds.width),
+        };
+      });
+      const centers = children.map((child) => child.center);
+      return {
+        aligned: Math.max(...centers) - Math.min(...centers) <= 1,
+        buttonsWideEnough: children
+          .filter((child) => child.isButton)
+          .every((child) => child.width >= 40),
+        containsChildren: children.every((child) =>
+          child.left >= Math.round(bounds.left) && child.right <= Math.round(bounds.right)
+        ),
+        wideEnough: Math.round(bounds.width) >= 200,
+      };
+    })).toEqual({
+      aligned: true,
+      buttonsWideEnough: true,
+      containsChildren: true,
+      wideEnough: true,
+    });
+    await expect.poll(() => fileBar.evaluate((element) =>
+      Math.round(element.getBoundingClientRect().top)
+    )).toBeLessThanOrEqual(53);
+    await expect.poll(() => workspace.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: Math.round(bounds.left),
+        width: Math.round(bounds.width),
+        viewportWidth: window.innerWidth,
+      };
+    })).toEqual({ left: 0, width: 834, viewportWidth: 834 });
+
+    await menuButton.click();
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS("position", "fixed");
+    await expect(page.locator(".drawer-scrim")).toBeVisible();
+    await expect.poll(() => workspace.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { left: Math.round(bounds.left), width: Math.round(bounds.width) };
+    })).toEqual({ left: 0, width: 834 });
+    await drawer.getByRole("button", { name: "Close changed files" }).click();
+    await expect(drawer).toHaveCount(0);
+
+    await page.setViewportSize({ width: 1194, height: 834 });
+    await expect(drawer).toBeVisible();
+    await expect(drawer).toHaveCSS("position", "relative");
+    await expect(menuButton).toBeHidden();
+    await expect(actions).toHaveCSS("position", "relative");
+    await expect(displayControls).toBeVisible();
+    await expect.poll(() => topBar.evaluate((element) =>
+      Math.round(element.getBoundingClientRect().height)
+    )).toBeLessThanOrEqual(53);
+    await expect.poll(() => workspace.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        left: Math.round(bounds.left),
+        width: Math.round(bounds.width),
+        viewportWidth: window.innerWidth,
+      };
+    })).toEqual({ left: 300, width: 894, viewportWidth: 1194 });
+
+    await page.setViewportSize({ width: 834, height: 1194 });
+    await expect(drawer).toHaveCount(0);
+    await expect(menuButton).toBeVisible();
+    await expect(actions).toHaveCSS("position", "absolute");
+  });
+
+  test("keeps the iPhone portrait header to two unsquished rows", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "mobile-375-webkit",
+      "The portrait header regression only needs one WebKit pass.",
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openFixture(page);
+    await dismissPwaNotices(page);
+
+    const topBar = page.locator(".top-bar");
+    const fileBar = page.getByRole("region", { name: "Current file" });
+    const displayControls = page.getByLabel("Diff display controls");
+
+    await expect(displayControls).toBeVisible();
+    await expect(displayControls.getByRole("button")).toHaveCount(4);
+    await page.getByRole("button", { name: "Increase diff font size" }).click();
+    await expect(displayControls.locator(".font-value")).toHaveText("12px");
+    await page.getByRole("button", { name: "Decrease diff font size" }).click();
+    await expect(displayControls.locator(".font-value")).toHaveText("11px");
+    await expect.poll(() => topBar.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const visibleControls = Array.from(element.children).filter((child) => {
+        const bounds = child.getBoundingClientRect();
+        return bounds.width > 0 && bounds.height > 0;
+      }).map((child) => {
+        const childBounds = child.getBoundingClientRect();
+        return {
+          center: childBounds.top + childBounds.height / 2,
+          left: childBounds.left,
+          right: childBounds.right,
+          width: childBounds.width,
+        };
+      });
+      const centers = visibleControls.map((child) => child.center);
+      const ordered = [...visibleControls].sort((left, right) => left.left - right.left);
+      return {
+        aligned: Math.max(...centers) - Math.min(...centers) <= 1,
+        contained: visibleControls.every((child) =>
+          child.left >= bounds.left && child.right <= bounds.right
+        ),
+        count: visibleControls.length,
+        heightIsCompact: Math.round(bounds.height) <= 43,
+        noOverlap: ordered.every((child, index) =>
+          index === ordered.length - 1 || child.right <= ordered[index + 1]!.left
+        ),
+        wideEnough: visibleControls.every((child) => child.width >= 34),
+      };
+    })).toEqual({
+      aligned: true,
+      contained: true,
+      count: 5,
+      heightIsCompact: true,
+      noOverlap: true,
+      wideEnough: true,
+    });
+    await expect.poll(() => fileBar.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const topBarBounds = document.querySelector(".top-bar")!.getBoundingClientRect();
+      return {
+        attachedToTopBar: Math.round(bounds.top) === Math.round(topBarBounds.bottom),
+        height: Math.round(bounds.height),
+      };
+    })).toEqual({ attachedToTopBar: true, height: 47 });
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(displayControls).toBeVisible();
+    await expect(page.locator(".file-bar")).toHaveCount(0);
+    await expect.poll(() => topBar.evaluate((element) =>
+      Math.round(element.getBoundingClientRect().height)
+    )).toBeLessThanOrEqual(42);
+    await expect.poll(() => displayControls.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const buttons = Array.from(element.querySelectorAll("button")).map((button) => {
+        const buttonBounds = button.getBoundingClientRect();
+        return {
+          height: Math.round(buttonBounds.height),
+          width: Math.round(buttonBounds.width),
+        };
+      });
+      return {
+        contained: buttons.every((button) => button.width >= 32 && button.height >= 32),
+        visible: bounds.width > 0 && bounds.height > 0,
+      };
+    })).toEqual({ contained: true, visible: true });
+  });
+
   test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
     page,
     request,
@@ -576,7 +768,7 @@ test.describe("mobile fixture review", () => {
 
   test("searches, comments on a replacement, stages, and reviews with one-tap advance", async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.addInitScript(() => {
       Object.defineProperty(Navigator.prototype, "clipboard", {
         configurable: true,
@@ -656,14 +848,7 @@ test.describe("mobile fixture review", () => {
     await expect(actions.getByRole("button", { name: "Unstage current file" })).toBeVisible();
     await expect(currentFile.locator(".status-pill.staged")).toHaveText("staged");
 
-    const landscape = testInfo.project.name.includes("landscape");
-    await actions
-      .getByRole("button", { name: landscape ? "Review current file" : "Review + next" })
-      .click();
-    if (landscape) {
-      await expect(currentFile).toContainText("src/review.ts");
-      await actions.getByRole("button", { name: "Next file" }).click();
-    }
+    await actions.getByRole("button", { name: "Review + next" }).click();
     await expect(currentFile).toContainText("src/format.ts");
     await expect(page.getByText("Marked reviewed", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
@@ -698,21 +883,13 @@ test.describe("mobile fixture review", () => {
 
   test("bulk stages reviewed files or the entire change set", async ({
     page,
-  }, testInfo) => {
+  }) => {
     const currentFile = await openFixture(page);
     await dismissPwaNotices(page);
     const actions = page.getByRole("navigation", { name: "Review actions" });
-    const landscape = testInfo.project.name.includes("landscape");
-
-    await actions
-      .getByRole("button", {
-        name: landscape ? "Review current file" : "Review + next",
-      })
-      .click();
-    if (!landscape) {
-      await expect(currentFile).toContainText("src/format.ts");
-      await currentFile.getByRole("button", { name: "Previous file" }).click();
-    }
+    await actions.getByRole("button", { name: "Review + next" }).click();
+    await expect(currentFile).toContainText("src/format.ts");
+    await actions.getByRole("button", { name: "Previous file" }).click();
     await expect(currentFile).toContainText("src/review.ts");
 
     await page.getByRole("button", { name: "Open changed files" }).click();
@@ -837,15 +1014,16 @@ test.describe("mobile fixture review", () => {
     await expect(actions).toHaveCSS("position", "absolute");
     await expect
       .poll(() => actions.evaluate((element) => element.getBoundingClientRect().width))
-      .toBeLessThan(360);
-    await expect(actions.getByRole("button")).toHaveCount(4);
+      .toBe(520);
+    await expect(actions.getByRole("button")).toHaveCount(7);
+    await expect(actions.locator(".hunk-nav")).toBeVisible();
+    await expect(actions.locator(".comments-action")).toBeVisible();
     await expect(page.locator(".compact-hunk-nav")).toBeVisible();
     await expect(page.locator(".compact-comments-button")).toBeVisible();
 
     const currentFile = page.getByRole("region", { name: "Current file" });
-    await actions.getByRole("button", { name: "Review current file" }).click();
-    await expect(currentFile).toContainText("src/review.ts");
-    await expect(actions.getByRole("button", { name: "Unreview current file" })).toBeVisible();
+    await actions.getByRole("button", { name: "Review + next" }).click();
+    await expect(currentFile).toContainText("src/format.ts");
 
     await actions.getByRole("button", { name: "Stage current file" }).click();
     await expect(actions.getByRole("button", { name: "Unstage current file" })).toBeVisible();
