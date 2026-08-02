@@ -24,10 +24,7 @@ export function PierreWorkerProvider({ children }: { children: ReactNode }) {
 	);
 
 	return (
-		<WorkerPoolContextProvider
-			highlighterOptions={highlighterOptions}
-			poolOptions={poolOptions}
-		>
+		<WorkerPoolContextProvider highlighterOptions={highlighterOptions} poolOptions={poolOptions}>
 			{children}
 		</WorkerPoolContextProvider>
 	);

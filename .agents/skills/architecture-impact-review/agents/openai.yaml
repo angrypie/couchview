@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Impact Review"
+  short_description: "Map responsibilities and verify architecture"
+  default_prompt: "Use $architecture-impact-review to plan and verify this Couchview change against repository boundaries."

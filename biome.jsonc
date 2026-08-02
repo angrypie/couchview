@@ -1,0 +1,216 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true,
+		"defaultBranch": "main"
+	},
+	"files": {
+		"includes": [
+			"**",
+			"!dist",
+			"!node_modules",
+			"!playwright-report",
+			"!test-results",
+			"!public/vendor"
+		]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineEnding": "lf",
+		"lineWidth": 100
+	},
+	"javascript": {
+		"formatter": {
+			"arrowParentheses": "always",
+			"jsxQuoteStyle": "double",
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "all"
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "none",
+			"a11y": {
+				"useButtonType": "error"
+			},
+			"correctness": {
+				"noChildrenProp": "error",
+				"noNestedComponentDefinitions": "error",
+				"noReactPropAssignments": "error",
+				"noUnusedImports": "error",
+				"noUnusedVariables": "error",
+				"noVoidElementsWithChildren": "error",
+				"useHookAtTopLevel": "error",
+				"useJsxKeyInIterable": "error"
+			},
+			"security": {
+				"noDangerouslySetInnerHtml": "error",
+				"noDangerouslySetInnerHtmlWithChildren": "error",
+				"noGlobalEval": "error"
+			},
+			"suspicious": {
+				"noDebugger": "error",
+				"noDoubleEquals": "error",
+				"noDuplicateJsxProps": "error",
+				"noImportCycles": {
+					"level": "error",
+					"options": { "ignoreTypes": true }
+				}
+			}
+		}
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"src/**/*.ts",
+				"src/**/*.tsx",
+				"scripts/**/*.ts",
+				".codex/hooks/**/*.ts",
+				"!**/*.test.ts",
+				"!**/*.test.tsx",
+				"!**/*TestData.ts",
+				"!**/*TestEnvironment.tsx",
+				"!**/*TestHarness.tsx"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": { "maxLines": 300, "skipBlankLines": true }
+						}
+					},
+					"style": {
+						"noExcessiveLinesPerFile": {
+							"level": "error",
+							"options": { "maxLines": 700, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"src/**/*.tsx",
+				"!**/*.test.tsx",
+				"!**/*TestEnvironment.tsx",
+				"!**/*TestHarness.tsx"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": { "maxLines": 250, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/**/*.css"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noExcessiveLinesPerFile": {
+							"level": "error",
+							"options": { "maxLines": 800, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": [
+				"src/**/*.test.ts",
+				"src/**/*.test.tsx",
+				"src/**/*TestData.ts",
+				"src/**/*TestEnvironment.tsx",
+				"src/**/*TestHarness.tsx",
+				"scripts/**/*.test.ts",
+				"tests/**/*.ts"
+			],
+			"linter": {
+				"rules": {
+					"style": {
+						"noExcessiveLinesPerFile": {
+							"level": "error",
+							"options": { "maxLines": 1000, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/client/App.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": { "maxAllowedComplexity": 15 }
+						},
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": { "maxLines": 250, "skipBlankLines": true }
+						}
+					},
+					"style": {
+						"noExcessiveLinesPerFile": {
+							"level": "error",
+							"options": { "maxLines": 300, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/client/components/**/*.tsx"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": { "maxAllowedComplexity": 45 }
+						},
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": { "maxLines": 250, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		},
+		{
+			"includes": ["src/client/features/**/*.ts", "src/client/lib/**/*.ts"],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": {
+							"level": "error",
+							"options": { "maxAllowedComplexity": 65 }
+						},
+						"noExcessiveLinesPerFunction": {
+							"level": "error",
+							"options": { "maxLines": 300, "skipBlankLines": true }
+						}
+					}
+				}
+			}
+		}
+	]
+}

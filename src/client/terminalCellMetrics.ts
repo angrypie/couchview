@@ -12,8 +12,8 @@ export function adjustedTerminalCellMetrics(
 	metrics: TerminalCellMetrics,
 	config: TerminalRendererConfig,
 ): TerminalCellMetrics {
-  const widthAdjustment = config.cellWidthAdjustment ?? 0;
-  const heightAdjustment = config.cellHeightAdjustment ?? 0;
+	const widthAdjustment = config.cellWidthAdjustment ?? 0;
+	const heightAdjustment = config.cellHeightAdjustment ?? 0;
 	const width = Math.max(MIN_TERMINAL_CELL_SIZE, metrics.width + widthAdjustment);
 	const height = Math.max(MIN_TERMINAL_CELL_SIZE, metrics.height + heightAdjustment);
 	const centeredBaseline = metrics.baseline + Math.ceil(heightAdjustment / 2);

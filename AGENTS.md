@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`src/client/` holds the React UI, PWA lifecycle, styles, and API helpers; `src/server/` holds the Bun CLI/server, Git operations, validation, and review state. Shared API types live in `src/shared/contracts.ts`. Unit and integration tests are co-located as `*.test.ts(x)`, while mobile Playwright tests live in `tests/e2e/`. Use `scripts/` for launch and fixture tools and `public/` for static assets.
+`src/client/App.tsx` is the client composition root. Stateful use cases and side effects live in `src/client/features/`, rendering lives in `src/client/components/`, and small client utilities live in `src/client/lib/`. `src/server/` holds the Bun CLI/server, Git operations, validation, and review state. Shared API types live in `src/shared/contracts.ts`. Unit and integration tests are co-located as `*.test.ts(x)`, while mobile Playwright tests live in `tests/e2e/`. Use `scripts/` for launch and fixture tools and `public/` for static assets. See `ARCHITECTURE.md` for ownership and dependency direction.
 
 ## Build, Test, and Development Commands
 
@@ -10,10 +10,12 @@
 - `bun run dev -- --repo /path/to/repo` starts the Bun API and Vite UI for development.
 - `bun run build` creates the production PWA in `dist/`.
 - `bun run typecheck` checks strict TypeScript without emitting files.
-- `bun test` runs tests under `src/`; `bun run test:watch` reruns them on changes.
+- `bun run lint` runs the direct Biome 2.5 policy; `bun run format:check` verifies formatting and import organization in the adopted client areas.
+- `bun run check:architecture` enforces suppression and import-boundary policy; Biome owns file and function line limits.
+- `bun test` runs source and architecture-checker tests; `bun run test:watch` reruns source tests on changes.
 - `bun run test:e2e` builds and runs the serial Playwright mobile suite. Install browsers once with `bunx playwright install chromium webkit`.
 
-Use Bun 1.3 or newer. Before submitting, run type checking, unit tests, and a production build. Run Playwright for behavior or layout changes.
+Use Bun 1.3 or newer. Before submitting, run `bun run check:quality`. Run Playwright for behavior or layout changes.
 
 ## Running Couchview Process
 
@@ -21,7 +23,20 @@ Treat a responding Couchview server as user-owned: do not stop it or start a com
 
 ## Coding Style & Naming Conventions
 
-Write strict TypeScript and React function components. Follow existing style: two-space indentation, double quotes, semicolons, and trailing commas in multiline constructs. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `commentExport.ts`. Keep client/server boundaries explicit through shared contracts. No formatter or linter is configured; preserve nearby formatting.
+Write strict TypeScript and React function components. Biome defines the adopted style: tabs for indentation, double quotes, semicolons, trailing commas, LF endings, and 100-column lines. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `commentExport.ts`. Keep client/server boundaries explicit through shared contracts.
+
+## Architecture Invariants
+
+- `src/client/App.tsx` only composes modules from `features/`, `components/`, and `lib/`. Feature state, mutations, streams, browser lifecycle, and substantial rendering belong in their owning module.
+- `features/` owns stateful capabilities and may not import `components/`; `components/` owns presentation; `lib/` owns small feature-neutral utilities. Keep platform-independent review logic separate from browser/native adapters.
+- All source files must satisfy the Biome line limits; there are no legacy size waivers. Extract responsibilities instead of increasing a limit.
+- Do not raise limits, add exclusions or blanket suppressions, weaken checker logic, or change CI enforcement unless the user explicitly requests an architecture-policy change.
+- A change is not complete while `bun run check:architecture`, `bun run format:check`, `bun run lint`, or another required verification command fails.
+
+## Code Review Rules
+
+- Flag feature workflows, direct API or event-stream orchestration, browser lifecycle, and substantial screen markup added to the composition root.
+- Flag forbidden dependency direction, policy gaming, unapproved waivers, and arbitrary file splitting that preserves the original coupling.
 
 ## User Experience & Performance
 
@@ -33,7 +48,7 @@ Use Bun's `describe`, `test`, and `expect`; component tests use Happy DOM and Te
 
 ## Commit & Pull Request Guidelines
 
-History currently contains only `init`, so no commit convention is established. Use short, imperative subjects such as `Reject stale staging requests` and keep commits focused. Pull requests should explain user-visible impact, list verification commands, link issues, and include screenshots or recordings for UI changes. Call out security, Git-index, caching, or PWA changes.
+Use short, imperative subjects such as `Reject stale staging requests` and keep commits focused. Pull requests should explain user-visible impact, list verification commands, link issues, and include screenshots or recordings for UI changes. Call out security, Git-index, caching, PWA, architecture-policy, or CI changes.
 
 ## Security & Configuration
 

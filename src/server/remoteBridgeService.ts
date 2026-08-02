@@ -1,1000 +1,733 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { Socket } from "node:net";
-import { userInfo } from "node:os";
-
 import {
-  REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
-  REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
-  REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
-  REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
-  REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
-  REMOTE_BRIDGE_PROTOCOL,
-  REMOTE_BRIDGE_TICKET_PREFIX,
-  remoteBridgeOriginAccessIdIsValid,
-  type ClaimRemoteBridgePairingRequest,
-  type CreateRemoteBridgePairingRequest,
-  type RemoteBridgeCapability,
-  type RemoteBridgeDevice,
-  type RemoteBridgeDevicesResponse,
-  type RemoteBridgeLeaseRequest,
-  type RemoteBridgeLeaseResponse,
-  type RemoteBridgePairingResponse,
-  type RemoteBridgeProfile,
-  type RemoteBridgeTicketRequest,
-  type RemoteBridgeTicketResponse,
+	type ClaimRemoteBridgePairingRequest,
+	type CreateRemoteBridgePairingRequest,
+	REMOTE_BRIDGE_DATA_CHANNEL_LABEL,
+	REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL,
+	REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
+	REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
+	type RemoteBridgeCapability,
+	type RemoteBridgeDevicesResponse,
+	type RemoteBridgeLeaseRequest,
+	type RemoteBridgeLeaseResponse,
+	type RemoteBridgePairingResponse,
+	type RemoteBridgeProfile,
+	type RemoteBridgeTicketRequest,
+	type RemoteBridgeTicketResponse,
 } from "../shared/contracts.ts";
-import type { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
+import { RemoteBridgeAccess, type RemoteBridgeSocketData } from "./remoteBridgeAccess.ts";
 import {
-  type TerminalDataChannel,
-  type TerminalPeerConnection,
-} from "./terminalSessions.ts";
+	type RemoteBridgeServiceOptions,
+	resolveRemoteBridgeServiceConfig,
+} from "./remoteBridgeServiceConfig.ts";
+import {
+	type BridgeAttachment,
+	type BridgeWebRtcState,
+	createNodeRemoteBridgeTcpSocket,
+	MAX_CONTROL_BYTES,
+	type RemoteBridgeTcpSocket,
+	sendRemoteBridgeDataChannelJson,
+	sendRemoteBridgeJson,
+	validApplicationSdp,
+} from "./remoteBridgeTransport.ts";
+import { type TerminalDataChannel, type TerminalPeerConnection } from "./terminalSessions.ts";
+
+export type { RemoteBridgeSocketData } from "./remoteBridgeAccess.ts";
+export type { RemoteBridgeServiceOptions } from "./remoteBridgeServiceConfig.ts";
+export type { RemoteBridgeTcpSocket } from "./remoteBridgeTransport.ts";
+
 import { RTCPeerConnection } from "werift";
 
-const PAIRING_TTL_MS = 5 * 60_000;
-const TICKET_TTL_MS = 30_000;
 const NEGOTIATION_TIMEOUT_MS = 10_000;
-const LEASE_RENEW_INTERVAL_MS = 30_000;
 const LEASE_TTL_MS = 120_000;
-const MAX_CONTROL_BYTES = 48 * 1024;
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const MAX_STREAM_FRAME_BYTES = 32 * 1024;
-const MAX_PENDING_PAIRINGS = 256;
-const MAX_PENDING_TICKETS = 512;
-
-function hash(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-function slug(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[^A-Za-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase()
-    .slice(0, 32) || "project";
-}
-
-function validConnectionId(value: string): boolean {
-  return /^[A-Za-z0-9_-]{8,128}$/.test(value);
-}
-
-function validSshUsername(value: string): boolean {
-  return /^[A-Za-z0-9._-]{1,255}$/.test(value);
-}
-
-function validApplicationSdp(value: string): boolean {
-  if (Buffer.byteLength(value, "utf8") > MAX_CONTROL_BYTES) return false;
-  const mediaLines = value.split(/\r?\n/).filter((line) => line.startsWith("m="));
-  return mediaLines.length === 1 && mediaLines[0]?.startsWith("m=application ") === true;
-}
-
-interface PendingPairing {
-  deviceId: string;
-  repositoryId: string;
-  repositoryName: string;
-  repositoryRoot: string;
-  label: string;
-  sshAlias: string;
-  username: string;
-  origin: string;
-  originAccess: string;
-  expiresAt: number;
-}
-
-interface StoredTicket extends RemoteBridgeSocketData {
-  deviceTokenHash: string;
-  expiresAt: number;
-}
-
-interface BridgeWebRtcState {
-  peer: TerminalPeerConnection;
-  channel: TerminalDataChannel | null;
-  negotiationTimer: ReturnType<typeof setTimeout> | null;
-  outputBuffer: Buffer<ArrayBuffer>[];
-  outputBufferBytes: number;
-}
-
-interface BridgeAttachment {
-  socket: Bun.ServerWebSocket<RemoteBridgeSocketData>;
-  tcp: RemoteBridgeTcpSocket;
-  deviceId: string;
-  host: string;
-  transport: "websocket" | "switching" | "webrtc";
-  webRtc: BridgeWebRtcState | null;
-  leaseExpiresAt: number;
-  leaseTimer: ReturnType<typeof setTimeout> | null;
-  ready: boolean;
-}
-
-export interface RemoteBridgeSocketData {
-  kind: "remote-bridge";
-  connectionId: string;
-  deviceId: string;
-  host: string;
-}
-
-export interface RemoteBridgeTcpSocket {
-  readonly writableLength: number;
-  onOpen(handler: () => void): void;
-  onData(handler: (data: Buffer<ArrayBufferLike>) => void): void;
-  onClose(handler: () => void): void;
-  onError(handler: (error: Error) => void): void;
-  connect(host: string, port: number): void;
-  write(data: Buffer<ArrayBufferLike>): boolean;
-  destroy(): void;
-}
-
-class NodeRemoteBridgeTcpSocket implements RemoteBridgeTcpSocket {
-  private readonly socket: Socket = new Socket();
-
-  get writableLength(): number {
-    return this.socket.writableLength;
-  }
-
-  onOpen(handler: () => void): void {
-    this.socket.once("connect", handler);
-  }
-
-  onData(handler: (data: Buffer<ArrayBufferLike>) => void): void {
-    this.socket.on("data", handler);
-  }
-
-  onClose(handler: () => void): void {
-    this.socket.once("close", handler);
-  }
-
-  onError(handler: (error: Error) => void): void {
-    this.socket.once("error", handler);
-  }
-
-  connect(host: string, port: number): void {
-    this.socket.connect(port, host);
-  }
-
-  write(data: Buffer<ArrayBufferLike>): boolean {
-    return this.socket.write(data);
-  }
-
-  destroy(): void {
-    this.socket.destroy();
-  }
-}
-
-export interface RemoteBridgeServiceOptions {
-  enabled: boolean;
-  database: StateDatabase;
-  disabledReason?: string;
-  p2pEnabled?: boolean;
-  stunUrls?: readonly string[];
-  targetHost?: string;
-  targetPort?: number;
-  username?: string;
-  now?: () => number;
-  tokenFactory?: () => string;
-  tcpSocketFactory?: () => RemoteBridgeTcpSocket;
-  peerConnectionFactory?: (iceServers: readonly string[]) => TerminalPeerConnection;
-  setTimer?: typeof setTimeout;
-  clearTimer?: typeof clearTimeout;
-}
 
 export class RemoteBridgeService {
-  readonly enabled: boolean;
-  readonly p2pEnabled: boolean;
-  readonly stunUrls: readonly string[];
-  readonly targetPort: number;
-  readonly capability: RemoteBridgeCapability;
-  readonly websocket: Bun.WebSocketHandler<RemoteBridgeSocketData>;
+	readonly enabled: boolean;
+	readonly p2pEnabled: boolean;
+	readonly stunUrls: readonly string[];
+	readonly targetPort: number;
+	readonly capability: RemoteBridgeCapability;
+	readonly websocket: Bun.WebSocketHandler<RemoteBridgeSocketData>;
 
-  private readonly database: StateDatabase;
-  private readonly targetHost: string;
-  private readonly username: string;
-  private readonly now: () => number;
-  private readonly tokenFactory: () => string;
-  private readonly tcpSocketFactory: () => RemoteBridgeTcpSocket;
-  private readonly peerConnectionFactory: (iceServers: readonly string[]) => TerminalPeerConnection;
-  private readonly setTimer: typeof setTimeout;
-  private readonly clearTimer: typeof clearTimeout;
-  private readonly pairings = new Map<string, PendingPairing>();
-  private readonly tickets = new Map<string, StoredTicket>();
-  private readonly attachments = new Map<string, BridgeAttachment>();
-  private closed = false;
+	private readonly access: RemoteBridgeAccess;
+	private readonly targetHost: string;
+	private readonly username: string;
+	private readonly now: () => number;
+	private readonly tcpSocketFactory: () => RemoteBridgeTcpSocket;
+	private readonly peerConnectionFactory: (iceServers: readonly string[]) => TerminalPeerConnection;
+	private readonly setTimer: typeof setTimeout;
+	private readonly clearTimer: typeof clearTimeout;
+	private readonly attachments = new Map<string, BridgeAttachment>();
+	private closed = false;
 
-  constructor(options: RemoteBridgeServiceOptions) {
-    this.enabled = options.enabled;
-    this.p2pEnabled = options.p2pEnabled ?? false;
-    if (this.p2pEnabled && !this.enabled) {
-      throw new Error("Remote bridge P2P requires the remote bridge to be enabled");
-    }
-    this.database = options.database;
-    this.stunUrls = [...(options.stunUrls ?? ["stun:stun.cloudflare.com:3478"])];
-    this.targetHost = options.targetHost ?? "127.0.0.1";
-    this.targetPort = options.targetPort ?? 22;
-    if (this.targetHost !== "127.0.0.1" && this.targetHost !== "::1") {
-      throw new Error("The native bridge SSH target must be loopback");
-    }
-    if (!Number.isSafeInteger(this.targetPort) || this.targetPort < 1 || this.targetPort > 65_535) {
-      throw new Error("The native bridge SSH target port must be between 1 and 65535");
-    }
-    this.username = options.username ?? (() => {
-      try {
-        return userInfo().username;
-      } catch {
-        return process.env.USER ?? "user";
-      }
-    })();
-    if (!validSshUsername(this.username)) {
-      throw new Error("The native bridge SSH username is invalid");
-    }
-    this.now = options.now ?? Date.now;
-    this.tokenFactory = options.tokenFactory ?? (() => randomBytes(32).toString("base64url"));
-    this.tcpSocketFactory = options.tcpSocketFactory ?? (() => new NodeRemoteBridgeTcpSocket());
-    this.peerConnectionFactory = options.peerConnectionFactory ?? ((iceServers) =>
-      new RTCPeerConnection({
-        iceServers: iceServers.map((urls) => ({ urls })),
-      }) as unknown as TerminalPeerConnection);
-    this.setTimer = options.setTimer ?? setTimeout;
-    this.clearTimer = options.clearTimer ?? clearTimeout;
-    this.capability = {
-      available: options.enabled,
-      reason: options.enabled
-        ? null
-        : options.disabledReason ?? "Native remote development is disabled on this server.",
-      p2pEnabled: this.p2pEnabled,
-    };
-    this.websocket = {
-      data: {} as RemoteBridgeSocketData,
-      maxPayloadLength: 64 * 1024,
-      backpressureLimit: MAX_BUFFERED_BYTES,
-      closeOnBackpressureLimit: true,
-      idleTimeout: 120,
-      sendPings: true,
-      open: (socket) => this.openSocket(socket),
-      message: (socket, message) => this.message(socket, message),
-      close: (socket) => this.closeSocket(socket),
-    };
-  }
+	constructor(options: RemoteBridgeServiceOptions) {
+		const config = resolveRemoteBridgeServiceConfig(options);
+		this.enabled = options.enabled;
+		this.p2pEnabled = config.p2pEnabled;
+		this.stunUrls = config.stunUrls;
+		this.targetHost = config.targetHost;
+		this.targetPort = config.targetPort;
+		this.username = config.username;
+		this.access = new RemoteBridgeAccess({
+			database: options.database,
+			now: options.now,
+			p2pEnabled: this.p2pEnabled,
+			stunUrls: this.stunUrls,
+			tokenFactory: options.tokenFactory,
+			username: this.username,
+		});
+		this.now = options.now ?? Date.now;
+		this.tcpSocketFactory = options.tcpSocketFactory ?? createNodeRemoteBridgeTcpSocket;
+		this.peerConnectionFactory =
+			options.peerConnectionFactory ??
+			((iceServers) =>
+				new RTCPeerConnection({
+					iceServers: iceServers.map((urls) => ({ urls })),
+				}) as unknown as TerminalPeerConnection);
+		this.setTimer = options.setTimer ?? setTimeout;
+		this.clearTimer = options.clearTimer ?? clearTimeout;
+		this.capability = {
+			available: options.enabled,
+			reason: options.enabled
+				? null
+				: (options.disabledReason ?? "Native remote development is disabled on this server."),
+			p2pEnabled: this.p2pEnabled,
+		};
+		this.websocket = {
+			data: {} as RemoteBridgeSocketData,
+			maxPayloadLength: 64 * 1024,
+			backpressureLimit: MAX_BUFFERED_BYTES,
+			closeOnBackpressureLimit: true,
+			idleTimeout: 120,
+			sendPings: true,
+			open: (socket) => this.openSocket(socket),
+			message: (socket, message) => this.message(socket, message),
+			close: (socket) => this.closeSocket(socket),
+		};
+	}
 
-  private assertAvailable(): void {
-    if (!this.enabled) {
-      throw new HttpError(403, "remote_bridge_disabled", this.capability.reason ?? "Native remote development is disabled");
-    }
-    if (this.closed) {
-      throw new HttpError(503, "remote_bridge_unavailable", "The native bridge is shutting down");
-    }
-  }
+	private assertAvailable(): void {
+		if (!this.enabled) {
+			throw new HttpError(
+				403,
+				"remote_bridge_disabled",
+				this.capability.reason ?? "Native remote development is disabled",
+			);
+		}
+		if (this.closed) {
+			throw new HttpError(503, "remote_bridge_unavailable", "The native bridge is shutting down");
+		}
+	}
 
-  listDevices(): RemoteBridgeDevicesResponse {
-    this.assertAvailable();
-    return { devices: this.database.remoteBridgeDevices() };
-  }
+	listDevices(): RemoteBridgeDevicesResponse {
+		this.assertAvailable();
+		return this.access.listDevices();
+	}
 
-  createPairing(
-    repository: { id: string; name: string; root: string },
-    input: CreateRemoteBridgePairingRequest,
-    context: { origin: string; originAccess: string },
-  ): RemoteBridgePairingResponse {
-    this.assertAvailable();
-    if (typeof input.label !== "string" || !input.label.trim() || input.label.trim().length > 80) {
-      throw new HttpError(400, "remote_bridge_label_invalid", "Device label must contain between 1 and 80 characters");
-    }
-    if (!remoteBridgeOriginAccessIdIsValid(context.originAccess)) {
-      throw new HttpError(
-        500,
-        "remote_bridge_origin_access_invalid",
-        "The configured bridge origin-access provider is invalid",
-      );
-    }
-    const deviceId = randomUUID();
-    const sshAlias = `couchview-${slug(repository.name)}-${deviceId.slice(0, 8)}`;
-    const code = this.tokenFactory();
-    const expiresAt = this.now() + PAIRING_TTL_MS;
-    this.pairings.set(hash(code), {
-      deviceId,
-      repositoryId: repository.id,
-      repositoryName: repository.name,
-      repositoryRoot: repository.root,
-      label: input.label.trim(),
-      sshAlias,
-      username: this.username,
-      origin: context.origin,
-      originAccess: context.originAccess,
-      expiresAt,
-    });
-    this.pruneExpired();
-    while (this.pairings.size > MAX_PENDING_PAIRINGS) {
-      const oldest = this.pairings.keys().next().value;
-      if (typeof oldest !== "string") break;
-      this.pairings.delete(oldest);
-    }
-    const command = [
-      "couchview bridge pair",
-      `--url ${shellQuote(context.origin)}`,
-      `--code ${shellQuote(code)}`,
-      ...(context.originAccess === REMOTE_BRIDGE_NO_ORIGIN_ACCESS
-        ? []
-        : [`--origin-access ${shellQuote(context.originAccess)}`]),
-    ].join(" ");
-    return {
-      command,
-      expiresAt: new Date(expiresAt).toISOString(),
-      sshAlias,
-    };
-  }
+	createPairing(
+		repository: { id: string; name: string; root: string },
+		input: CreateRemoteBridgePairingRequest,
+		context: { origin: string; originAccess: string },
+	): RemoteBridgePairingResponse {
+		this.assertAvailable();
+		return this.access.createPairing(repository, input, context);
+	}
 
-  claimPairing(input: ClaimRemoteBridgePairingRequest): RemoteBridgeProfile {
-    this.assertAvailable();
-    if (typeof input.code !== "string" || !/^[A-Za-z0-9_-]{32,128}$/.test(input.code)) {
-      throw new HttpError(400, "remote_bridge_pairing_invalid", "The pairing code is invalid");
-    }
-    const codeHash = hash(input.code);
-    const pairing = this.pairings.get(codeHash);
-    if (pairing) this.pairings.delete(codeHash);
-    if (!pairing || pairing.expiresAt <= this.now()) {
-      throw new HttpError(403, "remote_bridge_pairing_expired", "The pairing code is invalid or expired");
-    }
-    const deviceToken = this.tokenFactory();
-    const createdAt = new Date(this.now()).toISOString();
-    const device: RemoteBridgeDevice = {
-      id: pairing.deviceId,
-      repositoryId: pairing.repositoryId,
-      label: pairing.label,
-      sshAlias: pairing.sshAlias,
-      createdAt,
-      lastUsedAt: null,
-    };
-    this.database.insertRemoteBridgeDevice(device, hash(deviceToken));
-    return {
-      id: pairing.deviceId,
-      origin: pairing.origin,
-      repositoryId: pairing.repositoryId,
-      repositoryName: pairing.repositoryName,
-      repositoryRoot: pairing.repositoryRoot,
-      deviceId: pairing.deviceId,
-      deviceToken,
-      deviceLabel: pairing.label,
-      sshAlias: pairing.sshAlias,
-      username: pairing.username,
-      originAccess: pairing.originAccess,
-    };
-  }
+	claimPairing(input: ClaimRemoteBridgePairingRequest): RemoteBridgeProfile {
+		this.assertAvailable();
+		return this.access.claimPairing(input);
+	}
 
-  revokeDevice(deviceId: string): void {
-    this.assertAvailable();
-    if (!this.database.deleteRemoteBridgeDevice(deviceId)) {
-      throw new HttpError(404, "remote_bridge_device_not_found", "The paired device was not found");
-    }
-    for (const [connectionId, attachment] of this.attachments) {
-      if (attachment.deviceId === deviceId) {
-        this.destroyAttachment(connectionId, attachment, {
-          code: 4003,
-          reason: "remote_bridge_device_revoked",
-        });
-      }
-    }
-    for (const [ticketHash, ticket] of this.tickets) {
-      if (ticket.deviceId === deviceId) this.tickets.delete(ticketHash);
-    }
-  }
+	revokeDevice(deviceId: string): void {
+		this.assertAvailable();
+		if (!this.access.revokeDevice(deviceId)) {
+			throw new HttpError(404, "remote_bridge_device_not_found", "The paired device was not found");
+		}
+		for (const [connectionId, attachment] of this.attachments) {
+			if (attachment.deviceId === deviceId) {
+				this.destroyAttachment(connectionId, attachment, {
+					code: 4003,
+					reason: "remote_bridge_device_revoked",
+				});
+			}
+		}
+	}
 
-  private authenticateDevice(
-    token: string | null,
-  ): { device: RemoteBridgeDevice; tokenHash: string } {
-    if (!token || !/^[A-Za-z0-9_-]{32,128}$/.test(token)) {
-      throw new HttpError(403, "remote_bridge_token_invalid", "The bridge device credential is missing or invalid");
-    }
-    const tokenHash = hash(token);
-    const device = this.database.remoteBridgeDeviceByTokenHash(tokenHash);
-    if (!device) {
-      throw new HttpError(403, "remote_bridge_token_invalid", "The bridge device credential is missing or invalid");
-    }
-    return { device, tokenHash };
-  }
+	issueTicket(
+		token: string | null,
+		input: RemoteBridgeTicketRequest,
+		binding: { host: string },
+	): RemoteBridgeTicketResponse {
+		this.assertAvailable();
+		return this.access.issueTicket(token, input, binding);
+	}
 
-  issueTicket(
-    token: string | null,
-    input: RemoteBridgeTicketRequest,
-    binding: { host: string },
-  ): RemoteBridgeTicketResponse {
-    this.assertAvailable();
-    if (typeof input.connectionId !== "string" || !validConnectionId(input.connectionId)) {
-      throw new HttpError(400, "remote_bridge_connection_invalid", "The bridge connection ID is invalid");
-    }
-    const { device, tokenHash } = this.authenticateDevice(token);
-    const rawTicket = this.tokenFactory();
-    const expiresAt = this.now() + TICKET_TTL_MS;
-    this.tickets.set(hash(rawTicket), {
-      kind: "remote-bridge",
-      connectionId: input.connectionId,
-      deviceId: device.id,
-      deviceTokenHash: tokenHash,
-      host: binding.host,
-      expiresAt,
-    });
-    this.database.touchRemoteBridgeDevice(device.id, new Date(this.now()).toISOString());
-    this.pruneExpired();
-    while (this.tickets.size > MAX_PENDING_TICKETS) {
-      const oldest = this.tickets.keys().next().value;
-      if (typeof oldest !== "string") break;
-      this.tickets.delete(oldest);
-    }
-    return {
-      ticket: rawTicket,
-      expiresAt: new Date(expiresAt).toISOString(),
-      protocol: REMOTE_BRIDGE_PROTOCOL,
-      leaseRenewIntervalMs: LEASE_RENEW_INTERVAL_MS,
-      ...(this.p2pEnabled
-        ? {
-            webRtc: {
-              iceServers: this.stunUrls.map((urls) => ({ urls })),
-              negotiationTimeoutMs: NEGOTIATION_TIMEOUT_MS,
-              leaseRenewIntervalMs: LEASE_RENEW_INTERVAL_MS,
-            },
-          }
-        : {}),
-    };
-  }
+	renewLease(
+		token: string | null,
+		input: RemoteBridgeLeaseRequest,
+		binding: { host: string },
+	): RemoteBridgeLeaseResponse {
+		this.assertAvailable();
+		const device = this.access.authenticateLease(token, input.connectionId);
+		const attachment = this.attachments.get(input.connectionId);
+		if (!attachment || attachment.deviceId !== device.id || attachment.host !== binding.host) {
+			throw new HttpError(
+				403,
+				"remote_bridge_lease_forbidden",
+				"The bridge lease does not match this connection",
+			);
+		}
+		attachment.leaseExpiresAt = this.now() + LEASE_TTL_MS;
+		this.scheduleLeaseExpiry(input.connectionId, attachment);
+		this.access.touchDevice(device.id);
+		return { expiresAt: new Date(attachment.leaseExpiresAt).toISOString() };
+	}
 
-  renewLease(
-    token: string | null,
-    input: RemoteBridgeLeaseRequest,
-    binding: { host: string },
-  ): RemoteBridgeLeaseResponse {
-    this.assertAvailable();
-    if (typeof input.connectionId !== "string" || !validConnectionId(input.connectionId)) {
-      throw new HttpError(400, "remote_bridge_connection_invalid", "The bridge connection ID is invalid");
-    }
-    const { device } = this.authenticateDevice(token);
-    const attachment = this.attachments.get(input.connectionId);
-    if (
-      !attachment ||
-      attachment.deviceId !== device.id ||
-      attachment.host !== binding.host
-    ) {
-      throw new HttpError(403, "remote_bridge_lease_forbidden", "The bridge lease does not match this connection");
-    }
-    attachment.leaseExpiresAt = this.now() + LEASE_TTL_MS;
-    this.scheduleLeaseExpiry(input.connectionId, attachment);
-    this.database.touchRemoteBridgeDevice(device.id, new Date(this.now()).toISOString());
-    return { expiresAt: new Date(attachment.leaseExpiresAt).toISOString() };
-  }
+	consumeUpgrade(request: Request, binding: { host: string }): RemoteBridgeSocketData {
+		this.assertAvailable();
+		return this.access.consumeUpgrade(request, binding);
+	}
 
-  consumeUpgrade(
-    request: Request,
-    binding: { host: string },
-  ): RemoteBridgeSocketData {
-    this.assertAvailable();
-    const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!protocols.includes(REMOTE_BRIDGE_PROTOCOL)) {
-      throw new HttpError(400, "remote_bridge_protocol_invalid", "The native bridge protocol is unsupported");
-    }
-    const ticketProtocol = protocols.find((value) => value.startsWith(REMOTE_BRIDGE_TICKET_PREFIX));
-    const rawTicket = ticketProtocol?.slice(REMOTE_BRIDGE_TICKET_PREFIX.length) ?? "";
-    const ticketHash = rawTicket ? hash(rawTicket) : "";
-    const ticket = this.tickets.get(ticketHash);
-    if (ticketHash) this.tickets.delete(ticketHash);
-    const device = ticket
-      ? this.database.remoteBridgeDeviceByTokenHash(ticket.deviceTokenHash)
-      : null;
-    if (
-      !ticket ||
-      !device ||
-      device.id !== ticket.deviceId ||
-      ticket.expiresAt <= this.now() ||
-      ticket.host !== binding.host
-    ) {
-      throw new HttpError(403, "remote_bridge_ticket_invalid", "The native bridge ticket is invalid or expired");
-    }
-    const {
-      deviceTokenHash: _deviceTokenHash,
-      expiresAt: _expiresAt,
-      ...data
-    } = ticket;
-    return data;
-  }
+	private sendWebSocketBytes(attachment: BridgeAttachment, bytes: Buffer<ArrayBuffer>): void {
+		for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
+			const frame = bytes.subarray(
+				offset,
+				Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES),
+			);
+			if (attachment.socket.sendBinary(frame, false) === 0) {
+				attachment.socket.close(1013, "remote_bridge_backpressure");
+				return;
+			}
+		}
+	}
 
-  private pruneExpired(): void {
-    const now = this.now();
-    for (const [key, value] of this.pairings) {
-      if (value.expiresAt <= now) this.pairings.delete(key);
-    }
-    for (const [key, value] of this.tickets) {
-      if (value.expiresAt <= now) this.tickets.delete(key);
-    }
-  }
+	private sendDataChannelBytes(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		bytes: Buffer<ArrayBuffer>,
+	): void {
+		const channel = attachment.webRtc?.channel;
+		if (!channel || channel.readyState !== "open") {
+			this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_state_lost");
+			return;
+		}
+		for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
+			const frame = bytes.subarray(
+				offset,
+				Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES),
+			);
+			if (channel.bufferedAmount + frame.byteLength > MAX_BUFFERED_BYTES) {
+				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_backpressure");
+				return;
+			}
+			try {
+				channel.send(frame);
+			} catch {
+				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_send_failed");
+				return;
+			}
+		}
+	}
 
-  private sendJson(socket: Bun.ServerWebSocket<RemoteBridgeSocketData>, value: unknown): void {
-    socket.sendText(JSON.stringify(value), false);
-  }
+	private routeTcpOutput(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		source: Buffer<ArrayBufferLike>,
+	): void {
+		if (this.attachments.get(connectionId) !== attachment) return;
+		const bytes = Buffer.from(source) as Buffer<ArrayBuffer>;
+		if (attachment.transport === "websocket") {
+			this.sendWebSocketBytes(attachment, bytes);
+			return;
+		}
+		const state = attachment.webRtc;
+		if (!state) {
+			this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_state_lost");
+			return;
+		}
+		if (attachment.transport === "switching") {
+			if (state.outputBufferBytes + bytes.byteLength > MAX_BUFFERED_BYTES) {
+				this.fallbackNegotiation(
+					connectionId,
+					attachment,
+					"The direct-path handoff exceeded its output buffer.",
+				);
+				return;
+			}
+			state.outputBuffer.push(bytes);
+			state.outputBufferBytes += bytes.byteLength;
+			return;
+		}
+		this.sendDataChannelBytes(connectionId, attachment, bytes);
+	}
 
-  private sendDataChannelJson(channel: TerminalDataChannel, value: unknown): void {
-    channel.send(JSON.stringify(value));
-  }
+	private writeTcp(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		bytes: Buffer<ArrayBufferLike>,
+	): void {
+		if (
+			!attachment.ready ||
+			attachment.tcp.writableLength + bytes.byteLength > MAX_BUFFERED_BYTES
+		) {
+			this.destroyAttachment(connectionId, attachment, {
+				code: 1013,
+				reason: "remote_bridge_tcp_backpressure",
+			});
+			return;
+		}
+		try {
+			attachment.tcp.write(bytes);
+		} catch {
+			this.destroyAttachment(connectionId, attachment, {
+				code: 1011,
+				reason: "remote_bridge_tcp_write_failed",
+			});
+		}
+	}
 
-  private sendWebSocketBytes(attachment: BridgeAttachment, bytes: Buffer<ArrayBuffer>): void {
-    for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
-      const frame = bytes.subarray(offset, Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES));
-      if (attachment.socket.sendBinary(frame, false) === 0) {
-        attachment.socket.close(1013, "remote_bridge_backpressure");
-        return;
-      }
-    }
-  }
+	private scheduleLeaseExpiry(connectionId: string, attachment: BridgeAttachment): void {
+		if (attachment.leaseTimer !== null) this.clearTimer(attachment.leaseTimer);
+		attachment.leaseTimer = this.setTimer(
+			() => {
+				attachment.leaseTimer = null;
+				if (this.attachments.get(connectionId) !== attachment) return;
+				if (attachment.leaseExpiresAt > this.now()) {
+					this.scheduleLeaseExpiry(connectionId, attachment);
+					return;
+				}
+				this.destroyAttachment(connectionId, attachment, {
+					code: REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
+					reason: "remote_bridge_lease_expired",
+				});
+			},
+			Math.max(0, attachment.leaseExpiresAt - this.now()),
+		);
+	}
 
-  private sendDataChannelBytes(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    bytes: Buffer<ArrayBuffer>,
-  ): void {
-    const channel = attachment.webRtc?.channel;
-    if (!channel || channel.readyState !== "open") {
-      this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_state_lost");
-      return;
-    }
-    for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
-      const frame = bytes.subarray(offset, Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES));
-      if (channel.bufferedAmount + frame.byteLength > MAX_BUFFERED_BYTES) {
-        this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_backpressure");
-        return;
-      }
-      try {
-        channel.send(frame);
-      } catch {
-        this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_send_failed");
-        return;
-      }
-    }
-  }
+	private disposeWebRtc(attachment: BridgeAttachment): void {
+		const state = attachment.webRtc;
+		attachment.webRtc = null;
+		attachment.transport = "websocket";
+		if (!state) return;
+		if (state.negotiationTimer !== null) this.clearTimer(state.negotiationTimer);
+		try {
+			state.channel?.close();
+		} catch {
+			// A failed association may already be closed.
+		}
+		void state.peer.close().catch(() => undefined);
+	}
 
-  private routeTcpOutput(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    source: Buffer<ArrayBufferLike>,
-  ): void {
-    if (this.attachments.get(connectionId) !== attachment) return;
-    const bytes = Buffer.from(source) as Buffer<ArrayBuffer>;
-    if (attachment.transport === "websocket") {
-      this.sendWebSocketBytes(attachment, bytes);
-      return;
-    }
-    const state = attachment.webRtc;
-    if (!state) {
-      this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_state_lost");
-      return;
-    }
-    if (attachment.transport === "switching") {
-      if (state.outputBufferBytes + bytes.byteLength > MAX_BUFFERED_BYTES) {
-        this.fallbackNegotiation(connectionId, attachment, "The direct-path handoff exceeded its output buffer.");
-        return;
-      }
-      state.outputBuffer.push(bytes);
-      state.outputBufferBytes += bytes.byteLength;
-      return;
-    }
-    this.sendDataChannelBytes(connectionId, attachment, bytes);
-  }
+	private destroyAttachment(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		closeSocket?: { code: number; reason: string },
+	): void {
+		if (this.attachments.get(connectionId) === attachment) this.attachments.delete(connectionId);
+		if (attachment.leaseTimer !== null) this.clearTimer(attachment.leaseTimer);
+		attachment.leaseTimer = null;
+		this.disposeWebRtc(attachment);
+		try {
+			attachment.tcp.destroy();
+		} catch {
+			// The loopback SSH socket may already be closed.
+		}
+		if (closeSocket) attachment.socket.close(closeSocket.code, closeSocket.reason);
+	}
 
-  private writeTcp(connectionId: string, attachment: BridgeAttachment, bytes: Buffer<ArrayBufferLike>): void {
-    if (!attachment.ready || attachment.tcp.writableLength + bytes.byteLength > MAX_BUFFERED_BYTES) {
-      this.destroyAttachment(connectionId, attachment, {
-        code: 1013,
-        reason: "remote_bridge_tcp_backpressure",
-      });
-      return;
-    }
-    try {
-      attachment.tcp.write(bytes);
-    } catch {
-      this.destroyAttachment(connectionId, attachment, {
-        code: 1011,
-        reason: "remote_bridge_tcp_write_failed",
-      });
-    }
-  }
+	private failActiveP2p(connectionId: string, attachment: BridgeAttachment, reason: string): void {
+		if (this.attachments.get(connectionId) !== attachment) return;
+		this.destroyAttachment(connectionId, attachment, {
+			code: REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
+			reason,
+		});
+	}
 
-  private scheduleLeaseExpiry(connectionId: string, attachment: BridgeAttachment): void {
-    if (attachment.leaseTimer !== null) this.clearTimer(attachment.leaseTimer);
-    attachment.leaseTimer = this.setTimer(() => {
-      attachment.leaseTimer = null;
-      if (this.attachments.get(connectionId) !== attachment) return;
-      if (attachment.leaseExpiresAt > this.now()) {
-        this.scheduleLeaseExpiry(connectionId, attachment);
-        return;
-      }
-      this.destroyAttachment(connectionId, attachment, {
-        code: REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
-        reason: "remote_bridge_lease_expired",
-      });
-    }, Math.max(0, attachment.leaseExpiresAt - this.now()));
-  }
+	private fallbackNegotiation(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		message: string,
+	): void {
+		if (this.attachments.get(connectionId) !== attachment) return;
+		const buffered = attachment.webRtc?.outputBuffer ?? [];
+		this.disposeWebRtc(attachment);
+		sendRemoteBridgeJson(attachment.socket, { type: "webrtc-unavailable", message });
+		for (const bytes of buffered) this.sendWebSocketBytes(attachment, bytes);
+	}
 
-  private disposeWebRtc(attachment: BridgeAttachment): void {
-    const state = attachment.webRtc;
-    attachment.webRtc = null;
-    attachment.transport = "websocket";
-    if (!state) return;
-    if (state.negotiationTimer !== null) this.clearTimer(state.negotiationTimer);
-    try {
-      state.channel?.close();
-    } catch {
-      // A failed association may already be closed.
-    }
-    void state.peer.close().catch(() => undefined);
-  }
+	private validDataChannel(channel: TerminalDataChannel): boolean {
+		return (
+			channel.label === REMOTE_BRIDGE_DATA_CHANNEL_LABEL &&
+			channel.protocol === REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL &&
+			channel.ordered === true &&
+			channel.maxRetransmits == null &&
+			channel.maxPacketLifeTime == null
+		);
+	}
 
-  private destroyAttachment(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    closeSocket?: { code: number; reason: string },
-  ): void {
-    if (this.attachments.get(connectionId) === attachment) this.attachments.delete(connectionId);
-    if (attachment.leaseTimer !== null) this.clearTimer(attachment.leaseTimer);
-    attachment.leaseTimer = null;
-    this.disposeWebRtc(attachment);
-    try {
-      attachment.tcp.destroy();
-    } catch {
-      // The loopback SSH socket may already be closed.
-    }
-    if (closeSocket) attachment.socket.close(closeSocket.code, closeSocket.reason);
-  }
+	private validateOffer(value: unknown): { type: "offer"; sdp: string } {
+		if (!value || typeof value !== "object") throw new Error("The WebRTC offer is missing.");
+		const offer = value as { type?: unknown; sdp?: unknown };
+		if (
+			offer.type !== "offer" ||
+			typeof offer.sdp !== "string" ||
+			!validApplicationSdp(offer.sdp)
+		) {
+			throw new Error("The WebRTC offer is malformed.");
+		}
+		return { type: "offer", sdp: offer.sdp };
+	}
 
-  private failActiveP2p(connectionId: string, attachment: BridgeAttachment, reason: string): void {
-    if (this.attachments.get(connectionId) !== attachment) return;
-    this.destroyAttachment(connectionId, attachment, {
-      code: REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
-      reason,
-    });
-  }
+	private activateWebRtc(connectionId: string, attachment: BridgeAttachment): void {
+		const state = attachment.webRtc;
+		const channel = state?.channel;
+		if (
+			this.attachments.get(connectionId) !== attachment ||
+			attachment.transport !== "switching" ||
+			!state ||
+			!channel ||
+			channel.readyState !== "open"
+		) {
+			this.fallbackNegotiation(connectionId, attachment, "The direct path was not ready.");
+			return;
+		}
+		if (state.negotiationTimer !== null) this.clearTimer(state.negotiationTimer);
+		state.negotiationTimer = null;
+		attachment.transport = "webrtc";
+		try {
+			sendRemoteBridgeDataChannelJson(channel, { type: "ready", transport: "webrtc" });
+			for (const bytes of state.outputBuffer) {
+				this.sendDataChannelBytes(connectionId, attachment, bytes);
+				if (this.attachments.get(connectionId) !== attachment) return;
+			}
+			state.outputBuffer = [];
+			state.outputBufferBytes = 0;
+		} catch {
+			this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_handoff_failed");
+		}
+	}
 
-  private fallbackNegotiation(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    message: string,
-  ): void {
-    if (this.attachments.get(connectionId) !== attachment) return;
-    const buffered = attachment.webRtc?.outputBuffer ?? [];
-    this.disposeWebRtc(attachment);
-    this.sendJson(attachment.socket, { type: "webrtc-unavailable", message });
-    for (const bytes of buffered) this.sendWebSocketBytes(attachment, bytes);
-  }
+	private acceptDataChannel(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		state: BridgeWebRtcState,
+		channel: TerminalDataChannel,
+	): void {
+		if (
+			this.attachments.get(connectionId) !== attachment ||
+			attachment.webRtc !== state ||
+			state.channel
+		) {
+			channel.close();
+			return;
+		}
+		if (!this.validDataChannel(channel)) {
+			channel.close();
+			this.fallbackNegotiation(
+				connectionId,
+				attachment,
+				"The direct bridge channel was not reliable and ordered.",
+			);
+			return;
+		}
+		state.channel = channel;
+		channel.onMessage.subscribe((message) => {
+			if (
+				this.attachments.get(connectionId) !== attachment ||
+				attachment.webRtc !== state ||
+				attachment.transport !== "webrtc"
+			)
+				return;
+			if (typeof message === "string") {
+				if (Buffer.byteLength(message, "utf8") > MAX_CONTROL_BYTES) {
+					this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_control_too_large");
+					return;
+				}
+				try {
+					const control = JSON.parse(message) as Record<string, unknown>;
+					if (control.type !== "ping" || !Number.isSafeInteger(control.id))
+						throw new Error("invalid");
+					sendRemoteBridgeDataChannelJson(channel, { type: "pong", id: control.id });
+				} catch {
+					this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_control_invalid");
+				}
+				return;
+			}
+			if (message.byteLength > MAX_BUFFERED_BYTES) {
+				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_message_too_large");
+				return;
+			}
+			this.writeTcp(connectionId, attachment, message);
+		});
+		channel.error.subscribe(() => {
+			if (attachment.webRtc !== state) return;
+			if (attachment.transport === "webrtc") {
+				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_channel_failed");
+			} else {
+				this.fallbackNegotiation(connectionId, attachment, "The direct bridge channel failed.");
+			}
+		});
+		const opened = () => {
+			if (
+				this.attachments.get(connectionId) !== attachment ||
+				attachment.webRtc !== state ||
+				attachment.transport !== "websocket"
+			)
+				return;
+			attachment.transport = "switching";
+			sendRemoteBridgeJson(attachment.socket, { type: "webrtc-switch" });
+		};
+		channel.stateChanged.subscribe((readyState) => {
+			if (attachment.webRtc !== state) return;
+			if (readyState === "open") opened();
+			if (readyState === "closed") {
+				if (attachment.transport === "webrtc") {
+					this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_channel_closed");
+				} else {
+					this.fallbackNegotiation(connectionId, attachment, "The direct bridge channel closed.");
+				}
+			}
+		});
+		if (channel.readyState === "open") opened();
+	}
 
-  private validDataChannel(channel: TerminalDataChannel): boolean {
-    return channel.label === REMOTE_BRIDGE_DATA_CHANNEL_LABEL &&
-      channel.protocol === REMOTE_BRIDGE_DATA_CHANNEL_PROTOCOL &&
-      channel.ordered === true &&
-      channel.maxRetransmits == null &&
-      channel.maxPacketLifeTime == null;
-  }
+	private async negotiateWebRtc(
+		connectionId: string,
+		attachment: BridgeAttachment,
+		rawOffer: unknown,
+	): Promise<void> {
+		if (!this.p2pEnabled) {
+			sendRemoteBridgeJson(attachment.socket, {
+				type: "webrtc-unavailable",
+				message: "Direct bridge transport is disabled.",
+			});
+			return;
+		}
+		if (attachment.webRtc) {
+			sendRemoteBridgeJson(attachment.socket, {
+				type: "webrtc-unavailable",
+				message: "Direct-path negotiation is already running.",
+			});
+			return;
+		}
+		let offer: { type: "offer"; sdp: string };
+		try {
+			offer = this.validateOffer(rawOffer);
+		} catch (error) {
+			sendRemoteBridgeJson(attachment.socket, {
+				type: "webrtc-unavailable",
+				message: (error as Error).message,
+			});
+			return;
+		}
+		let peer: TerminalPeerConnection;
+		try {
+			peer = this.peerConnectionFactory(this.stunUrls);
+		} catch (error) {
+			sendRemoteBridgeJson(attachment.socket, {
+				type: "webrtc-unavailable",
+				message: (error as Error).message,
+			});
+			return;
+		}
+		const state: BridgeWebRtcState = {
+			peer,
+			channel: null,
+			negotiationTimer: null,
+			outputBuffer: [],
+			outputBufferBytes: 0,
+		};
+		attachment.webRtc = state;
+		state.negotiationTimer = this.setTimer(() => {
+			if (attachment.webRtc === state && attachment.transport !== "webrtc") {
+				this.fallbackNegotiation(
+					connectionId,
+					attachment,
+					"No direct bridge path was found within 10 seconds.",
+				);
+			}
+		}, NEGOTIATION_TIMEOUT_MS);
+		peer.onDataChannel.subscribe((channel) =>
+			this.acceptDataChannel(connectionId, attachment, state, channel),
+		);
+		peer.connectionStateChange.subscribe((connectionState) => {
+			if (attachment.webRtc !== state) return;
+			if (
+				connectionState !== "failed" &&
+				connectionState !== "closed" &&
+				connectionState !== "disconnected"
+			)
+				return;
+			if (attachment.transport === "webrtc") {
+				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_connection_lost");
+			} else {
+				this.fallbackNegotiation(
+					connectionId,
+					attachment,
+					"The direct bridge path could not connect.",
+				);
+			}
+		});
+		try {
+			await peer.setRemoteDescription(offer);
+			const answer = await peer.createAnswer();
+			await peer.setLocalDescription(answer);
+			if (this.attachments.get(connectionId) !== attachment || attachment.webRtc !== state) return;
+			const localDescription = peer.localDescription;
+			if (
+				!localDescription ||
+				localDescription.type !== "answer" ||
+				!validApplicationSdp(localDescription.sdp)
+			) {
+				throw new Error("The WebRTC answer could not be created.");
+			}
+			sendRemoteBridgeJson(attachment.socket, {
+				type: "webrtc-answer",
+				answer: { type: "answer", sdp: localDescription.sdp },
+			});
+		} catch (error) {
+			if (attachment.webRtc === state) {
+				this.fallbackNegotiation(connectionId, attachment, (error as Error).message);
+			}
+		}
+	}
 
-  private validateOffer(value: unknown): { type: "offer"; sdp: string } {
-    if (!value || typeof value !== "object") throw new Error("The WebRTC offer is missing.");
-    const offer = value as { type?: unknown; sdp?: unknown };
-    if (offer.type !== "offer" || typeof offer.sdp !== "string" || !validApplicationSdp(offer.sdp)) {
-      throw new Error("The WebRTC offer is malformed.");
-    }
-    return { type: "offer", sdp: offer.sdp };
-  }
+	private openSocket(socket: Bun.ServerWebSocket<RemoteBridgeSocketData>): void {
+		socket.binaryType = "nodebuffer";
+		const data = socket.data;
+		const existing = this.attachments.get(data.connectionId);
+		if (existing) {
+			this.destroyAttachment(data.connectionId, existing, {
+				code: 4001,
+				reason: "remote_bridge_replaced",
+			});
+		}
+		const tcp = this.tcpSocketFactory();
+		const attachment: BridgeAttachment = {
+			socket,
+			tcp,
+			deviceId: data.deviceId,
+			host: data.host,
+			transport: "websocket",
+			webRtc: null,
+			leaseExpiresAt: this.now() + LEASE_TTL_MS,
+			leaseTimer: null,
+			ready: false,
+		};
+		this.attachments.set(data.connectionId, attachment);
+		this.scheduleLeaseExpiry(data.connectionId, attachment);
+		tcp.onOpen(() => {
+			if (this.attachments.get(data.connectionId) !== attachment) return;
+			attachment.ready = true;
+			sendRemoteBridgeJson(socket, {
+				type: "ready",
+				transport: "websocket",
+				target: `${this.targetHost}:${this.targetPort}`,
+			});
+		});
+		tcp.onData((bytes) => this.routeTcpOutput(data.connectionId, attachment, bytes));
+		tcp.onClose(() => {
+			if (this.attachments.get(data.connectionId) === attachment) {
+				this.destroyAttachment(data.connectionId, attachment, {
+					code: 1000,
+					reason: "remote_bridge_target_closed",
+				});
+			}
+		});
+		tcp.onError((error) => {
+			if (this.attachments.get(data.connectionId) !== attachment) return;
+			try {
+				sendRemoteBridgeJson(socket, {
+					type: "error",
+					code: "remote_bridge_target_unavailable",
+					message: `Could not reach SSH on ${this.targetHost}:${this.targetPort}: ${error.message}`,
+				});
+			} finally {
+				this.destroyAttachment(data.connectionId, attachment, {
+					code: 1011,
+					reason: "remote_bridge_target_unavailable",
+				});
+			}
+		});
+		try {
+			tcp.connect(this.targetHost, this.targetPort);
+		} catch (error) {
+			sendRemoteBridgeJson(socket, {
+				type: "error",
+				code: "remote_bridge_target_unavailable",
+				message: (error as Error).message,
+			});
+			this.destroyAttachment(data.connectionId, attachment, {
+				code: 1011,
+				reason: "remote_bridge_target_unavailable",
+			});
+		}
+	}
 
-  private activateWebRtc(connectionId: string, attachment: BridgeAttachment): void {
-    const state = attachment.webRtc;
-    const channel = state?.channel;
-    if (
-      this.attachments.get(connectionId) !== attachment ||
-      attachment.transport !== "switching" ||
-      !state ||
-      !channel ||
-      channel.readyState !== "open"
-    ) {
-      this.fallbackNegotiation(connectionId, attachment, "The direct path was not ready.");
-      return;
-    }
-    if (state.negotiationTimer !== null) this.clearTimer(state.negotiationTimer);
-    state.negotiationTimer = null;
-    attachment.transport = "webrtc";
-    try {
-      this.sendDataChannelJson(channel, { type: "ready", transport: "webrtc" });
-      for (const bytes of state.outputBuffer) {
-        this.sendDataChannelBytes(connectionId, attachment, bytes);
-        if (this.attachments.get(connectionId) !== attachment) return;
-      }
-      state.outputBuffer = [];
-      state.outputBufferBytes = 0;
-    } catch {
-      this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_handoff_failed");
-    }
-  }
+	private message(
+		socket: Bun.ServerWebSocket<RemoteBridgeSocketData>,
+		message: string | Buffer<ArrayBuffer>,
+	): void {
+		const connectionId = socket.data.connectionId;
+		const attachment = this.attachments.get(connectionId);
+		if (!attachment || attachment.socket !== socket) return;
+		if (typeof message !== "string") {
+			if (message.byteLength > MAX_BUFFERED_BYTES || attachment.transport === "webrtc") {
+				socket.close(1009, "remote_bridge_message_invalid");
+				return;
+			}
+			this.writeTcp(connectionId, attachment, message);
+			return;
+		}
+		if (Buffer.byteLength(message, "utf8") > MAX_CONTROL_BYTES) {
+			socket.close(1009, "remote_bridge_control_too_large");
+			return;
+		}
+		let control: Record<string, unknown>;
+		try {
+			control = JSON.parse(message) as Record<string, unknown>;
+			if (!control || typeof control !== "object") throw new Error("invalid");
+		} catch {
+			socket.close(1003, "remote_bridge_control_invalid");
+			return;
+		}
+		if (control.type === "webrtc-offer") {
+			void this.negotiateWebRtc(connectionId, attachment, control.offer);
+			return;
+		}
+		if (control.type === "webrtc-activate") {
+			this.activateWebRtc(connectionId, attachment);
+			return;
+		}
+		if (control.type === "ping" && Number.isSafeInteger(control.id)) {
+			sendRemoteBridgeJson(socket, { type: "pong", id: control.id });
+			return;
+		}
+		socket.close(1003, "remote_bridge_control_invalid");
+	}
 
-  private acceptDataChannel(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    state: BridgeWebRtcState,
-    channel: TerminalDataChannel,
-  ): void {
-    if (
-      this.attachments.get(connectionId) !== attachment ||
-      attachment.webRtc !== state ||
-      state.channel
-    ) {
-      channel.close();
-      return;
-    }
-    if (!this.validDataChannel(channel)) {
-      channel.close();
-      this.fallbackNegotiation(connectionId, attachment, "The direct bridge channel was not reliable and ordered.");
-      return;
-    }
-    state.channel = channel;
-    channel.onMessage.subscribe((message) => {
-      if (
-        this.attachments.get(connectionId) !== attachment ||
-        attachment.webRtc !== state ||
-        attachment.transport !== "webrtc"
-      ) return;
-      if (typeof message === "string") {
-        if (Buffer.byteLength(message, "utf8") > MAX_CONTROL_BYTES) {
-          this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_control_too_large");
-          return;
-        }
-        try {
-          const control = JSON.parse(message) as Record<string, unknown>;
-          if (control.type !== "ping" || !Number.isSafeInteger(control.id)) throw new Error("invalid");
-          this.sendDataChannelJson(channel, { type: "pong", id: control.id });
-        } catch {
-          this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_control_invalid");
-        }
-        return;
-      }
-      if (message.byteLength > MAX_BUFFERED_BYTES) {
-        this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_message_too_large");
-        return;
-      }
-      this.writeTcp(connectionId, attachment, message);
-    });
-    channel.error.subscribe(() => {
-      if (attachment.webRtc !== state) return;
-      if (attachment.transport === "webrtc") {
-        this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_channel_failed");
-      } else {
-        this.fallbackNegotiation(connectionId, attachment, "The direct bridge channel failed.");
-      }
-    });
-    const opened = () => {
-      if (
-        this.attachments.get(connectionId) !== attachment ||
-        attachment.webRtc !== state ||
-        attachment.transport !== "websocket"
-      ) return;
-      attachment.transport = "switching";
-      this.sendJson(attachment.socket, { type: "webrtc-switch" });
-    };
-    channel.stateChanged.subscribe((readyState) => {
-      if (attachment.webRtc !== state) return;
-      if (readyState === "open") opened();
-      if (readyState === "closed") {
-        if (attachment.transport === "webrtc") {
-          this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_channel_closed");
-        } else {
-          this.fallbackNegotiation(connectionId, attachment, "The direct bridge channel closed.");
-        }
-      }
-    });
-    if (channel.readyState === "open") opened();
-  }
+	private closeSocket(socket: Bun.ServerWebSocket<RemoteBridgeSocketData>): void {
+		const connectionId = socket.data.connectionId;
+		const attachment = this.attachments.get(connectionId);
+		if (attachment?.socket === socket) this.destroyAttachment(connectionId, attachment);
+	}
 
-  private async negotiateWebRtc(
-    connectionId: string,
-    attachment: BridgeAttachment,
-    rawOffer: unknown,
-  ): Promise<void> {
-    if (!this.p2pEnabled) {
-      this.sendJson(attachment.socket, { type: "webrtc-unavailable", message: "Direct bridge transport is disabled." });
-      return;
-    }
-    if (attachment.webRtc) {
-      this.sendJson(attachment.socket, { type: "webrtc-unavailable", message: "Direct-path negotiation is already running." });
-      return;
-    }
-    let offer: { type: "offer"; sdp: string };
-    try {
-      offer = this.validateOffer(rawOffer);
-    } catch (error) {
-      this.sendJson(attachment.socket, { type: "webrtc-unavailable", message: (error as Error).message });
-      return;
-    }
-    let peer: TerminalPeerConnection;
-    try {
-      peer = this.peerConnectionFactory(this.stunUrls);
-    } catch (error) {
-      this.sendJson(attachment.socket, { type: "webrtc-unavailable", message: (error as Error).message });
-      return;
-    }
-    const state: BridgeWebRtcState = {
-      peer,
-      channel: null,
-      negotiationTimer: null,
-      outputBuffer: [],
-      outputBufferBytes: 0,
-    };
-    attachment.webRtc = state;
-    state.negotiationTimer = this.setTimer(() => {
-      if (attachment.webRtc === state && attachment.transport !== "webrtc") {
-        this.fallbackNegotiation(connectionId, attachment, "No direct bridge path was found within 10 seconds.");
-      }
-    }, NEGOTIATION_TIMEOUT_MS);
-    peer.onDataChannel.subscribe((channel) => this.acceptDataChannel(connectionId, attachment, state, channel));
-    peer.connectionStateChange.subscribe((connectionState) => {
-      if (attachment.webRtc !== state) return;
-      if (connectionState !== "failed" && connectionState !== "closed" && connectionState !== "disconnected") return;
-      if (attachment.transport === "webrtc") {
-        this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_connection_lost");
-      } else {
-        this.fallbackNegotiation(connectionId, attachment, "The direct bridge path could not connect.");
-      }
-    });
-    try {
-      await peer.setRemoteDescription(offer);
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      if (this.attachments.get(connectionId) !== attachment || attachment.webRtc !== state) return;
-      const localDescription = peer.localDescription;
-      if (!localDescription || localDescription.type !== "answer" || !validApplicationSdp(localDescription.sdp)) {
-        throw new Error("The WebRTC answer could not be created.");
-      }
-      this.sendJson(attachment.socket, {
-        type: "webrtc-answer",
-        answer: { type: "answer", sdp: localDescription.sdp },
-      });
-    } catch (error) {
-      if (attachment.webRtc === state) {
-        this.fallbackNegotiation(connectionId, attachment, (error as Error).message);
-      }
-    }
-  }
+	closeRepository(repositoryId: string): void {
+		this.access.closeRepository(repositoryId);
+	}
 
-  private openSocket(socket: Bun.ServerWebSocket<RemoteBridgeSocketData>): void {
-    socket.binaryType = "nodebuffer";
-    const data = socket.data;
-    const existing = this.attachments.get(data.connectionId);
-    if (existing) {
-      this.destroyAttachment(data.connectionId, existing, {
-        code: 4001,
-        reason: "remote_bridge_replaced",
-      });
-    }
-    const tcp = this.tcpSocketFactory();
-    const attachment: BridgeAttachment = {
-      socket,
-      tcp,
-      deviceId: data.deviceId,
-      host: data.host,
-      transport: "websocket",
-      webRtc: null,
-      leaseExpiresAt: this.now() + LEASE_TTL_MS,
-      leaseTimer: null,
-      ready: false,
-    };
-    this.attachments.set(data.connectionId, attachment);
-    this.scheduleLeaseExpiry(data.connectionId, attachment);
-    tcp.onOpen(() => {
-      if (this.attachments.get(data.connectionId) !== attachment) return;
-      attachment.ready = true;
-      this.sendJson(socket, {
-        type: "ready",
-        transport: "websocket",
-        target: `${this.targetHost}:${this.targetPort}`,
-      });
-    });
-    tcp.onData((bytes) => this.routeTcpOutput(data.connectionId, attachment, bytes));
-    tcp.onClose(() => {
-      if (this.attachments.get(data.connectionId) === attachment) {
-        this.destroyAttachment(data.connectionId, attachment, {
-          code: 1000,
-          reason: "remote_bridge_target_closed",
-        });
-      }
-    });
-    tcp.onError((error) => {
-      if (this.attachments.get(data.connectionId) !== attachment) return;
-      try {
-        this.sendJson(socket, {
-          type: "error",
-          code: "remote_bridge_target_unavailable",
-          message: `Could not reach SSH on ${this.targetHost}:${this.targetPort}: ${error.message}`,
-        });
-      } finally {
-        this.destroyAttachment(data.connectionId, attachment, {
-          code: 1011,
-          reason: "remote_bridge_target_unavailable",
-        });
-      }
-    });
-    try {
-      tcp.connect(this.targetHost, this.targetPort);
-    } catch (error) {
-      this.sendJson(socket, {
-        type: "error",
-        code: "remote_bridge_target_unavailable",
-        message: (error as Error).message,
-      });
-      this.destroyAttachment(data.connectionId, attachment, {
-        code: 1011,
-        reason: "remote_bridge_target_unavailable",
-      });
-    }
-  }
-
-  private message(
-    socket: Bun.ServerWebSocket<RemoteBridgeSocketData>,
-    message: string | Buffer<ArrayBuffer>,
-  ): void {
-    const connectionId = socket.data.connectionId;
-    const attachment = this.attachments.get(connectionId);
-    if (!attachment || attachment.socket !== socket) return;
-    if (typeof message !== "string") {
-      if (message.byteLength > MAX_BUFFERED_BYTES || attachment.transport === "webrtc") {
-        socket.close(1009, "remote_bridge_message_invalid");
-        return;
-      }
-      this.writeTcp(connectionId, attachment, message);
-      return;
-    }
-    if (Buffer.byteLength(message, "utf8") > MAX_CONTROL_BYTES) {
-      socket.close(1009, "remote_bridge_control_too_large");
-      return;
-    }
-    let control: Record<string, unknown>;
-    try {
-      control = JSON.parse(message) as Record<string, unknown>;
-      if (!control || typeof control !== "object") throw new Error("invalid");
-    } catch {
-      socket.close(1003, "remote_bridge_control_invalid");
-      return;
-    }
-    if (control.type === "webrtc-offer") {
-      void this.negotiateWebRtc(connectionId, attachment, control.offer);
-      return;
-    }
-    if (control.type === "webrtc-activate") {
-      this.activateWebRtc(connectionId, attachment);
-      return;
-    }
-    if (control.type === "ping" && Number.isSafeInteger(control.id)) {
-      this.sendJson(socket, { type: "pong", id: control.id });
-      return;
-    }
-    socket.close(1003, "remote_bridge_control_invalid");
-  }
-
-  private closeSocket(socket: Bun.ServerWebSocket<RemoteBridgeSocketData>): void {
-    const connectionId = socket.data.connectionId;
-    const attachment = this.attachments.get(connectionId);
-    if (attachment?.socket === socket) this.destroyAttachment(connectionId, attachment);
-  }
-
-  closeRepository(repositoryId: string): void {
-    for (const [key, pairing] of this.pairings) {
-      if (pairing.repositoryId === repositoryId) this.pairings.delete(key);
-    }
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.pairings.clear();
-    this.tickets.clear();
-    for (const [connectionId, attachment] of this.attachments) {
-      this.destroyAttachment(connectionId, attachment, {
-        code: 1001,
-        reason: "remote_bridge_shutting_down",
-      });
-    }
-  }
+	close(): void {
+		if (this.closed) return;
+		this.closed = true;
+		this.access.close();
+		for (const [connectionId, attachment] of this.attachments) {
+			this.destroyAttachment(connectionId, attachment, {
+				code: 1001,
+				reason: "remote_bridge_shutting_down",
+			});
+		}
+	}
 }

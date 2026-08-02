@@ -1,0 +1,9 @@
+# Architecture enforcement changes require review from the repository owner.
+/AGENTS.md @angrypie
+/ARCHITECTURE.md @angrypie
+/biome.jsonc @angrypie
+/.agents/skills/architecture-impact-review/ @angrypie
+/.codex/ @angrypie
+/.github/ @angrypie
+/scripts/checkArchitecture.ts @angrypie
+/scripts/checkArchitecture.test.ts @angrypie

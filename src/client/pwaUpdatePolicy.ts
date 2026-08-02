@@ -1,19 +1,16 @@
 const UPDATE_LAUNCH_WINDOW_MS = 15_000;
 
 export function shouldApplyPwaUpdate(
-  updateSafe: boolean,
-  visibilityState: DocumentVisibilityState,
-  millisecondsSinceLaunch: number,
+	updateSafe: boolean,
+	visibilityState: DocumentVisibilityState,
+	millisecondsSinceLaunch: number,
 ): boolean {
-  return updateSafe && (
-    visibilityState === "hidden" ||
-    millisecondsSinceLaunch <= UPDATE_LAUNCH_WINDOW_MS
-  );
+	return (
+		updateSafe &&
+		(visibilityState === "hidden" || millisecondsSinceLaunch <= UPDATE_LAUNCH_WINDOW_MS)
+	);
 }
 
-export function shouldShowPwaUpdatePrompt(
-  needRefresh: boolean,
-  updateSafe: boolean,
-): boolean {
-  return needRefresh && !updateSafe;
+export function shouldShowPwaUpdatePrompt(needRefresh: boolean, updateSafe: boolean): boolean {
+	return needRefresh && !updateSafe;
 }

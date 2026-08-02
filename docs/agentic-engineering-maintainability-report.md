@@ -7,6 +7,36 @@
 - **Scope:** Couchview evidence, current GPT-5.6/Codex guidance, and primary research on repository-level coding agents
 - **Decision requested:** whether to rely on prompts, `AGENTS.md`, a skill, hooks, review, or hard tooling to obtain consistently maintainable changes
 
+## Implementation update (2026-08-02)
+
+The repository facts and growth timeline below describe snapshot `4ea9b91` and
+remain the historical diagnosis. The first prevention and remediation pass is
+now implemented:
+
+- `src/client/App.tsx` has been reduced from 5,395 lines to 189 lines and
+  is mechanically restricted to composing `features/`, `components/`, and
+  `lib/` modules.
+- Stateful workflows were moved by responsibility into feature hooks; screen
+  and overlay markup was moved into presentation components; small generic
+  browser helpers were moved into `lib/`.
+- Couchview adopted direct `@biomejs/biome` 2.5.6, informed by selected
+  Ultracite 7.9.4 rules rather than extending Ultracite's complete policy.
+  The rationale and trial results are recorded in
+  [`static-analysis-policy.md`](static-analysis-policy.md).
+- Biome now solely enforces strict file and function line limits for the whole
+  tree. The architecture checker owns import direction and suppression policy;
+  local Codex hooks, a repo-local architecture skill, ownership rules, and a
+  GitHub quality workflow make those expectations machine-visible.
+- The temporary baseline mechanism described in the original proposal below
+  was retired after the oversized files were split. There are no legacy size
+  exceptions or separate line-count implementation.
+
+Branch protection, required CODEOWNER approval, repeated historical-task
+evaluation, and independent semantic review still require repository-level or
+human activation. The implementation therefore provides deterministic local
+and CI checks, but it does not by itself establish the conditional merge
+guarantee described in Section 4.
+
 ## Executive conclusion
 
 The 5,395-line [`src/client/App.tsx`](../src/client/App.tsx#L626) is not evidence that GPT-5.6 lacks knowledge of component decomposition. It is evidence that the engineering system made locally successful, architecturally harmful behavior the easiest behavior to repeat.
@@ -243,7 +273,7 @@ OpenAI's own current documentation supports a division of labor. `AGENTS.md` sup
 | `AGENTS.md` | Short repo-specific invariants, required commands, no-waiver rule | Every numeric/mechanical detail | Persistent steering |
 | Repo-local skill | Change-impact plan, extraction workflow, final architecture audit | Blocking an invalid merge | Repeatable workflow |
 | Codex `PostToolUse`/`Stop` hooks | Fast architecture report and repair feedback | Irreversible enforcement | Immediate feedback; locally bypassable |
-| Static checker/linter | File/function ceilings, no-growth ratchets, import boundaries, cycles | Cohesion, naming, good abstraction | Deterministic for encoded rules |
+| Static checker/linter | Strict file/function ceilings, import boundaries, cycles | Cohesion, naming, good abstraction | Deterministic for encoded rules |
 | Independent review | Responsibility placement, coupling, needless abstraction, policy gaming | Literal certainty | Semantic, probabilistic |
 | CI + protected branch | Execute checks on the merge commit and reject failures | Determining whether the policy itself is wise | Hard gate under stated assumptions |
 | Repo-specific eval suite | Measure prompt/skill/checker effectiveness and variance | Proving future universal behavior | Empirical confidence |
@@ -268,16 +298,21 @@ For the current web client, a sensible target is:
 - `platform/web/`: `window`, browser history, service workers/PWA, `EventSource`, clipboard, and web-only terminal adapters.
 - `shared` or a future `core/`: platform-independent contracts, reducers, selectors, and use cases.
 
+The implemented first pass follows the user's stricter three-way client split:
+`App.tsx` remains the composition root, while extracted code lives only in
+`features/`, `components/`, or `lib/`. A separate `app/` or `platform/web/`
+layer should be introduced only when it carries a real second target or adapter
+boundary, not as another organizational wrapper.
+
 The target for `App.tsx` is a small composition root—roughly providers, routes/workspaces, and app-level error boundaries—not a state machine for every feature. The exact target need not be reached in one rewrite.
 
 This boundary also serves the proposed React Native Web/native direction. Moving JSX from `div` to `View` will not create portability if browser history, service workers, EventSource, terminal code, API mutations, and review state remain intertwined. The reusable asset is a platform-independent review core with explicit web/native adapters. A boundary checker can make that independence real.
 
-### 6.2 Add a baseline-aware architecture ratchet
+### 6.2 Migrate to strict universal limits
 
-Turning on a 500-line maximum immediately would fail much of the existing repository and encourage blanket disables. Instead, introduce two classes of policy:
+At the original snapshot, turning on a 500-line maximum immediately would have failed much of the repository and encouraged blanket disables. The migration therefore split each oversized responsibility first, then enabled one strict Biome policy over the complete tree.
 
-1. **New-code limits:** every new production file must satisfy the target limits.
-2. **Legacy ratchets:** each existing oversized file gets a recorded current ceiling and may not grow. Its ceiling only moves downward as extraction lands.
+The resulting rule is simpler: existing and new files satisfy the same limits, and an oversized responsibility must be extracted rather than exempted.
 
 Suggested starting values for evaluation—not universal truths—are:
 
@@ -394,8 +429,8 @@ Do not turn `AGENTS.md` into a clean-code textbook or duplicate all thresholds. 
   their owning feature modules.
 - Place each new responsibility before editing. Keep platform-independent
   review logic separate from browser and native adapters.
-- Oversized legacy files are ratcheted. Do not increase their policy count;
-  extract the touched responsibility as part of the requested change.
+- All source files satisfy the Biome limits. Extract the touched responsibility
+  instead of increasing a limit or adding an exclusion.
 - Architecture policy, checker logic, CI enforcement, and waivers may change
   only when the user explicitly requests that policy change. Do not weaken a
   rule to make a patch pass.
@@ -462,7 +497,7 @@ Relevant entry points, behavior, and constraints are <...>.
 
 Architecture constraints
 - Preserve the responsibilities and dependency direction in ARCHITECTURE.md.
-- Do not grow a ratcheted hotspot or modify policy/waivers.
+- Do not bypass the Biome limits or modify policy/exclusions.
 - Put platform-specific behavior behind the owning adapter.
 
 Before editing
@@ -519,7 +554,7 @@ Score functional and structural dimensions separately:
 |---|---|
 | Functional resolution | Required unit/E2E tests and human-visible acceptance criteria |
 | Regression safety | Existing typecheck, tests, and build |
-| Hotspot behavior | Net normalized-line delta for ratcheted files |
+| Hotspot behavior | Biome file/function limits and normalized line distribution |
 | Responsibility placement | Blind rubric review against `ARCHITECTURE.md` |
 | Dependency direction | Executable import-boundary report |
 | Local complexity | File/function/branch metrics |
@@ -609,8 +644,8 @@ The prevention system itself needs an adversarial review.
 | Hook does not run | Required CI executes independently | Local feedback is lost, but merge gate remains |
 | Same agent approves its own architecture | Fresh review context; human review for high-risk changes | Review remains probabilistic |
 | CI workflow is weakened in the patch | Workflow/checker/policy ownership and required review | Repository administrators retain ultimate authority |
-| Existing giant file blocks all work | Baseline ratchet rather than immediate target maximum | Debt remains until scheduled extraction |
-| Ratchet permits responsibility swapping without growth | Review rule and architecture map | Not mechanically decidable in full |
+| Existing giant file blocks all work | Extract cohesive responsibilities before enabling the strict maximum | Migration work must land before enforcement |
+| Splitting preserves the original coupling | Review rule and architecture map | Cohesion is not mechanically decidable in full |
 | Threshold causes false positives | Representative evals and explicit expiring waivers | Calibration requires maintenance |
 | Instructions bloat the context | Keep numbers in policy, workflow in skill, invariants in `AGENTS.md` | Skill can still grow stale |
 
@@ -626,7 +661,7 @@ The best-supported explanation is a reinforcing interaction between an already-m
 - Do not put a generic ban on 6,000-line files in a long `AGENTS.md` and call the issue solved.
 - Do not assume GPT-5.6, maximum reasoning, planning mode, or self-review creates certainty.
 - Do not use passing tests as a proxy for maintainability.
-- Do not impose an instant universal 500-line rule on the legacy tree without a ratchet.
+- Do not raise a universal limit merely to accommodate legacy coupling; extract the responsibilities first.
 - Do not let the same patch silently alter the rule that judges it.
 
 ### What to do
@@ -640,7 +675,7 @@ Use GPT-5.6 as a capable implementer inside an engineered feedback system:
 5. Require the check in CI on protected `main` with no bypass.
 6. Review semantic architecture independently.
 7. Evaluate the complete workflow across repeated historical tasks.
-8. Ratchet the current hotspots downward as responsibilities are extracted.
+8. Keep all current and future files within the strict Biome limits.
 
 That is how to obtain behavior resembling a responsible mid-level engineer consistently: not by assuming the model will remember every principle, but by giving it an explicit architecture, the authority to preserve it, external feedback when it drifts, and a merge process that cannot accept known violations.
 
@@ -683,79 +718,32 @@ That is how to obtain behavior resembling a responsible mid-level engineer consi
 - [GitHub protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches): official enforcement options and bypass caveats.
 - [ESLint `max-lines`](https://eslint.org/docs/latest/rules/max-lines), [`max-lines-per-function`](https://eslint.org/docs/latest/rules/max-lines-per-function), and [`complexity`](https://eslint.org/docs/latest/rules/complexity): current deterministic guardrail options; thresholds still require local calibration.
 
-## Appendix C: Illustrative policy shape
+## Appendix C: Implemented policy shape
 
-The exact schema should be implemented and tested in Couchview rather than copied blindly, but an authoritative policy could look conceptually like this:
+`biome.jsonc` is the only source of file and function line limits. Production
+TypeScript uses a 700-line file and 300-line function ceiling, production TSX
+uses a 700-line file and 250-line function ceiling, CSS uses an 800-line file
+ceiling, and tests use a 1,000-line file ceiling. `App.tsx` remains under its
+more focused 300-line file and 250-line function limits.
 
-```json
-{
-  "schemaVersion": 1,
-  "source": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.css"],
-  "exclude": ["src/client/assets/**", "**/*.test.ts", "**/*.test.tsx"],
-  "newFiles": {
-    "tsx": { "maxNormalizedLines": 500 },
-    "ts": { "maxNormalizedLines": 700 },
-    "css": { "maxNormalizedLines": 800 }
-  },
-  "functions": {
-    "maxNormalizedLines": 250,
-    "maxCyclomaticComplexity": 15
-  },
-  "legacyRatchets": {
-    "src/client/App.tsx": {
-      "maxNormalizedLines": "BASELINE_TO_BE_MEASURED",
-      "maxNetGrowth": 0,
-      "targetNormalizedLines": 300
-    },
-    "src/client/styles.css": {
-      "maxNormalizedLines": "BASELINE_TO_BE_MEASURED",
-      "maxNetGrowth": 0,
-      "targetNormalizedLines": 800
-    }
-  },
-  "boundaries": [
-    {
-      "from": "src/core/**",
-      "forbid": ["src/client/platform/**", "react-dom", "window:*", "service-worker:*"]
-    },
-    {
-      "from": "src/client/features/*/**",
-      "forbidPrivateImportsFromOtherFeatures": true
-    }
-  ],
-  "waivers": "architecture-waivers.json"
-}
-```
-
-The string placeholders are deliberate: physical and normalized counts differ, so the checker must generate and record the initial normalized baseline instead of pretending that the physical counts in this report are interchangeable. The real schema should also reject unknown keys, missing paths, duplicate rules, expired waivers, and broadened exclusions.
-
-The checker should have regression tests for at least these cases:
-
-- a new file below and above each limit;
-- an oversized legacy file that shrinks, stays level, and grows;
-- line-ending, comment, and blank-line normalization;
-- renamed and deleted hotspots;
-- static, type-only, dynamic, and aliased imports;
-- forbidden dependency edges and cycles;
-- malformed policy and malformed/expired waiver files;
-- attempts to hide a source file under a generated or excluded path;
-- base-branch comparison when the branch is behind or the merge base changes;
-- a patch that changes checker or policy code together with product code.
+The architecture checker deliberately does not count lines. Its fixture tests
+cover import direction, composition-root imports, and attempts to hide blanket
+suppressions. Biome's own diagnostics and tests cover the generic size and
+complexity rules.
 
 ## Appendix D: Minimum assurance checklist
 
 Before claiming that recurrence is mechanically prevented, verify all of the following:
 
-- [ ] `ARCHITECTURE.md` defines the composition root, feature ownership, and web/native boundary.
-- [ ] The architecture checker fails on an intentionally oversized fixture and a forbidden import.
-- [ ] Every current hotspot has a generated baseline and zero-growth ratchet.
-- [ ] New source, function, complexity, and boundary rules are covered by tests.
-- [ ] Policy and waivers reject unknown, malformed, and expired entries.
-- [ ] `AGENTS.md` references the architecture command and forbids unrequested policy weakening.
+- [x] `ARCHITECTURE.md` defines the composition root, feature ownership, and web/native boundary.
+- [x] Biome fails files and functions above the configured limits; the architecture checker fails forbidden imports and suppressions.
+- [x] Every source file satisfies the applicable strict limit without a legacy exception.
+- [x] Source limits and import boundaries are enforced in CI; Biome supplies the file, function, and complexity rules.
+- [x] No separate line-count policy or waiver mechanism exists.
+- [x] `AGENTS.md` references the architecture command and forbids unrequested policy weakening.
 - [ ] The architecture-impact skill activates on hotspot and cross-feature tasks in a clean session.
-- [ ] `PostToolUse` feedback identifies a violation precisely enough for the agent to repair it.
-- [ ] The `Stop` hook blocks completion on a fixture violation.
-- [ ] CI runs the checker against the exact merge candidate.
+- [x] Project-local `PostToolUse` and `Stop` hooks are configured to return the checker diagnostic to Codex; trust and live failure-path evaluation remain operator steps.
+- [x] CI is configured to run architecture, formatting, lint, type, unit, and build checks on pull-request merge candidates.
 - [ ] `main` requires that CI status, pull requests, and review of policy/checker/workflow changes.
 - [ ] Direct push, force push, administrator bypass, and automation bypass are disabled or separately audited.
 - [ ] A fresh reviewer checks semantic cohesion and policy gaming.

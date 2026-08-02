@@ -1,0 +1,30 @@
+{
+	"description": "Give Codex immediate feedback when Couchview architecture policy fails.",
+	"hooks": {
+		"PostToolUse": [
+			{
+				"matcher": "^(apply_patch|Edit|Write)$",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bun run \"$(git rev-parse --show-toplevel)/.codex/hooks/checkArchitecture.ts\" post",
+						"timeout": 30,
+						"statusMessage": "Checking Couchview architecture"
+					}
+				]
+			}
+		],
+		"Stop": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "bun run \"$(git rev-parse --show-toplevel)/.codex/hooks/checkArchitecture.ts\" stop",
+						"timeout": 60,
+						"statusMessage": "Running the Couchview architecture gate"
+					}
+				]
+			}
+		]
+	}
+}

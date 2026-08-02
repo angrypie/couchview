@@ -1,177 +1,177 @@
 import type { TerminalRendererConfig } from "./typographyPreferences.ts";
 import type {
-  BrowserTerminalRenderer,
-  BrowserTerminalPreviewRenderer,
-  BrowserTerminalWriteProfile,
+	BrowserTerminalRenderer,
+	BrowserTerminalPreviewRenderer,
+	BrowserTerminalWriteProfile,
 } from "./ghosttyTerminal.ts";
 import type { TerminalKeyInput } from "./terminalKeyboard.ts";
 
 interface RendererOptions {
-  container: HTMLElement;
-  config: TerminalRendererConfig;
-  onData(data: Uint8Array<ArrayBuffer>): boolean;
-  onResize(cols: number, rows: number): void;
-  onVirtualControlChange?(active: boolean): void;
+	container: HTMLElement;
+	config: TerminalRendererConfig;
+	onData(data: Uint8Array<ArrayBuffer>): boolean;
+	onResize(cols: number, rows: number): void;
+	onVirtualControlChange?(active: boolean): void;
 }
 
 export const rendererState = {
-  calls: 0,
-  configs: [] as TerminalRendererConfig[],
-  disposed: 0,
-  failure: null as Error | null,
-  fits: 0,
-  focuses: 0,
-  latencyKeyHandler: null as ((event: KeyboardEvent) => void) | null,
-  keyInputs: [] as TerminalKeyInput[],
-  options: null as RendererOptions | null,
-  pendingCanvasRenders: [] as BrowserTerminalWriteProfile[],
-  writes: [] as Uint8Array[],
-  virtualControl: false,
+	calls: 0,
+	configs: [] as TerminalRendererConfig[],
+	disposed: 0,
+	failure: null as Error | null,
+	fits: 0,
+	focuses: 0,
+	latencyKeyHandler: null as ((event: KeyboardEvent) => void) | null,
+	keyInputs: [] as TerminalKeyInput[],
+	options: null as RendererOptions | null,
+	pendingCanvasRenders: [] as BrowserTerminalWriteProfile[],
+	writes: [] as Uint8Array[],
+	virtualControl: false,
 };
 
 export const previewRendererState = {
-  calls: 0,
-  configs: [] as TerminalRendererConfig[],
-  disposed: 0,
-  container: null as HTMLElement | null,
+	calls: 0,
+	configs: [] as TerminalRendererConfig[],
+	disposed: 0,
+	container: null as HTMLElement | null,
 };
 
 export function resetRendererState(): void {
-  rendererState.calls = 0;
-  rendererState.configs.length = 0;
-  rendererState.disposed = 0;
-  rendererState.failure = null;
-  rendererState.fits = 0;
-  rendererState.focuses = 0;
-  rendererState.latencyKeyHandler = null;
-  rendererState.keyInputs.length = 0;
-  rendererState.options = null;
-  rendererState.pendingCanvasRenders.length = 0;
-  rendererState.writes.length = 0;
-  rendererState.virtualControl = false;
-  previewRendererState.calls = 0;
-  previewRendererState.configs.length = 0;
-  previewRendererState.disposed = 0;
-  previewRendererState.container = null;
+	rendererState.calls = 0;
+	rendererState.configs.length = 0;
+	rendererState.disposed = 0;
+	rendererState.failure = null;
+	rendererState.fits = 0;
+	rendererState.focuses = 0;
+	rendererState.latencyKeyHandler = null;
+	rendererState.keyInputs.length = 0;
+	rendererState.options = null;
+	rendererState.pendingCanvasRenders.length = 0;
+	rendererState.writes.length = 0;
+	rendererState.virtualControl = false;
+	previewRendererState.calls = 0;
+	previewRendererState.configs.length = 0;
+	previewRendererState.disposed = 0;
+	previewRendererState.container = null;
 }
 
 export async function terminalPreviewRendererFactory(options: {
-  container: HTMLElement;
-  config: TerminalRendererConfig;
+	container: HTMLElement;
+	config: TerminalRendererConfig;
 }): Promise<BrowserTerminalPreviewRenderer> {
-  previewRendererState.calls += 1;
-  previewRendererState.configs.push(options.config);
-  previewRendererState.container = options.container;
-  const canvas = document.createElement("canvas");
-  options.container.appendChild(canvas);
-  return {
-    async updateConfig(config) {
-      previewRendererState.configs.push(config);
-    },
-    dispose() {
-      previewRendererState.disposed += 1;
-      canvas.remove();
-    },
-  };
+	previewRendererState.calls += 1;
+	previewRendererState.configs.push(options.config);
+	previewRendererState.container = options.container;
+	const canvas = document.createElement("canvas");
+	options.container.appendChild(canvas);
+	return {
+		async updateConfig(config) {
+			previewRendererState.configs.push(config);
+		},
+		dispose() {
+			previewRendererState.disposed += 1;
+			canvas.remove();
+		},
+	};
 }
 
 export async function terminalRendererFactory(
-  options: RendererOptions,
+	options: RendererOptions,
 ): Promise<BrowserTerminalRenderer> {
-  rendererState.calls += 1;
-  rendererState.configs.push(options.config);
-  const failure = rendererState.failure;
-  rendererState.failure = null;
-  if (failure) throw failure;
-  rendererState.options = options;
-  return {
-    cols: 100,
-    rows: 32,
-    dispose() {
-      rendererState.disposed += 1;
-    },
-    fit() {
-      rendererState.fits += 1;
-    },
-    focus() {
-      rendererState.focuses += 1;
-    },
-    sendKey(input: TerminalKeyInput) {
-      rendererState.keyInputs.push({
-        ...input,
-        ctrlKey: Boolean(input.ctrlKey || rendererState.virtualControl),
-      });
-      if (rendererState.virtualControl) {
-        rendererState.virtualControl = false;
-        options.onVirtualControlChange?.(false);
-      }
-    },
-    setVirtualControl(active: boolean) {
-      rendererState.virtualControl = active;
-      options.onVirtualControlChange?.(active);
-    },
-    setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null) {
-      rendererState.latencyKeyHandler = handler;
-      if (!handler) rendererState.pendingCanvasRenders.length = 0;
-    },
-    write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile) {
-      rendererState.writes.push(data);
-      profile?.onWriteComplete();
-      if (profile) rendererState.pendingCanvasRenders.push(profile);
-    },
-  };
+	rendererState.calls += 1;
+	rendererState.configs.push(options.config);
+	const failure = rendererState.failure;
+	rendererState.failure = null;
+	if (failure) throw failure;
+	rendererState.options = options;
+	return {
+		cols: 100,
+		rows: 32,
+		dispose() {
+			rendererState.disposed += 1;
+		},
+		fit() {
+			rendererState.fits += 1;
+		},
+		focus() {
+			rendererState.focuses += 1;
+		},
+		sendKey(input: TerminalKeyInput) {
+			rendererState.keyInputs.push({
+				...input,
+				ctrlKey: Boolean(input.ctrlKey || rendererState.virtualControl),
+			});
+			if (rendererState.virtualControl) {
+				rendererState.virtualControl = false;
+				options.onVirtualControlChange?.(false);
+			}
+		},
+		setVirtualControl(active: boolean) {
+			rendererState.virtualControl = active;
+			options.onVirtualControlChange?.(active);
+		},
+		setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null) {
+			rendererState.latencyKeyHandler = handler;
+			if (!handler) rendererState.pendingCanvasRenders.length = 0;
+		},
+		write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile) {
+			rendererState.writes.push(data);
+			profile?.onWriteComplete();
+			if (profile) rendererState.pendingCanvasRenders.push(profile);
+		},
+	};
 }
 
 type Listener = (event: { data?: unknown; code?: number; reason?: string }) => void;
 
 export class FakeTerminalWebSocket {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSING = 2;
-  static readonly CLOSED = 3;
+	static readonly CONNECTING = 0;
+	static readonly OPEN = 1;
+	static readonly CLOSING = 2;
+	static readonly CLOSED = 3;
 
-  static instances: FakeTerminalWebSocket[] = [];
+	static instances: FakeTerminalWebSocket[] = [];
 
-  readonly url: string;
-  readonly protocols: string[];
-  binaryType = "blob";
-  readyState = FakeTerminalWebSocket.CONNECTING;
-  readonly sent: Array<string | Uint8Array<ArrayBuffer>> = [];
-  readonly closes: Array<{ code?: number; reason?: string }> = [];
-  private readonly listeners = new Map<string, Listener[]>();
+	readonly url: string;
+	readonly protocols: string[];
+	binaryType = "blob";
+	readyState = FakeTerminalWebSocket.CONNECTING;
+	readonly sent: Array<string | Uint8Array<ArrayBuffer>> = [];
+	readonly closes: Array<{ code?: number; reason?: string }> = [];
+	private readonly listeners = new Map<string, Listener[]>();
 
-  constructor(url: string, protocols: string | string[]) {
-    this.url = url;
-    this.protocols = Array.isArray(protocols) ? protocols : [protocols];
-    FakeTerminalWebSocket.instances.push(this);
-  }
+	constructor(url: string, protocols: string | string[]) {
+		this.url = url;
+		this.protocols = Array.isArray(protocols) ? protocols : [protocols];
+		FakeTerminalWebSocket.instances.push(this);
+	}
 
-  addEventListener(type: string, listener: EventListener) {
-    const listeners = this.listeners.get(type) ?? [];
-    listeners.push(listener as unknown as Listener);
-    this.listeners.set(type, listeners);
-  }
+	addEventListener(type: string, listener: EventListener) {
+		const listeners = this.listeners.get(type) ?? [];
+		listeners.push(listener as unknown as Listener);
+		this.listeners.set(type, listeners);
+	}
 
-  send(data: string | Uint8Array<ArrayBuffer>) {
-    this.sent.push(data);
-  }
+	send(data: string | Uint8Array<ArrayBuffer>) {
+		this.sent.push(data);
+	}
 
-  close(code?: number, reason?: string) {
-    this.readyState = FakeTerminalWebSocket.CLOSED;
-    this.closes.push({ code, reason });
-  }
+	close(code?: number, reason?: string) {
+		this.readyState = FakeTerminalWebSocket.CLOSED;
+		this.closes.push({ code, reason });
+	}
 
-  emitMessage(data: string | ArrayBuffer) {
-    this.readyState = FakeTerminalWebSocket.OPEN;
-    for (const listener of this.listeners.get("message") ?? []) listener({ data });
-  }
+	emitMessage(data: string | ArrayBuffer) {
+		this.readyState = FakeTerminalWebSocket.OPEN;
+		for (const listener of this.listeners.get("message") ?? []) listener({ data });
+	}
 
-  emitClose(code: number, reason = "") {
-    this.readyState = FakeTerminalWebSocket.CLOSED;
-    for (const listener of this.listeners.get("close") ?? []) listener({ code, reason });
-  }
+	emitClose(code: number, reason = "") {
+		this.readyState = FakeTerminalWebSocket.CLOSED;
+		for (const listener of this.listeners.get("close") ?? []) listener({ code, reason });
+	}
 }
 
 export function resetFakeTerminalWebSockets(): void {
-  FakeTerminalWebSocket.instances = [];
+	FakeTerminalWebSocket.instances = [];
 }

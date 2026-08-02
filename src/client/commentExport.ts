@@ -1,4 +1,4 @@
 export {
-  exportCommentsForCodex,
-  formatCommentReference,
+	exportCommentsForCodex,
+	formatCommentReference,
 } from "../shared/commentExport.ts";
