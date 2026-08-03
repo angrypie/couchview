@@ -1,21 +1,66 @@
-.git-workspace-sheet {
-	position: fixed;
-	z-index: 60;
-	inset: max(6dvh, env(safe-area-inset-top)) 0 0;
+/* Public styles for the Git workspace presentation module. */
+.git-history-page {
+	width: 100%;
+	height: 100dvh;
 	min-width: 0;
 	min-height: 0;
-	border: 1px solid var(--line);
-	border-bottom: 0;
-	border-radius: 16px 16px 0 0;
 	display: grid;
-	grid-template-rows: auto auto minmax(0, 1fr);
-	background: var(--panel);
-	box-shadow: var(--shadow);
-	animation: sheet-in 180ms ease-out;
+	grid-template-rows: auto minmax(0, 1fr);
+	overflow: hidden;
+	color: var(--text);
+	background: var(--bg);
 }
 
-.git-workspace-header {
-	padding-top: max(12px, env(safe-area-inset-top));
+.git-history-toolbar {
+	min-width: 0;
+	min-height: calc(48px + env(safe-area-inset-top));
+	padding: calc(5px + env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) 5px
+		max(6px, env(safe-area-inset-left));
+	border-bottom: 1px solid var(--line);
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 6px;
+	background: rgb(19 24 32 / 98%);
+}
+
+.git-history-back {
+	min-height: 36px;
+	padding-inline: 9px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: #dce5ef;
+	background: #11171f;
+}
+
+.git-history-heading {
+	min-width: 0;
+	display: grid;
+	justify-items: center;
+	gap: 2px;
+}
+
+.git-history-heading h1 {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.1;
+}
+
+.git-history-heading .repo-meta {
+	max-width: min(50vw, 420px);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.git-history-body {
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
 }
 
 .git-header-actions,
@@ -30,6 +75,11 @@
 
 .git-header-actions {
 	gap: 2px;
+}
+
+.git-header-actions > .icon-button {
+	width: 36px;
+	height: 36px;
 }
 
 .git-action-menu-wrap {
@@ -96,6 +146,7 @@
 .git-workspace-content {
 	min-width: 0;
 	min-height: 0;
+	flex: 1 1 auto;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
 }
@@ -240,9 +291,19 @@
 
 .git-diff-viewer {
 	position: relative;
+	height: 100%;
 	min-width: 0;
 	min-height: 0;
+	display: flex;
 	overflow: hidden;
+}
+
+.git-diff-viewer > .diff-viewer-shell {
+	position: relative;
+	inset: auto;
+	width: 100%;
+	height: 100%;
+	flex: 1 1 auto;
 }
 
 .git-diff-viewer .pierre-code-view {
@@ -324,16 +385,6 @@
 }
 
 @media (orientation: landscape) and (min-width: 900px) and (min-height: 600px) {
-	.git-workspace-sheet {
-		inset: 16px;
-		border-bottom: 1px solid var(--line);
-		border-radius: 15px;
-	}
-
-	.git-workspace-header {
-		padding-top: 4px;
-	}
-
 	.git-workspace-content {
 		grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
 		grid-template-rows: minmax(180px, 36%) minmax(0, 1fr);
@@ -367,8 +418,23 @@
 }
 
 @media (max-width: 420px) {
-	.git-workspace-sheet {
-		top: max(2dvh, env(safe-area-inset-top));
+	.git-history-toolbar {
+		grid-template-columns: 36px minmax(0, 1fr) auto;
+		gap: 3px;
+	}
+
+	.git-history-back {
+		width: 36px;
+		padding: 0;
+		justify-content: center;
+	}
+
+	.git-history-back span {
+		display: none;
+	}
+
+	.git-history-heading .repo-meta {
+		max-width: 42vw;
 	}
 
 	.git-confirm-actions {

@@ -15,27 +15,28 @@ async function openFixture(page: Page) {
 	}
 }
 
-async function expectSheetWithinViewport(page: Page) {
-	const sheet = page.getByRole("dialog", { name: "Git history and repository actions" });
-	await expect(sheet).toBeVisible();
+async function expectPageWithinViewport(page: Page) {
+	const historyPage = page.getByRole("main", { name: "Git history and repository actions" });
+	await expect(historyPage).toBeVisible();
 	const viewport = await page.evaluate(() => ({
 		height: window.innerHeight,
 		width: window.innerWidth,
 	}));
 	await expect
 		.poll(() =>
-			sheet.evaluate((element) => {
+			historyPage.evaluate((element) => {
 				const bounds = element.getBoundingClientRect();
 				return {
 					bottom: Math.round(bounds.bottom),
 					left: Math.round(bounds.left),
 					right: Math.round(bounds.right),
+					top: Math.round(bounds.top),
 				};
 			}),
 		)
-		.toEqual({ bottom: viewport.height, left: 0, right: viewport.width });
-	const bounds = await sheet.boundingBox();
-	expect(bounds?.height ?? 0).toBeGreaterThan(viewport.height * 0.85);
+		.toEqual({ bottom: viewport.height, left: 0, right: viewport.width, top: 0 });
+	const bounds = await historyPage.boundingBox();
+	expect(bounds?.height ?? 0).toBeGreaterThan(viewport.height * 0.98);
 }
 
 test.describe("responsive Git workspace", () => {
@@ -62,7 +63,11 @@ test.describe("responsive Git workspace", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await openFixture(page);
 		await page.getByRole("button", { name: "Open Git history" }).click();
-		await expectSheetWithinViewport(page);
+		await expect(page).toHaveURL(/\/history\?repo=fixture-repository$/);
+		await page.reload();
+		await expect(page).toHaveTitle("Couchview");
+		await expect(page).toHaveURL(/\/history\?repo=fixture-repository$/);
+		await expectPageWithinViewport(page);
 
 		const commits = page.getByRole("region", { name: "Commit history" });
 		const commitFiles = page.getByRole("region", { name: "Commit files" });
@@ -72,10 +77,27 @@ test.describe("responsive Git workspace", () => {
 		await commits.getByRole("button", { name: /Add mobile review workspace/ }).click();
 		await expect(commits).toBeHidden();
 		await expect(commitFiles).toBeVisible();
-		await commitFiles.getByRole("button", { name: /src\/review\.ts/ }).click();
+		await commitFiles.getByRole("button", { name: /benchmarks\/quality-checks\.json/ }).click();
 		await expect(commitFiles).toBeHidden();
 		await expect(historicalDiff).toBeVisible();
 		await expect(historicalDiff.getByText("Read-only historical preview")).toBeVisible();
+		const firstHistoricalLine = historicalDiff.locator("diffs-container [data-line]").first();
+		await expect(firstHistoricalLine).toBeVisible();
+		await expect
+			.poll(async () => {
+				const [lineBounds, paneBounds] = await Promise.all([
+					firstHistoricalLine.boundingBox(),
+					historicalDiff.boundingBox(),
+				]);
+				return Boolean(
+					lineBounds &&
+						paneBounds &&
+						lineBounds.height > 0 &&
+						lineBounds.y + lineBounds.height > paneBounds.y &&
+						lineBounds.y < paneBounds.y + paneBounds.height,
+				);
+			})
+			.toBe(true);
 		await expect(
 			historicalDiff.getByRole("button", { name: /^Select (old|new) line/ }),
 		).toHaveCount(0);
@@ -102,24 +124,24 @@ test.describe("responsive Git workspace", () => {
 		).toBeVisible();
 
 		await page.setViewportSize({ width: 844, height: 390 });
-		await expectSheetWithinViewport(page);
+		await expectPageWithinViewport(page);
 		await expect(commitFiles).toBeVisible();
 		await expect(commits).toBeHidden();
 
 		await page.setViewportSize({ width: 834, height: 1194 });
-		await expectSheetWithinViewport(page);
+		await expectPageWithinViewport(page);
 		await expect(commitFiles).toBeVisible();
 		await expect(commits).toBeHidden();
 
 		await page.setViewportSize({ width: 1194, height: 834 });
-		const sheet = page.getByRole("dialog", { name: "Git history and repository actions" });
-		await expect(sheet).toHaveCSS("left", "16px");
+		const historyPage = page.getByRole("main", { name: "Git history and repository actions" });
+		await expect(historyPage).toHaveCSS("left", "auto");
 		await expect(commits).toBeVisible();
 		await expect(commitFiles).toBeVisible();
 		await expect(historicalDiff).toBeVisible();
 		await expect
 			.poll(() =>
-				sheet.evaluate((element) => {
+				historyPage.evaluate((element) => {
 					const history = element.querySelector(".git-history-pane")!.getBoundingClientRect();
 					const files = element.querySelector(".git-files-pane")!.getBoundingClientRect();
 					const diff = element.querySelector(".git-diff-pane")!.getBoundingClientRect();
@@ -140,5 +162,8 @@ test.describe("responsive Git workspace", () => {
 
 		await page.getByRole("button", { name: "Return", exact: true }).click();
 		await expect(page.getByText(/Detached HEAD · previous branch/)).toHaveCount(0);
+		await historyPage.getByRole("button", { name: "Review", exact: true }).click();
+		await expect(page).toHaveURL(/\/\?repo=fixture-repository$/);
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 	});
 });

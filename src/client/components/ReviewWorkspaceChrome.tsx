@@ -1,6 +1,5 @@
 import { WifiOff } from "lucide-react";
 import type { RemoteBridgeCapability, TerminalCapability } from "../../shared/contracts.ts";
-import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
@@ -23,13 +22,13 @@ interface ReviewWorkspaceChromeProps {
 	drawerView: DrawerView;
 	failureAvailable: boolean;
 	filters: ReturnType<typeof useChangedFileFilters>;
-	git: ReturnType<typeof useGitWorkspace>;
 	management: ReturnType<typeof useRepositoryManagement>;
 	onDrawerOpenChange: (open: boolean) => void;
 	onDrawerViewChange: (view: DrawerView) => void;
 	onOpenCommandPalette: () => void;
 	onOpenComments: () => void;
 	onOpenFailure: () => void;
+	onOpenGitHistory: () => void;
 	onOpenRemoteBridge: () => void;
 	onOpenSettings: () => void;
 	onOpenTerminal: () => void;
@@ -50,13 +49,13 @@ export function ReviewWorkspaceChrome({
 	drawerView,
 	failureAvailable,
 	filters,
-	git,
 	management,
 	onDrawerOpenChange,
 	onDrawerViewChange,
 	onOpenCommandPalette,
 	onOpenComments,
 	onOpenFailure,
+	onOpenGitHistory,
 	onOpenRemoteBridge,
 	onOpenSettings,
 	onOpenTerminal,
@@ -133,7 +132,7 @@ export function ReviewWorkspaceChrome({
 				onNavigateHunk={diff.navigateHunk}
 				onOpenCommandPalette={onOpenCommandPalette}
 				onOpenDrawer={() => onDrawerOpenChange(true)}
-				onOpenGitHistory={() => git.setOpen(true)}
+				onOpenGitHistory={onOpenGitHistory}
 				onOpenRemoteBridge={onOpenRemoteBridge}
 				onOpenRepositoryPicker={management.openPicker}
 				onOpenSettings={onOpenSettings}

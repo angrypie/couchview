@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { RepositoryMutationCoordinator } from "./repositoryMutationCoordinator.ts";
+import { RepositoryMutationCoordinator } from "./mutationCoordinator.ts";
 
 describe("RepositoryMutationCoordinator", () => {
 	test("runs repository mutations in request order", async () => {

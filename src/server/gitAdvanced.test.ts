@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { StateDatabase } from "./database.ts";
-import { GitCommandError, type GitResult, reconcileGitStdout, runGit } from "./git.ts";
+import { GitCommandError, type GitResult, reconcileGitStdout, runGit } from "./git/index.ts";
 import { GitRepository } from "./repository.ts";
 
 const temporaryDirectories: string[] = [];

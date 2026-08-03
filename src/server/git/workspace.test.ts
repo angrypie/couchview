@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { GitRepository } from "./repository.ts";
+import { GitRepository } from "../repository.ts";
 
 const temporaryDirectories: string[] = [];
 const decoder = new TextDecoder();

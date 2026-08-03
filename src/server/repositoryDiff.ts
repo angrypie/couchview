@@ -16,7 +16,7 @@ import {
 	parseGrepOutput,
 	parseUnifiedDiff,
 	runGit,
-} from "./git.ts";
+} from "./git/index.ts";
 import {
 	RepositoryContent,
 	type RepositorySnapshot,

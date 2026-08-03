@@ -5,7 +5,7 @@ import type {
 	TerminalCapability,
 } from "../../shared/contracts.ts";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
-import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
+import type { GitWorkspaceController } from "../features/git/index.ts";
 import type { useToastNotifications } from "../features/notifications/useToastNotifications.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { usePwaUpdate } from "../features/pwa/usePwaUpdate.ts";
@@ -21,7 +21,9 @@ import type { useChangedFileFilters } from "../features/staging/useChangedFileFi
 import { formatShortcut } from "../shortcutEngine.ts";
 import { ApplicationStateView } from "./ApplicationStateView.tsx";
 import { AppToastStack } from "./AppToastStack.tsx";
+import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
 import { GlobalCommandUi } from "./GlobalCommandUi.tsx";
+import { GitHistoryPage } from "./git/index.ts";
 import { ProfileSettingsPage } from "./ProfileSettingsPage.tsx";
 import { PwaRefreshToast } from "./PwaRefreshToast.tsx";
 import { RestartOverlay } from "./RestartOverlay.tsx";
@@ -38,7 +40,7 @@ interface CouchviewApplicationViewProps {
 	drawerView: DrawerView;
 	failure: ReturnType<typeof useFailureReporting>;
 	filters: ReturnType<typeof useChangedFileFilters>;
-	git: ReturnType<typeof useGitWorkspace>;
+	git: GitWorkspaceController;
 	management: ReturnType<typeof useRepositoryManagement>;
 	navigation: ReturnType<typeof useWorkspaceNavigation>;
 	notifications: ReturnType<typeof useToastNotifications>;
@@ -114,6 +116,24 @@ export function CouchviewApplicationView({
 			pendingShortcut={shellCommands.pending}
 		/>
 	);
+	const toastUi = (
+		<AppToastStack
+			canInstall={pwa.canInstall}
+			failureAvailable={Boolean(failure.failure)}
+			iosInstallHint={pwa.iosInstallHint}
+			onDismissInstall={pwa.dismissInstall}
+			onDismissRefresh={pwa.dismissRefresh}
+			onInstall={() => void pwa.install()}
+			onOpenFailure={() => {
+				notifications.setToast(null);
+				failure.setDetailsOpen(true);
+			}}
+			onUndo={(undo) => void workflow.review.undoReview(undo)}
+			onUpdate={pwa.update}
+			refreshAvailable={pwa.needRefresh}
+			toast={notifications.toast}
+		/>
+	);
 
 	if (navigation.mode === "settings" && workspace.phase === "ready" && workspace.bootstrap) {
 		return (
@@ -159,6 +179,31 @@ export function CouchviewApplicationView({
 		);
 	}
 
+	if (navigation.mode === "history") {
+		return (
+			<>
+				{terminal}
+				{commandUi}
+				<GitHistoryPage
+					commandPaletteShortcut={commandPaletteShortcut}
+					controller={git}
+					display={display}
+					files={workspace.files}
+					onBack={navigation.closeGitHistory}
+					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
+					repository={workspace.repository}
+				/>
+				{toastUi}
+				<FailureDetailsSheet
+					failure={failure.failure}
+					onClose={() => failure.setDetailsOpen(false)}
+					onCopy={() => void failure.copyDiagnostics()}
+					open={failure.detailsOpen}
+				/>
+			</>
+		);
+	}
+
 	return (
 		<>
 			{terminal}
@@ -174,13 +219,13 @@ export function CouchviewApplicationView({
 					drawerView={drawerView}
 					failureAvailable={Boolean(failure.failure)}
 					filters={filters}
-					git={git}
 					management={management}
 					onDrawerOpenChange={onDrawerOpenChange}
 					onDrawerViewChange={onDrawerViewChange}
 					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
 					onOpenComments={shellCommands.openComments}
 					onOpenFailure={() => failure.setDetailsOpen(true)}
+					onOpenGitHistory={navigation.openGitHistory}
 					onOpenRemoteBridge={() => onRemoteBridgeOpenChange(true)}
 					onOpenSettings={navigation.openSettings}
 					onOpenTerminal={navigation.openTerminal}
@@ -195,9 +240,7 @@ export function CouchviewApplicationView({
 				<ReviewWorkspaceOverlays
 					codexCapability={codexCapability}
 					commitMessageCapability={commitMessageCapability}
-					display={display}
 					failureReporting={failure}
-					git={git}
 					management={management}
 					onRemoteBridgeOpenChange={onRemoteBridgeOpenChange}
 					packages={packages}
@@ -207,22 +250,7 @@ export function CouchviewApplicationView({
 					workflow={workflow}
 					workspace={workspace}
 				/>
-				<AppToastStack
-					canInstall={pwa.canInstall}
-					failureAvailable={Boolean(failure.failure)}
-					iosInstallHint={pwa.iosInstallHint}
-					onDismissInstall={pwa.dismissInstall}
-					onDismissRefresh={pwa.dismissRefresh}
-					onInstall={() => void pwa.install()}
-					onOpenFailure={() => {
-						notifications.setToast(null);
-						failure.setDetailsOpen(true);
-					}}
-					onUndo={(undo) => void workflow.review.undoReview(undo)}
-					onUpdate={pwa.update}
-					refreshAvailable={pwa.needRefresh}
-					toast={notifications.toast}
-				/>
+				{toastUi}
 				<RestartOverlay phase={management.restartPhase} />
 			</main>
 		</>

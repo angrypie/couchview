@@ -20,7 +20,7 @@ import {
 } from "../shared/contracts.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
-import { GitCommandError } from "./git.ts";
+import { GitCommandError } from "./git/index.ts";
 import {
 	accessOriginsForHost,
 	type CouchviewApp,

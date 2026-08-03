@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type DrawerView } from "./components/ChangedFilesDrawer.tsx";
 import { CouchviewApplicationView } from "./components/CouchviewApplicationView.tsx";
 import { useFailureReporting } from "./features/errors/useFailureReporting.ts";
-import { useGitWorkspace } from "./features/history/useGitWorkspace.ts";
+import { useGitWorkspace } from "./features/git/index.ts";
 import { useToastNotifications } from "./features/notifications/useToastNotifications.ts";
 import { usePackageRuns } from "./features/packages/usePackageRuns.ts";
 import { usePwaUpdate } from "./features/pwa/usePwaUpdate.ts";
@@ -81,6 +81,7 @@ export function App() {
 	});
 	const failureReporting = useFailureReporting({ showToast });
 	const gitWorkspace = useGitWorkspace({
+		active: navigation.mode === "history",
 		csrfToken: bootstrap?.csrfToken,
 		onRepositoryState: workspace.applyRepositoryState,
 		operationRevision: workspace.operationRevision,
@@ -148,7 +149,7 @@ export function App() {
 		repositoryManagement.forgetBusy === null &&
 		repositoryManagement.restartPhase === null &&
 		!comments.copyFallbackText;
-	const gitUpdateSafe = !gitWorkspace.open && gitWorkspace.actionBusy === null;
+	const gitUpdateSafe = navigation.mode !== "history" && gitWorkspace.actionBusy === null;
 	const pwa = usePwaUpdate({ updateSafe: pwaUpdateSafe && gitUpdateSafe });
 
 	const shellCommands = useReviewShellCommands({

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	App,
+	act,
 	createAppTestHarness,
 	fireEvent,
 	render,
@@ -13,14 +14,32 @@ import {
 describe("Couchview Git history workspace", () => {
 	const fixture = createAppTestHarness();
 
+	test("opens Git history directly from its own route and follows browser navigation", async () => {
+		window.history.replaceState(null, "", "/history?repo=repo");
+		render(<App />);
+
+		const workspace = await screen.findByRole("main", {
+			name: "Git history and repository actions",
+		});
+		await within(workspace).findByRole("button", { name: /Improve history review/ });
+		expect(screen.queryByRole("region", { name: "Unified diff" })).toBeNull();
+
+		window.history.replaceState(null, "", "/?repo=repo");
+		fireEvent.popState(window);
+		await screen.findByRole("region", { name: "Unified diff" });
+		expect(screen.queryByRole("main", { name: "Git history and repository actions" })).toBeNull();
+	});
+
 	test("previews commit files and reuses cached historical responses", async () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
 
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
+		expect(window.location.pathname).toBe("/history");
+		expect(screen.queryByRole("dialog", { name: "Git history and repository actions" })).toBeNull();
 		fireEvent.click(within(workspace).getByRole("button", { name: /Improve history review/ }));
 		const historicalFile = await within(workspace).findByRole("button", {
 			name: /src\/first\.ts/,
@@ -45,6 +64,16 @@ describe("Couchview Git history workspace", () => {
 				request.path.endsWith("/git/history/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
 			),
 		).toHaveLength(1);
+		fireEvent.click(within(workspace).getByRole("button", { name: "Review" }));
+		expect(window.location.pathname).toBe("/");
+		expect(screen.getByRole("region", { name: "Current file" })).toBeTruthy();
+
+		fixture.delayNextHistoryResponse = true;
+		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
+		const reopened = screen.getByRole("main", { name: "Git history and repository actions" });
+		expect(within(reopened).getByRole("button", { name: /Improve history review/ })).toBeTruthy();
+		await waitFor(() => expect(fixture.releaseHistoryResponse).not.toBeNull());
+		await act(async () => fixture.releaseHistoryResponse?.());
 	});
 
 	test("loads another history page without replacing the current commits", async () => {
@@ -52,7 +81,7 @@ describe("Couchview Git history workspace", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
 		await within(workspace).findByRole("button", { name: /Improve history review/ });
@@ -71,7 +100,7 @@ describe("Couchview Git history workspace", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
 		fireEvent.click(
@@ -91,7 +120,7 @@ describe("Couchview Git history workspace", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
 		await within(workspace).findByRole("button", { name: /Improve history review/ });
@@ -110,7 +139,7 @@ describe("Couchview Git history workspace", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
 		fireEvent.click(within(workspace).getByRole("button", { name: /Improve history review/ }));
@@ -155,7 +184,7 @@ describe("Couchview Git history workspace", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Open Git history" }));
-		const workspace = await screen.findByRole("dialog", {
+		const workspace = await screen.findByRole("main", {
 			name: "Git history and repository actions",
 		});
 		fireEvent.click(within(workspace).getByRole("button", { name: "Repository actions" }));

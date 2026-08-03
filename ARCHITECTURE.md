@@ -23,6 +23,22 @@ Internal imports in `App.tsx` are restricted to `features/`, `components/`, and
 `lib/`. A new responsibility must be placed in its owning feature before it is
 wired into the composition root.
 
+## Git workspace module
+
+The Git workspace is a cohesive internal module with public entry points at
+`src/shared/git/index.ts`, `src/client/features/git/index.ts`,
+`src/client/components/git/index.ts`, and `src/server/git/index.ts`. Code outside
+each module directory must use its entry point instead of importing an
+implementation file. The server entry exposes both the repository-facing Git
+capability and the injectable command-execution port; staging and committing
+share its mutation coordinator with history actions.
+
+See `src/server/git/README.md` for ownership and replacement seams. The
+repository architecture checker enforces these entry-point boundaries.
+The client presents the module as the URL-backed `/history` workspace page;
+route state belongs to the shell navigation feature, while history data and
+mutations remain owned by the Git feature controller.
+
 ## React Native Web direction
 
 The reusable path to React Native Web is feature logic and shared contracts,

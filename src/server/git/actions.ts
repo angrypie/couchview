@@ -1,9 +1,9 @@
-import type { GitActionRequest, GitActionResponse } from "../shared/contracts.ts";
-import { HttpError } from "./errors.ts";
-import { GitCommandError, runGit } from "./git.ts";
-import type { RepositorySnapshot } from "./repositoryContent.ts";
-import { RepositoryHistory } from "./repositoryHistory.ts";
-import { RepositoryMutationCoordinator } from "./repositoryMutationCoordinator.ts";
+import type { GitActionRequest, GitActionResponse } from "../../shared/git/index.ts";
+import { HttpError } from "../errors.ts";
+import type { RepositorySnapshot } from "../repositoryContent.ts";
+import type { GitExecutionPort } from "./execution.ts";
+import { RepositoryHistory } from "./history.ts";
+import { RepositoryMutationCoordinator } from "./mutationCoordinator.ts";
 
 const GIT_ACTIONS = [
 	"checkout",
@@ -39,9 +39,9 @@ function assertActionRequest(input: unknown): asserts input is GitActionRequest 
 	}
 }
 
-function gitActionError(error: unknown): never {
+function gitActionError(error: unknown, execution: GitExecutionPort): never {
 	if (error instanceof HttpError) throw error;
-	if (error instanceof GitCommandError) {
+	if (execution.isFailure(error)) {
 		if (/index\.lock|another git process/i.test(error.stderr)) {
 			throw new HttpError(423, "git_index_locked", "The Git index is busy; try again shortly");
 		}
@@ -59,10 +59,10 @@ function gitActionError(error: unknown): never {
 
 export class RepositoryGitActions {
 	constructor(
-		private readonly root: string,
 		private readonly getSnapshot: (fresh?: boolean) => Promise<RepositorySnapshot>,
 		private readonly history: RepositoryHistory,
 		private readonly mutations: RepositoryMutationCoordinator,
+		private readonly execution: GitExecutionPort,
 	) {}
 
 	async perform(input: GitActionRequest): Promise<GitActionResponse> {
@@ -80,7 +80,7 @@ export class RepositoryGitActions {
 				const warning = await this.runAction(input, before);
 				return this.response(warning);
 			} catch (error) {
-				gitActionError(error);
+				gitActionError(error, this.execution);
 			}
 		});
 	}
@@ -114,7 +114,9 @@ export class RepositoryGitActions {
 			);
 		}
 		await this.history.assertCheckoutCommit(commit);
-		await runGit(this.root, ["checkout", "--quiet", "--detach", commit], { timeoutMs: 60_000 });
+		await this.execution.run(["checkout", "--quiet", "--detach", commit], {
+			timeoutMs: 60_000,
+		});
 		return null;
 	}
 
@@ -133,7 +135,7 @@ export class RepositoryGitActions {
 		if (!previousBranch) {
 			throw new HttpError(409, "previous_branch_unavailable", "No previous branch is available");
 		}
-		await runGit(this.root, ["checkout", "--quiet", previousBranch], { timeoutMs: 60_000 });
+		await this.execution.run(["checkout", "--quiet", previousBranch], { timeoutMs: 60_000 });
 		return null;
 	}
 
@@ -144,8 +146,7 @@ export class RepositoryGitActions {
 		if (before.files.some((file) => file.conflicted)) {
 			throw new HttpError(409, "unresolved_conflicts", "Resolve Git conflicts before stashing");
 		}
-		await runGit(
-			this.root,
+		await this.execution.run(
 			[
 				"stash",
 				"push",
@@ -170,13 +171,13 @@ export class RepositoryGitActions {
 			throw new HttpError(409, "stash_not_found", "There is no stash to restore");
 		}
 		try {
-			await runGit(this.root, ["stash", "pop", "--index"], {
+			await this.execution.run(["stash", "pop", "--index"], {
 				literalPathspecs: false,
 				timeoutMs: 120_000,
 			});
 			return null;
 		} catch (error) {
-			if (!(error instanceof GitCommandError)) throw error;
+			if (!this.execution.isFailure(error)) throw error;
 			const after = await this.getSnapshot(true);
 			if (after.operationRevision === before.operationRevision) throw error;
 			return "The stash was kept because Git could not restore it cleanly. Resolve the reported conflicts before continuing.";
@@ -190,7 +191,7 @@ export class RepositoryGitActions {
 		if (!(await this.history.status(before)).canUndoLastCommit) {
 			throw new HttpError(409, "parent_commit_unavailable", "The current commit has no parent");
 		}
-		await runGit(this.root, ["reset", "--mixed", "HEAD^"], { timeoutMs: 60_000 });
+		await this.execution.run(["reset", "--mixed", "HEAD^"], { timeoutMs: 60_000 });
 		return null;
 	}
 
@@ -198,8 +199,8 @@ export class RepositoryGitActions {
 		if (before.repository.unborn || !before.repository.head) {
 			throw new HttpError(409, "unborn_repository", "An unborn repository cannot be cleaned");
 		}
-		await runGit(this.root, ["reset", "--hard", "HEAD"], { timeoutMs: 60_000 });
-		await runGit(this.root, ["clean", "-fd"], { timeoutMs: 60_000 });
+		await this.execution.run(["reset", "--hard", "HEAD"], { timeoutMs: 60_000 });
+		await this.execution.run(["clean", "-fd"], { timeoutMs: 60_000 });
 		return null;
 	}
 

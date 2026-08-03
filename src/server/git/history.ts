@@ -1,16 +1,16 @@
+import type { DiffResponse, FileDiff } from "../../shared/contracts.ts";
 import type {
-	DiffResponse,
-	FileDiff,
 	GitCommitChangesResponse,
 	GitCommitSummary,
 	GitHistoryFile,
 	GitHistoryResponse,
 	GitHistoryScope,
 	GitWorkspaceStatus,
-} from "../shared/contracts.ts";
-import { HttpError } from "./errors.ts";
-import { decodeGitOutput, parseNumstat, parseUnifiedDiff, runGit, sha256 } from "./git.ts";
-import type { RepositorySnapshot } from "./repositoryContent.ts";
+} from "../../shared/git/index.ts";
+import { HttpError } from "../errors.ts";
+import type { RepositorySnapshot } from "../repositoryContent.ts";
+import { decodeGitOutput, parseNumstat, parseUnifiedDiff, sha256 } from "./command.ts";
+import type { GitExecutionPort } from "./execution.ts";
 
 const HISTORY_PAGE_SIZE = 50;
 const MAX_DIFF_BYTES = 2 * 1024 * 1024;
@@ -124,10 +124,10 @@ function decodeCursor(value: string, scope: GitHistoryScope, revision: string): 
 
 export class RepositoryHistory {
 	constructor(
-		private readonly root: string,
 		private readonly repositoryId: string,
 		private readonly emptyTree: string,
 		private readonly getSnapshot: (fresh?: boolean) => Promise<RepositorySnapshot>,
+		private readonly execution: GitExecutionPort,
 	) {}
 
 	async list(scope: GitHistoryScope, cursor: string | null): Promise<GitHistoryResponse> {
@@ -168,8 +168,7 @@ export class RepositoryHistory {
 		const paths = [file.previousPath, file.path].filter(
 			(value, index, all): value is string => Boolean(value) && all.indexOf(value) === index,
 		);
-		const result = await runGit(
-			this.root,
+		const result = await this.execution.run(
 			[
 				"-c",
 				"diff.suppressBlankEmpty=false",
@@ -228,7 +227,7 @@ export class RepositoryHistory {
 		if (!COMMIT_ID.test(commit)) {
 			throw new HttpError(400, "invalid_commit", "Commit identifier is invalid");
 		}
-		const result = await runGit(this.root, ["cat-file", "-e", `${commit}^{commit}`], {
+		const result = await this.execution.run(["cat-file", "-e", `${commit}^{commit}`], {
 			allowExitCodes: [0, 1, 128],
 		});
 		if (result.exitCode !== 0) throw new HttpError(404, "commit_not_found", "Commit not found");
@@ -237,11 +236,11 @@ export class RepositoryHistory {
 	async assertCheckoutCommit(commit: string): Promise<void> {
 		await this.assertCommit(commit);
 		const [fromHead, fromBranches, fromTags] = await Promise.all([
-			runGit(this.root, ["merge-base", "--is-ancestor", commit, "HEAD"], {
+			this.execution.run(["merge-base", "--is-ancestor", commit, "HEAD"], {
 				allowExitCodes: [0, 1, 128],
 			}),
-			runGit(this.root, ["branch", "--format=%(refname)", "--contains", commit]),
-			runGit(this.root, ["tag", "--format=%(refname)", "--contains", commit]),
+			this.execution.run(["branch", "--format=%(refname)", "--contains", commit]),
+			this.execution.run(["tag", "--format=%(refname)", "--contains", commit]),
 		]);
 		if (
 			fromHead.exitCode !== 0 &&
@@ -258,8 +257,10 @@ export class RepositoryHistory {
 
 	private async readHistoryRevision(snapshot: RepositorySnapshot): Promise<string> {
 		const [refs, symbolicHead] = await Promise.all([
-			runGit(this.root, ["show-ref", "--heads", "--tags", "-d"], { allowExitCodes: [0, 1] }),
-			runGit(this.root, ["symbolic-ref", "-q", "HEAD"], { allowExitCodes: [0, 1] }),
+			this.execution.run(["show-ref", "--heads", "--tags", "-d"], {
+				allowExitCodes: [0, 1],
+			}),
+			this.execution.run(["symbolic-ref", "-q", "HEAD"], { allowExitCodes: [0, 1] }),
 		]);
 		return sha256(
 			snapshot.repository.head ?? "unborn",
@@ -277,7 +278,7 @@ export class RepositoryHistory {
 	): Promise<GitCommitSummary[]> {
 		if (scope === "current" && snapshot.repository.unborn) return [];
 		const targets = scope === "current" ? ["HEAD"] : ["--branches", "--tags"];
-		const result = await runGit(this.root, [
+		const result = await this.execution.run([
 			"log",
 			`--format=${COMMIT_FORMAT}`,
 			...LOCAL_DECORATIONS,
@@ -289,7 +290,7 @@ export class RepositoryHistory {
 	}
 
 	private async readCommit(commit: string): Promise<GitCommitSummary> {
-		const result = await runGit(this.root, [
+		const result = await this.execution.run([
 			"show",
 			"--no-patch",
 			`--format=${COMMIT_FORMAT}`,
@@ -302,15 +303,15 @@ export class RepositoryHistory {
 	}
 
 	private async firstParent(commit: string): Promise<string> {
-		const result = await runGit(this.root, ["rev-list", "--parents", "--max-count=1", commit]);
+		const result = await this.execution.run(["rev-list", "--parents", "--max-count=1", commit]);
 		return decodeGitOutput(result.stdout).trim().split(" ")[1] ?? this.emptyTree;
 	}
 
 	private async readCommitFiles(commit: string): Promise<GitHistoryFile[]> {
 		const base = await this.firstParent(commit);
 		const [names, stats] = await Promise.all([
-			runGit(this.root, ["diff", "--name-status", "-z", "--find-renames", base, commit, "--"]),
-			runGit(this.root, ["diff", "--numstat", "-z", "--find-renames", base, commit, "--"]),
+			this.execution.run(["diff", "--name-status", "-z", "--find-renames", base, commit, "--"]),
+			this.execution.run(["diff", "--numstat", "-z", "--find-renames", base, commit, "--"]),
 		]);
 		const statistics = parseNumstat(stats.stdout);
 		return parseNameStatus(names.stdout).map((file) => {
@@ -329,7 +330,7 @@ export class RepositoryHistory {
 
 	private async previousBranch(snapshot: RepositorySnapshot): Promise<string | null> {
 		if (snapshot.repository.branch) return null;
-		const result = await runGit(this.root, ["rev-parse", "--symbolic-full-name", "@{-1}"], {
+		const result = await this.execution.run(["rev-parse", "--symbolic-full-name", "@{-1}"], {
 			allowExitCodes: [0, 128],
 		});
 		const ref = decodeGitOutput(result.stdout).trim();
@@ -337,8 +338,7 @@ export class RepositoryHistory {
 	}
 
 	private async stashCount(): Promise<number> {
-		const result = await runGit(
-			this.root,
+		const result = await this.execution.run(
 			["rev-list", "--walk-reflogs", "--count", "refs/stash"],
 			{
 				allowExitCodes: [0, 128],
@@ -349,7 +349,7 @@ export class RepositoryHistory {
 
 	private async canUndo(snapshot: RepositorySnapshot): Promise<boolean> {
 		if (!snapshot.repository.branch || !snapshot.repository.head) return false;
-		const result = await runGit(this.root, ["rev-parse", "--verify", "HEAD^"], {
+		const result = await this.execution.run(["rev-parse", "--verify", "HEAD^"], {
 			allowExitCodes: [0, 128],
 		});
 		return result.exitCode === 0;

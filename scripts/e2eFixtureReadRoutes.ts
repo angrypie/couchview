@@ -1,12 +1,11 @@
 import type {
 	BootstrapResponse,
 	ChangesResponse,
-	GitCommitChangesResponse,
-	GitHistoryResponse,
 	PackageRunEvent,
 	ReviewStateResponse,
 } from "../src/shared/contracts.ts";
 import { API_ROUTES } from "../src/shared/contracts.ts";
+import type { GitCommitChangesResponse, GitHistoryResponse } from "../src/shared/git/index.ts";
 import {
 	comments,
 	diffs,

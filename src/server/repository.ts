@@ -28,11 +28,6 @@ import type {
 	DeleteCommentResponse,
 	DiffResponse,
 	GenerateCommitMessageRequest,
-	GitActionRequest,
-	GitActionResponse,
-	GitCommitChangesResponse,
-	GitHistoryResponse,
-	GitHistoryScope,
 	ReviewStateResponse,
 	SearchResponse,
 	SetReviewRequest,
@@ -46,14 +41,26 @@ import type {
 	StageFilesResponse,
 	StageFileTarget,
 } from "../shared/contracts.ts";
+import type {
+	GitActionRequest,
+	GitActionResponse,
+	GitCommitChangesResponse,
+	GitHistoryResponse,
+	GitHistoryScope,
+} from "../shared/git/index.ts";
 import { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
-import { decodeGitOutput, GitCommandError, type ParsedStatusEntry, runGit, sha256 } from "./git.ts";
+import {
+	createRepositoryGitModule,
+	decodeGitOutput,
+	GitCommandError,
+	type ParsedStatusEntry,
+	type RepositoryGitModule,
+	runGit,
+	sha256,
+} from "./git/index.ts";
 import { RepositoryContent } from "./repositoryContent.ts";
 import { RepositoryDiff } from "./repositoryDiff.ts";
-import { RepositoryGitActions } from "./repositoryGitActions.ts";
-import { RepositoryHistory } from "./repositoryHistory.ts";
-import { RepositoryMutationCoordinator } from "./repositoryMutationCoordinator.ts";
 import { RepositoryReview } from "./repositoryReview.ts";
 import { RepositorySnapshotService } from "./repositorySnapshot.ts";
 import { ReviewStore } from "./state.ts";
@@ -107,9 +114,7 @@ export class GitRepository {
 	private readonly diffs: RepositoryDiff;
 	private readonly snapshots: RepositorySnapshotService;
 	private readonly reviews: RepositoryReview;
-	private readonly historyService: RepositoryHistory;
-	private readonly gitActions: RepositoryGitActions;
-	private readonly mutations: RepositoryMutationCoordinator;
+	private readonly gitWorkspace: RepositoryGitModule;
 
 	private constructor(
 		root: string,
@@ -133,7 +138,6 @@ export class GitRepository {
 		}).added;
 		this.store = new ReviewStore(database, this.id);
 		this.content = new RepositoryContent(root);
-		this.mutations = new RepositoryMutationCoordinator();
 		this.snapshots = new RepositorySnapshotService(
 			root,
 			this.id,
@@ -144,15 +148,12 @@ export class GitRepository {
 		this.diffs = new RepositoryDiff(root, emptyTree, this.content, (fresh) =>
 			this.snapshots.getSnapshot(fresh),
 		);
-		this.historyService = new RepositoryHistory(root, this.id, emptyTree, (fresh) =>
-			this.snapshots.getSnapshot(fresh),
-		);
-		this.gitActions = new RepositoryGitActions(
+		this.gitWorkspace = createRepositoryGitModule({
 			root,
-			(fresh) => this.snapshots.getSnapshot(fresh),
-			this.historyService,
-			this.mutations,
-		);
+			repositoryId: this.id,
+			emptyTree,
+			getSnapshot: (fresh) => this.snapshots.getSnapshot(fresh),
+		});
 		this.reviews = new RepositoryReview(root, this.store, this.content, this.snapshots, (fileId) =>
 			this.diffs.diff(fileId),
 		);
@@ -212,19 +213,19 @@ export class GitRepository {
 	}
 
 	async history(scope: GitHistoryScope, cursor: string | null): Promise<GitHistoryResponse> {
-		return this.historyService.list(scope, cursor);
+		return this.gitWorkspace.history(scope, cursor);
 	}
 
 	async historyCommit(commit: string): Promise<GitCommitChangesResponse> {
-		return this.historyService.commit(commit);
+		return this.gitWorkspace.historyCommit(commit);
 	}
 
 	async historyDiff(commit: string, fileId: string): Promise<DiffResponse> {
-		return this.historyService.diff(commit, fileId);
+		return this.gitWorkspace.historyDiff(commit, fileId);
 	}
 
 	async gitAction(input: GitActionRequest): Promise<GitActionResponse> {
-		return this.gitActions.perform(input);
+		return this.gitWorkspace.action(input);
 	}
 
 	async search(query: string, currentPath: string): Promise<SearchResponse> {
@@ -298,7 +299,7 @@ export class GitRepository {
 		operationRevision: string,
 		shouldStage: boolean,
 	): Promise<StageFilesResponse> {
-		return this.mutations.run(async () => {
+		return this.gitWorkspace.runMutation(async () => {
 			const lockPath = `${this.indexPath}.lock`;
 			const temporaryIndex = path.join(
 				path.dirname(this.indexPath),
@@ -472,7 +473,7 @@ export class GitRepository {
 	}
 
 	async commit(input: CommitRequest): Promise<CommitResponse> {
-		return this.mutations.run(async () => {
+		return this.gitWorkspace.runMutation(async () => {
 			if (!input || typeof input !== "object" || Array.isArray(input)) {
 				throw new HttpError(400, "invalid_request", "Commit request is invalid");
 			}

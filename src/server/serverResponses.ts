@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { ApiErrorBody, ApiErrorDiagnostic } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
-import { GitCommandError } from "./git.ts";
+import { GitCommandError } from "./git/index.ts";
 import { json } from "./serverHttp.ts";
 
 export function errorResponse(error: unknown): Response {

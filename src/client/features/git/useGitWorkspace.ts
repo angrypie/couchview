@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import type { ChangesResponse, FileDiff } from "../../../shared/contracts.ts";
 import type {
-	ChangesResponse,
-	FileDiff,
 	GitActionRequest,
 	GitCommitChangesResponse,
 	GitCommitSummary,
 	GitHistoryScope,
 	GitWorkspaceStatus,
-} from "../../../shared/contracts.ts";
-import { api } from "../../api.ts";
+} from "../../../shared/git/index.ts";
 import type { FailureState } from "../../lib/failures.ts";
+import { gitWorkspaceTransport } from "./api.ts";
 
 const DETAIL_CACHE_LIMIT = 8;
 const DIFF_CACHE_LIMIT = 12;
@@ -20,6 +19,7 @@ export type GitPendingAction =
 	| { action: Exclude<GitActionRequest["action"], "checkout"> };
 
 interface UseGitWorkspaceOptions {
+	active: boolean;
 	csrfToken: string | undefined;
 	onRepositoryState: (response: ChangesResponse) => void;
 	operationRevision: string;
@@ -52,6 +52,7 @@ function actionLabel(action: GitActionRequest["action"]): string {
 }
 
 export function useGitWorkspace({
+	active,
 	csrfToken,
 	onRepositoryState,
 	operationRevision,
@@ -59,7 +60,6 @@ export function useGitWorkspace({
 	repositoryId,
 	showToast,
 }: UseGitWorkspaceOptions) {
-	const [open, setOpen] = useState(false);
 	const [scope, setScopeState] = useState<GitHistoryScope>("current");
 	const [commits, setCommits] = useState<GitCommitSummary[]>([]);
 	const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -99,7 +99,7 @@ export function useGitWorkspace({
 			const controller = new AbortController();
 			historyRequest.current = controller;
 			try {
-				const response = await api.gitHistory(
+				const response = await gitWorkspaceTransport.history(
 					repositoryId,
 					scope,
 					reset ? null : nextCursorRef.current,
@@ -147,7 +147,11 @@ export function useGitWorkspace({
 			setDetails(null);
 			setDetailsBusy(true);
 			try {
-				const response = await api.gitCommit(repositoryId, commit.id, controller.signal);
+				const response = await gitWorkspaceTransport.commit(
+					repositoryId,
+					commit.id,
+					controller.signal,
+				);
 				if (controller.signal.aborted) return;
 				remember(detailCache.current, commit.id, response, DETAIL_CACHE_LIMIT);
 				setDetails(response);
@@ -179,7 +183,7 @@ export function useGitWorkspace({
 			diffRequest.current = controller;
 			setDiffBusy(true);
 			try {
-				const response = await api.gitHistoryDiff(
+				const response = await gitWorkspaceTransport.diff(
 					repositoryId,
 					details.commit.id,
 					fileId,
@@ -215,7 +219,12 @@ export function useGitWorkspace({
 			actionRequest.current = controller;
 			setActionBusy(request.action);
 			try {
-				const response = await api.gitAction(repositoryId, request, csrfToken, controller.signal);
+				const response = await gitWorkspaceTransport.action(
+					repositoryId,
+					request,
+					csrfToken,
+					controller.signal,
+				);
 				if (controller.signal.aborted) return;
 				onRepositoryState(response);
 				setStatus(response.status);
@@ -275,18 +284,12 @@ export function useGitWorkspace({
 	}, []);
 
 	useEffect(() => {
-		if (!open || !repositoryId) return;
-		void loadHistory(true);
-	}, [loadHistory, open, operationRevision, repositoryId]);
-
-	useEffect(() => {
 		historyRequest.current?.abort();
 		detailRequest.current?.abort();
 		diffRequest.current?.abort();
 		actionRequest.current?.abort();
 		detailCache.current.clear();
 		diffCache.current.clear();
-		setOpen(false);
 		setCommits([]);
 		nextCursorRef.current = null;
 		setNextCursor(null);
@@ -297,6 +300,11 @@ export function useGitWorkspace({
 		setDiff(null);
 		setPendingAction(null);
 	}, [repositoryId]);
+
+	useEffect(() => {
+		if (!active || !repositoryId) return;
+		void loadHistory(true);
+	}, [active, loadHistory, operationRevision, repositoryId]);
 
 	return {
 		actionBusy,
@@ -309,7 +317,6 @@ export function useGitWorkspace({
 		loadMoreBusy,
 		loading,
 		nextCursor,
-		open,
 		pendingAction,
 		performPendingAction,
 		requestAction: setPendingAction,
@@ -319,10 +326,11 @@ export function useGitWorkspace({
 		selectedCommitId,
 		selectedFileId,
 		selectFile,
-		setOpen,
 		setScope,
 		showCommits,
 		showFiles,
 		status,
 	};
 }
+
+export type GitWorkspaceController = ReturnType<typeof useGitWorkspace>;

@@ -1,13 +1,12 @@
 import type {
 	ChangeFile,
 	DiffResponse,
-	GitCommitSummary,
-	GitHistoryFile,
 	PackageScriptsResponse,
 	RepositoryCatalogEntry,
 	ReviewComment,
 	ReviewRecord,
 } from "../src/shared/contracts.ts";
+import type { GitCommitSummary, GitHistoryFile } from "../src/shared/git/index.ts";
 
 export const repository = {
 	id: "fixture-repository",
@@ -329,21 +328,87 @@ export const historyCommits: GitCommitSummary[] = [
 
 export const historyFiles: GitHistoryFile[] = [
 	{
-		id: "fixture-history-review-ts",
-		path: "src/review.ts",
+		id: "fixture-history-quality-checks",
+		path: "benchmarks/quality-checks.json",
 		previousPath: null,
-		kind: "modified",
+		kind: "added",
 		binary: false,
-		additions: 4,
-		deletions: 2,
+		additions: 32,
+		deletions: 0,
 	},
+];
+
+const historyQualityCheckLines = [
+	"{",
+	'\t"architecture": "arm64",',
+	'\t"benchmarks": [',
+	"\t\t{",
+	'\t\t\t"name": "custom architecture checker",',
+	'\t\t\t"summary": {',
+	'\t\t\t\t"maxMs": 23.858708,',
+	'\t\t\t\t"meanMs": 23.328116533333333,',
+	'\t\t\t\t"medianMs": 23.286833,',
+	'\t\t\t\t"minMs": 22.930417,',
+	'\t\t\t\t"p95Ms": 23.858708,',
+	'\t\t\t\t"samples": 15',
+	"\t\t\t}",
+	"\t\t},",
+	"\t\t{",
+	'\t\t\t"name": "complete architecture gate",',
+	'\t\t\t"summary": {',
+	'\t\t\t\t"maxMs": 123.0525,',
+	'\t\t\t\t"meanMs": 119.64937499999999,',
+	'\t\t\t\t"medianMs": 118.979959,',
+	'\t\t\t\t"minMs": 117.792458,',
+	'\t\t\t\t"p95Ms": 123.0525,',
+	'\t\t\t\t"samples": 5',
+	"\t\t\t}",
+	"\t\t}",
+	"\t],",
+	'\t"bunVersion": "1.3.14",',
+	'\t"createdAt": "2026-08-02T09:23:33.911Z",',
+	'\t"platform": "darwin",',
+	'\t"schemaVersion": 1,',
+	'\t"sourceIndexHash": "9606deafe5f5eb62db601846a5be76af267177c3c4ba1af520efcafff7a2c84b"',
+	"}",
 ];
 
 export const historyDiff: DiffResponse = {
 	diff: {
-		...diffs["fixture-review-ts"]!.diff,
 		fileId: historyFiles[0]!.id,
+		path: historyFiles[0]!.path,
+		previousPath: null,
+		kind: "added",
+		contentRevision: "fixture-history-quality-checks-v1",
 		operationRevision: repository.head,
+		binary: false,
+		tooLarge: false,
+		header: [
+			"diff --git a/benchmarks/quality-checks.json b/benchmarks/quality-checks.json",
+			"new file mode 100644",
+			"--- /dev/null",
+			"+++ b/benchmarks/quality-checks.json",
+		],
+		additions: historyQualityCheckLines.length,
+		deletions: 0,
+		hunks: [
+			{
+				id: "fixture-history-quality-checks-hunk",
+				header: "@@ -0,0 +1,32 @@",
+				oldStart: 0,
+				oldLines: 0,
+				newStart: 1,
+				newLines: historyQualityCheckLines.length,
+				lines: historyQualityCheckLines.map((text, index) => ({
+					id: `fixture-history-quality-checks-${index + 1}`,
+					kind: "addition" as const,
+					text,
+					oldLine: null,
+					newLine: index + 1,
+					noNewline: false,
+				})),
+			},
+		],
 	},
 };
 

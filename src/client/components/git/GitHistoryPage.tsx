@@ -1,6 +1,7 @@
 import {
 	Archive,
 	ArchiveRestore,
+	ArrowLeft,
 	ChevronLeft,
 	FileCode2,
 	GitBranch,
@@ -9,22 +10,26 @@ import {
 	LoaderCircle,
 	MoreHorizontal,
 	RotateCcw,
+	Search,
 	Trash2,
-	X,
 } from "lucide-react";
 import { useState } from "react";
 
-import type { ChangeFile, GitHistoryFile, RepositorySummary } from "../../shared/contracts.ts";
-import { DiffViewer } from "../DiffViewer.tsx";
-import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
-import type { useDisplayPreferences } from "../features/settings/useDisplayPreferences.ts";
-import { codeFontStack } from "../typographyPreferences.ts";
+import type { ChangeFile, RepositorySummary } from "../../../shared/contracts.ts";
+import type { GitHistoryFile } from "../../../shared/git/index.ts";
+import { DiffViewer } from "../../DiffViewer.tsx";
+import type { GitWorkspaceController } from "../../features/git/index.ts";
+import type { useDisplayPreferences } from "../../features/settings/useDisplayPreferences.ts";
+import { codeFontStack } from "../../typographyPreferences.ts";
 import { GitActionConfirmation } from "./GitActionConfirmation.tsx";
 
-interface GitWorkspaceSheetProps {
-	controller: ReturnType<typeof useGitWorkspace>;
+interface GitHistoryPageProps {
+	commandPaletteShortcut: string;
+	controller: GitWorkspaceController;
 	display: ReturnType<typeof useDisplayPreferences>;
 	files: ChangeFile[];
+	onBack(): void;
+	onOpenCommandPalette(): void;
 	repository: RepositorySummary | null;
 }
 
@@ -45,7 +50,7 @@ function fileKindLabel(file: GitHistoryFile): string {
 function HistoricalDiff({
 	controller,
 	display,
-}: Pick<GitWorkspaceSheetProps, "controller" | "display">) {
+}: Pick<GitHistoryPageProps, "controller" | "display">) {
 	if (controller.diffBusy && !controller.diff) {
 		return (
 			<div className="loading-state git-diff-state">
@@ -106,14 +111,16 @@ function HistoricalDiff({
 	);
 }
 
-export function GitWorkspaceSheet({
+export function GitHistoryPage({
+	commandPaletteShortcut,
 	controller,
 	display,
 	files,
+	onBack,
+	onOpenCommandPalette,
 	repository,
-}: GitWorkspaceSheetProps) {
+}: GitHistoryPageProps) {
 	const [menuOpen, setMenuOpen] = useState(false);
-	if (!controller.open) return null;
 	const mobileView = controller.selectedFileId
 		? "diff"
 		: controller.selectedCommitId
@@ -123,96 +130,94 @@ export function GitWorkspaceSheet({
 		setMenuOpen(false);
 		controller.requestAction(pending);
 	};
-	const close = () => {
+	const back = () => {
 		setMenuOpen(false);
 		controller.requestAction(null);
-		controller.setOpen(false);
+		onBack();
 	};
 
 	return (
-		<>
-			<button
-				aria-label="Close Git history"
-				className="sheet-scrim"
-				onClick={close}
-				type="button"
-			/>
-			<section
-				aria-label="Git history and repository actions"
-				aria-modal="true"
-				className={`git-workspace-sheet git-mobile-view-${mobileView}`}
-				role="dialog"
-			>
-				<header className="sheet-header git-workspace-header">
+		<main
+			aria-label="Git history and repository actions"
+			className={`git-history-page git-mobile-view-${mobileView}`}
+		>
+			<header className="git-history-toolbar">
+				<button className="git-history-back" onClick={back} type="button">
+					<ArrowLeft size={16} /> <span>Review</span>
+				</button>
+				<div className="git-history-heading">
+					<h1>Git history</h1>
 					<div>
-						<h2 className="sheet-title">Git history</h2>
 						<div className="repo-meta">
 							<GitBranch size={11} />{" "}
 							{repository?.branch ?? `detached at ${repository?.head?.slice(0, 7) ?? "HEAD"}`}
 						</div>
 					</div>
-					<div className="git-header-actions">
-						<div className="git-action-menu-wrap">
-							<button
-								aria-expanded={menuOpen}
-								aria-haspopup="menu"
-								aria-label="Repository actions"
-								className="icon-button"
-								onClick={() => setMenuOpen((current) => !current)}
-								type="button"
-							>
-								<MoreHorizontal size={20} />
-							</button>
-							{menuOpen && (
-								<div className="git-action-menu" role="menu">
-									<button
-										disabled={files.length === 0}
-										onClick={() => requestAction({ action: "stash" })}
-										role="menuitem"
-										type="button"
-									>
-										<Archive size={16} /> Stash changes
-									</button>
-									<button
-										disabled={!controller.status?.stashCount || files.length > 0}
-										onClick={() => requestAction({ action: "restore-stash" })}
-										role="menuitem"
-										type="button"
-									>
-										<ArchiveRestore size={16} /> Restore latest stash (
-										{controller.status?.stashCount ?? 0})
-									</button>
-									<button
-										disabled={!controller.status?.canUndoLastCommit}
-										onClick={() => requestAction({ action: "undo-last-commit" })}
-										role="menuitem"
-										type="button"
-									>
-										<RotateCcw size={16} /> Undo last commit
-									</button>
-									<button
-										className="danger"
-										disabled={Boolean(repository?.unborn) || files.length === 0}
-										onClick={() => requestAction({ action: "clean" })}
-										role="menuitem"
-										type="button"
-									>
-										<Trash2 size={16} /> Clean repository
-									</button>
-								</div>
-							)}
-						</div>
+				</div>
+				<div className="git-header-actions">
+					<button
+						aria-label="Open command palette"
+						className="icon-button command-palette-trigger"
+						onClick={onOpenCommandPalette}
+						title={`Open command palette (${commandPaletteShortcut})`}
+						type="button"
+					>
+						<Search size={18} />
+					</button>
+					<div className="git-action-menu-wrap">
 						<button
-							aria-label="Close Git history"
+							aria-expanded={menuOpen}
+							aria-haspopup="menu"
+							aria-label="Repository actions"
 							className="icon-button"
-							onClick={close}
+							onClick={() => setMenuOpen((current) => !current)}
 							type="button"
 						>
-							<X size={19} />
+							<MoreHorizontal size={20} />
 						</button>
+						{menuOpen && (
+							<div className="git-action-menu" role="menu">
+								<button
+									disabled={files.length === 0}
+									onClick={() => requestAction({ action: "stash" })}
+									role="menuitem"
+									type="button"
+								>
+									<Archive size={16} /> Stash changes
+								</button>
+								<button
+									disabled={!controller.status?.stashCount || files.length > 0}
+									onClick={() => requestAction({ action: "restore-stash" })}
+									role="menuitem"
+									type="button"
+								>
+									<ArchiveRestore size={16} /> Restore latest stash (
+									{controller.status?.stashCount ?? 0})
+								</button>
+								<button
+									disabled={!controller.status?.canUndoLastCommit}
+									onClick={() => requestAction({ action: "undo-last-commit" })}
+									role="menuitem"
+									type="button"
+								>
+									<RotateCcw size={16} /> Undo last commit
+								</button>
+								<button
+									className="danger"
+									disabled={Boolean(repository?.unborn) || files.length === 0}
+									onClick={() => requestAction({ action: "clean" })}
+									role="menuitem"
+									type="button"
+								>
+									<Trash2 size={16} /> Clean repository
+								</button>
+							</div>
+						)}
 					</div>
-				</header>
+				</div>
+			</header>
 
+			<div className="git-history-body">
 				{!repository?.branch && controller.status?.previousBranch && (
 					<div className="git-detached-banner">
 						<span>Detached HEAD · previous branch {controller.status.previousBranch}</span>
@@ -378,7 +383,7 @@ export function GitWorkspaceSheet({
 						<HistoricalDiff controller={controller} display={display} />
 					</section>
 				</div>
-			</section>
+			</div>
 
 			<GitActionConfirmation
 				busy={Boolean(controller.actionBusy)}
@@ -390,6 +395,6 @@ export function GitWorkspaceSheet({
 				repository={repository}
 				status={controller.status}
 			/>
-		</>
+		</main>
 	);
 }

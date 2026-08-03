@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { finished } from "node:stream/promises";
 import { GitError, GitPluginError, simpleGit } from "simple-git";
 
-import type { ChangeKind, DiffHunk, DiffLine, SearchMatch } from "../shared/contracts.ts";
+import type { ChangeKind, DiffHunk, DiffLine, SearchMatch } from "../../shared/contracts.ts";
 
 const decoder = new TextDecoder("utf-8", { fatal: false });
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;

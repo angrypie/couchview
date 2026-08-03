@@ -10,7 +10,7 @@ import {
 	parsePorcelainV2,
 	runGit,
 	sha256,
-} from "./git.ts";
+} from "./git/index.ts";
 import { RepositoryContent, type RepositorySnapshot } from "./repositoryContent.ts";
 import { ReviewStore } from "./state.ts";
 

@@ -35,7 +35,7 @@ interface UseAppCommandsOptions {
 	stageBusy: boolean;
 	stagedCount: number;
 	terminalCapability: TerminalCapability;
-	workspaceMode: "review" | "terminal" | "settings";
+	workspaceMode: "review" | "history" | "terminal" | "settings";
 }
 
 export function useAppCommands({

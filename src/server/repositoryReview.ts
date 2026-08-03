@@ -11,7 +11,7 @@ import type {
 	SetReviewsResponse,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
-import { decodeGitOutput, runGit } from "./git.ts";
+import { decodeGitOutput, runGit } from "./git/index.ts";
 import { RepositoryContent, type RepositorySnapshot as Snapshot } from "./repositoryContent.ts";
 import { RepositorySnapshotService } from "./repositorySnapshot.ts";
 import { ReviewStore } from "./state.ts";

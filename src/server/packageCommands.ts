@@ -14,7 +14,7 @@ import type {
 	StartPackageRunRequest,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
-import { decodeGitOutput, runGit, sha256 } from "./git.ts";
+import { decodeGitOutput, runGit, sha256 } from "./git/index.ts";
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;

@@ -12,8 +12,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { parseGrepOutput, parseNumstat, parsePorcelainV2, parseUnifiedDiff } from "./git.ts";
-import { GitRepository } from "./repository.ts";
+import { GitRepository } from "../repository.ts";
+import { parseGrepOutput, parseNumstat, parsePorcelainV2, parseUnifiedDiff } from "./command.ts";
 
 const temporaryDirectories: string[] = [];
 const decoder = new TextDecoder();

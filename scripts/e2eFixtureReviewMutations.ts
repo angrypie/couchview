@@ -4,8 +4,6 @@ import type {
 	CreateCommentRequest,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResponse,
-	GitActionRequest,
-	GitActionResponse,
 	ReviewComment,
 	ReviewRecord,
 	SetReviewRequest,
@@ -14,6 +12,7 @@ import type {
 	StageFileRequest,
 	StageFilesRequest,
 } from "../src/shared/contracts.ts";
+import type { GitActionRequest, GitActionResponse } from "../src/shared/git/index.ts";
 import { comments, files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
 import { fixtureJson } from "./e2eFixtureHttp.ts";
 import type { FixtureMutableState, FixtureRequestContext } from "./e2eFixtureRouteTypes.ts";

@@ -4,10 +4,17 @@ import type {
 	RepositorySummary,
 	TerminalCapability,
 } from "../../../shared/contracts.ts";
+import { GIT_HISTORY_PATH, isGitHistoryPath } from "../git/index.ts";
 import type { RepositoryHistoryMode } from "../repositories/useRepositoryWorkspace.ts";
 import { isSettingsPath, SETTINGS_PATH } from "../settings/profileState.ts";
 
-export type WorkspaceMode = "review" | "terminal" | "settings";
+export type WorkspaceMode = "review" | "history" | "terminal" | "settings";
+
+function modeForPath(pathname = window.location.pathname): Exclude<WorkspaceMode, "terminal"> {
+	if (isSettingsPath(pathname)) return "settings";
+	if (isGitHistoryPath(pathname)) return "history";
+	return "review";
+}
 
 interface UseWorkspaceNavigationOptions {
 	bootstrap: BootstrapResponse | null;
@@ -30,7 +37,7 @@ export function useWorkspaceNavigation({
 	showToast,
 	terminalCapability,
 }: UseWorkspaceNavigationOptions) {
-	const [mode, setMode] = useState<WorkspaceMode>(() => (isSettingsPath() ? "settings" : "review"));
+	const [mode, setMode] = useState<WorkspaceMode>(() => modeForPath());
 	const [settingsDirty, setSettingsDirty] = useState(false);
 	const [terminalOpened, setTerminalOpened] = useState(false);
 
@@ -50,6 +57,22 @@ export function useWorkspaceNavigation({
 		setMode("review");
 	}, []);
 
+	const openGitHistory = useCallback(() => {
+		const url = new URL(window.location.href);
+		if (!isGitHistoryPath(url.pathname)) {
+			url.pathname = GIT_HISTORY_PATH;
+			window.history.pushState({ couchviewPage: "history" }, "", url);
+		}
+		setMode("history");
+	}, []);
+
+	const closeGitHistory = useCallback(() => {
+		const url = new URL(window.location.href);
+		url.pathname = "/";
+		window.history.replaceState(null, "", url);
+		setMode("review");
+	}, []);
+
 	const showReview = useCallback((): boolean => {
 		if (
 			mode === "settings" &&
@@ -59,7 +82,7 @@ export function useWorkspaceNavigation({
 			return false;
 		}
 		const url = new URL(window.location.href);
-		if (isSettingsPath(url.pathname)) {
+		if (isSettingsPath(url.pathname) || isGitHistoryPath(url.pathname)) {
 			url.pathname = "/";
 			window.history.replaceState(null, "", url);
 		}
@@ -90,7 +113,7 @@ export function useWorkspaceNavigation({
 				window.history.pushState({ couchviewPage: "settings" }, "", currentUrl);
 				return;
 			}
-			setMode(isSettingsPath(currentUrl.pathname) ? "settings" : "review");
+			setMode(modeForPath(currentUrl.pathname));
 			const requestedId = currentUrl.searchParams.get("repo");
 			const selected = bootstrap?.repositories.find(
 				(item) => item.id === requestedId && item.available,
@@ -127,13 +150,15 @@ export function useWorkspaceNavigation({
 	}, [settingsDirty]);
 
 	const resetForRepository = useCallback(() => {
-		if (!isSettingsPath()) setMode("review");
+		setMode(modeForPath());
 		setTerminalOpened(false);
 	}, []);
 
 	return {
+		closeGitHistory,
 		closeSettings,
 		mode,
+		openGitHistory,
 		openSettings,
 		openTerminal,
 		resetForRepository,

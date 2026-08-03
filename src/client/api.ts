@@ -22,11 +22,6 @@ import {
 	type ForgetRepositoryResponse,
 	type GenerateCommitMessageRequest,
 	type GenerateCommitMessageResponse,
-	type GitActionRequest,
-	type GitActionResponse,
-	type GitCommitChangesResponse,
-	type GitHistoryResponse,
-	type GitHistoryScope,
 	type InstanceResponse,
 	type PackageRunResponse,
 	type PackageRunsResponse,
@@ -78,7 +73,7 @@ export class ApiError extends Error {
 	}
 }
 
-async function request<T>(path: string, init?: RequestInit, csrfToken?: string): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit, csrfToken?: string): Promise<T> {
 	const headers = new Headers(init?.headers);
 	headers.set("Accept", "application/json");
 	// Cloudflare Access returns a usable 401 for expired AJAX sessions only
@@ -129,7 +124,7 @@ async function request<T>(path: string, init?: RequestInit, csrfToken?: string):
 	return (await response.json()) as T;
 }
 
-function withQuery(
+export function withQuery(
 	path: string,
 	values: Record<string, string | number | null | undefined>,
 ): string {
@@ -240,30 +235,6 @@ export const api = {
 
 	diff(repositoryId: string, fileId: string, signal?: AbortSignal) {
 		return request<DiffResponse>(API_ROUTES.fileDiff(repositoryId, fileId), { signal });
-	},
-
-	gitHistory(
-		repositoryId: string,
-		scope: GitHistoryScope,
-		cursor?: string | null,
-		signal?: AbortSignal,
-	) {
-		return request<GitHistoryResponse>(
-			withQuery(API_ROUTES.gitHistory(repositoryId), { scope, cursor }),
-			{ signal },
-		);
-	},
-
-	gitCommit(repositoryId: string, commit: string, signal?: AbortSignal) {
-		return request<GitCommitChangesResponse>(API_ROUTES.gitHistoryCommit(repositoryId, commit), {
-			signal,
-		});
-	},
-
-	gitHistoryDiff(repositoryId: string, commit: string, fileId: string, signal?: AbortSignal) {
-		return request<DiffResponse>(API_ROUTES.gitHistoryDiff(repositoryId, commit, fileId), {
-			signal,
-		});
 	},
 
 	reviews(repositoryId: string, signal?: AbortSignal) {
@@ -437,14 +408,6 @@ export const api = {
 	commit(repositoryId: string, body: CommitRequest, csrfToken: string, signal?: AbortSignal) {
 		return request<CommitResponse>(
 			API_ROUTES.commit(repositoryId),
-			{ method: "POST", body: JSON.stringify(body), signal },
-			csrfToken,
-		);
-	},
-
-	gitAction(repositoryId: string, body: GitActionRequest, csrfToken: string, signal?: AbortSignal) {
-		return request<GitActionResponse>(
-			API_ROUTES.gitActions(repositoryId),
 			{ method: "POST", body: JSON.stringify(body), signal },
 			csrfToken,
 		);

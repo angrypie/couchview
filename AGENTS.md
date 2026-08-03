@@ -48,6 +48,8 @@ Keep layouts compact, especially on mobile and in persistent footer or toolbar s
 
 Use Bun's `describe`, `test`, and `expect`; component tests use Happy DOM and Testing Library. Name tests after observable behavior and keep fixtures deterministic. Playwright specs should prefer roles or stable semantic locators. There is no numeric coverage threshold, but bug fixes need regression tests and new branches should exercise success and failure paths.
 
+Regression verification must cross the boundary that actually failed and assert externally observable behavior. For failures involving subprocesses, PTYs, terminals, SSH, tmux, browsers, filesystems, databases, or network protocols, use the real dependency in the smallest practical integration test and reproduce both the original failure and the fixed behavior when possible. A mocked test that only captures implementation-produced arguments, environment variables, requests, or state and asserts those same values is supplemental; it is not sufficient as the primary regression test because it can be self-fulfilling. Before calling a test adequate, ask whether it would fail if the real dependency rejected the interaction in the way the user observed. If an end-to-end path is blocked, test the closest real boundary, report exactly what remains unverified and why, and do not describe the result as end-to-end.
+
 ## Commit & Pull Request Guidelines
 
 Use short, imperative subjects such as `Reject stale staging requests` and keep commits focused. Pull requests should explain user-visible impact, list verification commands, link issues, and include screenshots or recordings for UI changes. Call out security, Git-index, caching, PWA, architecture-policy, or CI changes.

@@ -24,6 +24,28 @@ const SOURCE_EXTENSIONS = new Set([".css", ".ts", ".tsx"]);
 const IMPORT_PATTERN =
 	/(?:import|export)\s+(?:type\s+)?(?:[^"']*?\sfrom\s*)?["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g;
 
+const GIT_MODULE_BOUNDARIES: ReadonlyArray<{
+	directory: string;
+	entries: ReadonlySet<string>;
+}> = [
+	{
+		directory: "src/shared/git/",
+		entries: new Set(["src/shared/git/index.ts"]),
+	},
+	{
+		directory: "src/client/features/git/",
+		entries: new Set(["src/client/features/git/index.ts"]),
+	},
+	{
+		directory: "src/client/components/git/",
+		entries: new Set(["src/client/components/git/index.ts", "src/client/components/git/index.css"]),
+	},
+	{
+		directory: "src/server/git/",
+		entries: new Set(["src/server/git/index.ts"]),
+	},
+] as const;
+
 async function sourceFiles(root: string, directory: string): Promise<string[]> {
 	const entries = await readdir(directory, { withFileTypes: true });
 	const files: string[] = [];
@@ -53,6 +75,13 @@ function boundaryViolations(root: string, path: string, source: string): Archite
 		if (!specifier) continue;
 		const target = resolvedRelativeImport(root, path, specifier);
 		if (!target) continue;
+		const targetPath = relative(root, target).replaceAll("\\", "/");
+		const gitModule = GIT_MODULE_BOUNDARIES.find(({ directory }) =>
+			targetPath.startsWith(directory),
+		);
+		const deepGitModuleImport = Boolean(
+			gitModule && !path.startsWith(gitModule.directory) && !gitModule.entries.has(targetPath),
+		);
 
 		// App is wiring only: all internal dependencies must enter through an explicitly owned
 		// feature, presentation component, or small feature-neutral client utility.
@@ -79,7 +108,8 @@ function boundaryViolations(root: string, path: string, source: string): Archite
 			appInternalImport ||
 			clientImportsServer ||
 			sharedImportsRuntime ||
-			featureImportsComponent
+			featureImportsComponent ||
+			deepGitModuleImport
 		) {
 			violations.push({
 				file: path,

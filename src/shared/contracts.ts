@@ -47,12 +47,6 @@ export const API_ROUTES = {
 	source: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/source`,
 	commit: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit`,
 	commitMessage: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit-message`,
-	gitHistory: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/git/history`,
-	gitHistoryCommit: (repositoryId: string, commit: string) =>
-		`${repositoryApiPath(repositoryId)}/git/history/${encodeURIComponent(commit)}`,
-	gitHistoryDiff: (repositoryId: string, commit: string, fileId: string) =>
-		`${repositoryApiPath(repositoryId)}/git/history/${encodeURIComponent(commit)}/files/${encodeURIComponent(fileId)}/diff`,
-	gitActions: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/git/actions`,
 	comments: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/comments`,
 	comment: (repositoryId: string, commentId: string) =>
 		`${repositoryApiPath(repositoryId)}/comments/${encodeURIComponent(commentId)}`,
@@ -436,66 +430,6 @@ export interface ChangesResponse {
 	repository: RepositorySummary;
 	files: ChangeFile[];
 	operationRevision: string;
-}
-
-export type GitHistoryScope = "current" | "all";
-
-export interface GitCommitSummary {
-	id: string;
-	shortId: string;
-	parents: string[];
-	subject: string;
-	authorName: string;
-	authoredAt: string;
-	decorations: string[];
-}
-
-export interface GitHistoryFile {
-	id: string;
-	path: string;
-	previousPath: string | null;
-	kind: ChangeKind;
-	binary: boolean;
-	additions: number | null;
-	deletions: number | null;
-}
-
-export interface GitWorkspaceStatus {
-	previousBranch: string | null;
-	stashCount: number;
-	canUndoLastCommit: boolean;
-	trackedChangeCount: number;
-	untrackedChangeCount: number;
-}
-
-export interface GitHistoryResponse {
-	commits: GitCommitSummary[];
-	nextCursor: string | null;
-	historyRevision: string;
-	scope: GitHistoryScope;
-	status: GitWorkspaceStatus;
-}
-
-export interface GitCommitChangesResponse {
-	commit: GitCommitSummary;
-	files: GitHistoryFile[];
-}
-
-interface GitActionRequestBase {
-	operationRevision: string;
-}
-
-export type GitActionRequest =
-	| (GitActionRequestBase & { action: "checkout"; commit: string })
-	| (GitActionRequestBase & { action: "return" })
-	| (GitActionRequestBase & { action: "stash" })
-	| (GitActionRequestBase & { action: "restore-stash" })
-	| (GitActionRequestBase & { action: "undo-last-commit" })
-	| (GitActionRequestBase & { action: "clean" });
-
-export interface GitActionResponse extends ChangesResponse {
-	status: GitWorkspaceStatus;
-	warning: string | null;
 }
 
 export interface DiffLine {

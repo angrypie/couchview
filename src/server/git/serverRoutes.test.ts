@@ -8,11 +8,14 @@ import {
 	type BootstrapResponse,
 	type ChangesResponse,
 	CSRF_HEADER,
+} from "../../shared/contracts.ts";
+import {
+	GIT_API_ROUTES,
 	type GitActionResponse,
 	type GitCommitChangesResponse,
 	type GitHistoryResponse,
-} from "../shared/contracts.ts";
-import { type CouchviewApp, createCouchviewApp } from "./server.ts";
+} from "../../shared/git/index.ts";
+import { type CouchviewApp, createCouchviewApp } from "../server.ts";
 
 const temporaryDirectories: string[] = [];
 const applications: CouchviewApp[] = [];
@@ -54,7 +57,12 @@ async function fixture(): Promise<CouchviewApp> {
 function request(pathname: string, init: RequestInit = {}): Request {
 	const headers = new Headers(init.headers);
 	headers.set("host", "127.0.0.1:3001");
-	return new Request(`http://127.0.0.1:3001${pathname}`, { ...init, headers });
+	const result = new Request(`http://127.0.0.1:3001${pathname}`, {
+		...init,
+		headers: undefined,
+	});
+	for (const [name, value] of headers) result.headers.set(name, value);
+	return result;
 }
 
 afterEach(async () => {
@@ -70,7 +78,7 @@ describe("Git history routes", () => {
 	test("serves historical files and diffs", async () => {
 		const app = await fixture();
 		const historyResponse = await app.fetch(
-			request(`${API_ROUTES.gitHistory(app.repository.id)}?scope=current`),
+			request(`${GIT_API_ROUTES.history(app.repository.id)}?scope=current`),
 		);
 		expect(historyResponse.status).toBe(200);
 		const history = (await historyResponse.json()) as GitHistoryResponse;
@@ -79,14 +87,14 @@ describe("Git history routes", () => {
 			"initial history fixture",
 		]);
 		const commitResponse = await app.fetch(
-			request(API_ROUTES.gitHistoryCommit(app.repository.id, history.commits[0]!.id)),
+			request(GIT_API_ROUTES.historyCommit(app.repository.id, history.commits[0]!.id)),
 		);
 		const commit = (await commitResponse.json()) as GitCommitChangesResponse;
 		expect(commit.files).toEqual([
 			expect.objectContaining({ path: "sample.ts", kind: "modified" }),
 		]);
 		const diffResponse = await app.fetch(
-			request(API_ROUTES.gitHistoryDiff(app.repository.id, commit.commit.id, commit.files[0]!.id)),
+			request(GIT_API_ROUTES.historyDiff(app.repository.id, commit.commit.id, commit.files[0]!.id)),
 		);
 		expect(diffResponse.status).toBe(200);
 		expect(await diffResponse.text()).toContain("export const second = true;");
@@ -104,14 +112,17 @@ describe("Git history routes", () => {
 			operationRevision: changes.operationRevision,
 		});
 		expect(
-			(await app.fetch(request(API_ROUTES.gitActions(app.repository.id), { body, method: "POST" })))
-				.status,
+			(
+				await app.fetch(
+					request(GIT_API_ROUTES.actions(app.repository.id), { body, method: "POST" }),
+				)
+			).status,
 		).toBe(403);
 		const bootstrap = (await (
 			await app.fetch(request(API_ROUTES.bootstrap))
 		).json()) as BootstrapResponse;
 		const cleanedResponse = await app.fetch(
-			request(API_ROUTES.gitActions(app.repository.id), {
+			request(GIT_API_ROUTES.actions(app.repository.id), {
 				body,
 				headers: {
 					[CSRF_HEADER]: bootstrap.csrfToken,

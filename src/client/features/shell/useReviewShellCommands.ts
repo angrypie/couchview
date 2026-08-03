@@ -3,7 +3,7 @@ import type { ChangeFile } from "../../../shared/contracts.ts";
 import type { useAppCommands } from "../commands/useAppCommands.ts";
 import { useAppCommands as useCommands } from "../commands/useAppCommands.ts";
 import type { useFailureReporting } from "../errors/useFailureReporting.ts";
-import type { useGitWorkspace } from "../history/useGitWorkspace.ts";
+import type { GitWorkspaceController } from "../git/index.ts";
 import type { usePackageRuns } from "../packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorkspace.ts";
@@ -17,7 +17,7 @@ interface UseReviewShellCommandsOptions {
 	display: ReturnType<typeof useDisplayPreferences>;
 	drawerOpen: boolean;
 	failure: ReturnType<typeof useFailureReporting>;
-	git: ReturnType<typeof useGitWorkspace>;
+	git: GitWorkspaceController;
 	management: ReturnType<typeof useRepositoryManagement>;
 	navigation: ReturnType<typeof useWorkspaceNavigation>;
 	onDrawerOpenChange: (open: boolean) => void;
@@ -61,7 +61,7 @@ export function useReviewShellCommands({
 		comments.composerOpen ||
 		comments.trayOpen ||
 		Boolean(comments.copyFallbackText) ||
-		git.open ||
+		Boolean(git.pendingAction) ||
 		(!splitView && drawerOpen);
 
 	const dismissAll = useCallback(() => {
@@ -75,7 +75,6 @@ export function useReviewShellCommands({
 		comments.setTrayOpen(false);
 		comments.setCopyFallbackText("");
 		git.requestAction(null);
-		git.setOpen(false);
 		onDrawerOpenChange(false);
 	}, [
 		comments,
@@ -164,7 +163,6 @@ export function useReviewShellCommands({
 		else if (comments.composerOpen) comments.setComposerOpen(false);
 		else if (comments.trayOpen) comments.setTrayOpen(false);
 		else if (search.open) search.setOpen(false);
-		else if (git.open) git.setOpen(false);
 		else onDrawerOpenChange(false);
 	}, [
 		comments,

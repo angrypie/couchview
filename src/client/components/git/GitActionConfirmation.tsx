@@ -1,8 +1,9 @@
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { ChangeFile, GitWorkspaceStatus, RepositorySummary } from "../../shared/contracts.ts";
-import type { GitPendingAction } from "../features/history/useGitWorkspace.ts";
+import type { ChangeFile, RepositorySummary } from "../../../shared/contracts.ts";
+import type { GitWorkspaceStatus } from "../../../shared/git/index.ts";
+import type { GitPendingAction } from "../../features/git/index.ts";
 
 interface GitActionConfirmationProps {
 	busy: boolean;

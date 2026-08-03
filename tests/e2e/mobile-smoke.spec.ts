@@ -972,7 +972,14 @@ test.describe("mobile fixture review", () => {
 
 		const repositoryButton = page.getByRole("button", { name: "Select repository" });
 		await expect(repositoryButton).toContainText("sample-project");
-		await repositoryButton.click();
+		if (await repositoryButton.isVisible()) {
+			await repositoryButton.click();
+		} else {
+			await page.getByRole("button", { name: "Open command palette" }).click();
+			const palette = page.getByRole("dialog", { name: "Couchview command palette" });
+			await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("repository");
+			await palette.getByText("Switch repository", { exact: true }).click();
+		}
 		const picker = page.getByRole("dialog", { name: "Repositories" });
 		await expect(picker).toContainText("/fixtures/sample-project");
 		await expect(picker).toContainText("/fixtures/design-system");

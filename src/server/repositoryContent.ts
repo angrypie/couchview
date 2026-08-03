@@ -5,8 +5,8 @@ import path from "node:path";
 
 import type { ChangeFile, RepositorySummary } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
-import type { ParsedStatusEntry } from "./git.ts";
-import { decodeGitOutput, runGit } from "./git.ts";
+import type { ParsedStatusEntry } from "./git/index.ts";
+import { decodeGitOutput, runGit } from "./git/index.ts";
 
 export interface RepositorySnapshot {
 	repository: RepositorySummary;
