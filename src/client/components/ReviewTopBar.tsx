@@ -2,6 +2,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	GitBranch,
+	GitGraph,
 	Menu,
 	MessageSquareText,
 	Minus,
@@ -19,6 +20,7 @@ import type {
 	RepositorySummary,
 	TerminalCapability,
 } from "../../shared/contracts.ts";
+import type { RepositoryConnectionState } from "../features/repositories/types.ts";
 import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
 import { TYPOGRAPHY_LIMITS } from "../typographyPreferences.ts";
 
@@ -28,7 +30,7 @@ interface ReviewTopBarProps {
 	canNavigatePreviousHunk: boolean;
 	commandPaletteShortcut: string;
 	compactLandscape: boolean;
-	connected: boolean;
+	connectionState: RepositoryConnectionState;
 	diff: FileDiff | null;
 	fileCount: number;
 	fontSize: number;
@@ -41,6 +43,7 @@ interface ReviewTopBarProps {
 	onNavigateHunk: (direction: -1 | 1) => void;
 	onOpenCommandPalette: () => void;
 	onOpenDrawer: () => void;
+	onOpenGitHistory: () => void;
 	onOpenRemoteBridge: () => void;
 	onOpenRepositoryPicker: () => void;
 	onOpenSettings: () => void;
@@ -55,13 +58,19 @@ interface ReviewTopBarProps {
 	totalCommentCount: number;
 }
 
+function connectionTitle(connectionState: RepositoryConnectionState): string {
+	if (connectionState === "connected") return "Connected";
+	if (connectionState === "reconnecting") return "Reconnecting to local server";
+	return "Offline — local server unavailable";
+}
+
 export function ReviewTopBar({
 	activeFile,
 	canNavigateNextHunk,
 	canNavigatePreviousHunk,
 	commandPaletteShortcut,
 	compactLandscape,
-	connected,
+	connectionState,
 	diff,
 	fileCount,
 	fontSize,
@@ -74,6 +83,7 @@ export function ReviewTopBar({
 	onNavigateHunk,
 	onOpenCommandPalette,
 	onOpenDrawer,
+	onOpenGitHistory,
 	onOpenRemoteBridge,
 	onOpenRepositoryPicker,
 	onOpenSettings,
@@ -99,7 +109,11 @@ export function ReviewTopBar({
 			</button>
 			{compactLandscape ? (
 				<div aria-label="Current file" className="compact-file-context" role="region">
-					<span className={`connection-dot ${connected ? "" : "offline"}`} />
+					<span
+						className={`connection-dot ${connectionState}`}
+						data-testid="repository-connection-status"
+						title={connectionTitle(connectionState)}
+					/>
 					<button
 						aria-label="Select repository"
 						aria-haspopup="dialog"
@@ -138,7 +152,11 @@ export function ReviewTopBar({
 						onClick={onOpenRepositoryPicker}
 						type="button"
 					>
-						<span className={`connection-dot ${connected ? "" : "offline"}`} />
+						<span
+							className={`connection-dot ${connectionState}`}
+							data-testid="repository-connection-status"
+							title={connectionTitle(connectionState)}
+						/>
 						<span>{repository?.name ?? "Couchview"}</span>
 						<ChevronDown size={13} />
 					</button>
@@ -197,6 +215,16 @@ export function ReviewTopBar({
 			>
 				<Search size={18} />
 				{splitView && <kbd>{commandPaletteShortcut}</kbd>}
+			</button>
+			<button
+				aria-label="Open Git history"
+				className="icon-button git-history-launch-button"
+				disabled={!repositoryId || !repository}
+				onClick={onOpenGitHistory}
+				title="Git history and repository actions"
+				type="button"
+			>
+				<GitGraph size={18} />
 			</button>
 			<button
 				aria-label="Set up native IDE"

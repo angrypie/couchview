@@ -22,6 +22,11 @@ import {
 	type ForgetRepositoryResponse,
 	type GenerateCommitMessageRequest,
 	type GenerateCommitMessageResponse,
+	type GitActionRequest,
+	type GitActionResponse,
+	type GitCommitChangesResponse,
+	type GitHistoryResponse,
+	type GitHistoryScope,
 	type InstanceResponse,
 	type PackageRunResponse,
 	type PackageRunsResponse,
@@ -237,6 +242,30 @@ export const api = {
 		return request<DiffResponse>(API_ROUTES.fileDiff(repositoryId, fileId), { signal });
 	},
 
+	gitHistory(
+		repositoryId: string,
+		scope: GitHistoryScope,
+		cursor?: string | null,
+		signal?: AbortSignal,
+	) {
+		return request<GitHistoryResponse>(
+			withQuery(API_ROUTES.gitHistory(repositoryId), { scope, cursor }),
+			{ signal },
+		);
+	},
+
+	gitCommit(repositoryId: string, commit: string, signal?: AbortSignal) {
+		return request<GitCommitChangesResponse>(API_ROUTES.gitHistoryCommit(repositoryId, commit), {
+			signal,
+		});
+	},
+
+	gitHistoryDiff(repositoryId: string, commit: string, fileId: string, signal?: AbortSignal) {
+		return request<DiffResponse>(API_ROUTES.gitHistoryDiff(repositoryId, commit, fileId), {
+			signal,
+		});
+	},
+
 	reviews(repositoryId: string, signal?: AbortSignal) {
 		return request<ReviewStateResponse>(API_ROUTES.comments(repositoryId), { signal });
 	},
@@ -408,6 +437,14 @@ export const api = {
 	commit(repositoryId: string, body: CommitRequest, csrfToken: string, signal?: AbortSignal) {
 		return request<CommitResponse>(
 			API_ROUTES.commit(repositoryId),
+			{ method: "POST", body: JSON.stringify(body), signal },
+			csrfToken,
+		);
+	},
+
+	gitAction(repositoryId: string, body: GitActionRequest, csrfToken: string, signal?: AbortSignal) {
+		return request<GitActionResponse>(
+			API_ROUTES.gitActions(repositoryId),
 			{ method: "POST", body: JSON.stringify(body), signal },
 			csrfToken,
 		);

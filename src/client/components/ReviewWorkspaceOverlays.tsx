@@ -5,15 +5,18 @@ import type {
 } from "../../shared/contracts.ts";
 import { CodexCommentsPanel } from "../CodexCommentsPanel.tsx";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
+import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
+import type { useDisplayPreferences } from "../features/settings/useDisplayPreferences.ts";
 import { RemoteBridgeSheet } from "../RemoteBridgeSheet.tsx";
 import { CommentComposerSheet } from "./CommentComposerSheet.tsx";
 import { CommentsTray } from "./CommentsTray.tsx";
 import { CommitComposerSheet } from "./CommitComposerSheet.tsx";
 import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
+import { GitWorkspaceSheet } from "./GitWorkspaceSheet.tsx";
 import { ManualCopySheet } from "./ManualCopySheet.tsx";
 import { PackageRunSheet } from "./PackageRunSheet.tsx";
 import { RepositoryPickerSheet } from "./RepositoryPickerSheet.tsx";
@@ -22,7 +25,9 @@ import { SearchSheet } from "./SearchSheet.tsx";
 interface ReviewWorkspaceOverlaysProps {
 	codexCapability: CodexCapability;
 	commitMessageCapability: CommitMessageCapability;
+	display: ReturnType<typeof useDisplayPreferences>;
 	failureReporting: ReturnType<typeof useFailureReporting>;
+	git: ReturnType<typeof useGitWorkspace>;
 	management: ReturnType<typeof useRepositoryManagement>;
 	onRemoteBridgeOpenChange: (open: boolean) => void;
 	packages: ReturnType<typeof usePackageRuns>;
@@ -36,7 +41,9 @@ interface ReviewWorkspaceOverlaysProps {
 export function ReviewWorkspaceOverlays({
 	codexCapability,
 	commitMessageCapability,
+	display,
 	failureReporting,
+	git,
 	management,
 	onRemoteBridgeOpenChange,
 	packages,
@@ -49,6 +56,12 @@ export function ReviewWorkspaceOverlays({
 	const { comments, commit, diff, search } = workflow;
 	return (
 		<>
+			<GitWorkspaceSheet
+				controller={git}
+				display={display}
+				files={workspace.files}
+				repository={workspace.repository}
+			/>
 			<RepositoryPickerSheet
 				currentRepositoryId={workspace.repositoryId}
 				forgetBusy={management.forgetBusy}

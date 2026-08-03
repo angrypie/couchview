@@ -77,6 +77,13 @@ export function createAppTestHarness() {
 		stageFailure: false,
 		delayNextDiffResponse: false,
 		releaseDiffResponse: null as (() => void) | null,
+		delayNextHistoryResponse: false,
+		releaseHistoryResponse: null as (() => void) | null,
+		delayNextHistoryCommitResponse: false,
+		releaseHistoryCommitResponse: null as (() => void) | null,
+		historyCommitRequestAborted: false,
+		historyPaginated: false,
+		historyQueries: [] as string[],
 		delayStageResponse: false,
 		releaseStageResponse: null as (() => void) | null,
 		emitSseDuringStage: false,
@@ -86,12 +93,15 @@ export function createAppTestHarness() {
 		commitMessageRequestAborted: false,
 		releaseCommitMessageResponse: null as (() => void) | null,
 		commitMessageAvailable: true,
+		gitStashCount: 0,
+		gitDetached: false,
 		terminalAvailable: false,
 		remoteBridgeAvailable: false,
 		remoteBridgeDevices: [] as Array<Record<string, unknown>>,
 		settingsProfiles: [] as SettingsProfile[],
 		staleNextSettingsSave: false,
 		bootstrapFailureStatus: null as number | null,
+		instanceOffline: false,
 		get pwaNeedRefresh() {
 			return pwaState.needRefresh;
 		},
@@ -126,6 +136,13 @@ export function createAppTestHarness() {
 		fixture.stageFailure = false;
 		fixture.delayNextDiffResponse = false;
 		fixture.releaseDiffResponse = null;
+		fixture.delayNextHistoryResponse = false;
+		fixture.releaseHistoryResponse = null;
+		fixture.delayNextHistoryCommitResponse = false;
+		fixture.releaseHistoryCommitResponse = null;
+		fixture.historyCommitRequestAborted = false;
+		fixture.historyPaginated = false;
+		fixture.historyQueries = [];
 		fixture.delayStageResponse = false;
 		fixture.releaseStageResponse = null;
 		fixture.emitSseDuringStage = false;
@@ -135,6 +152,8 @@ export function createAppTestHarness() {
 		fixture.commitMessageRequestAborted = false;
 		fixture.releaseCommitMessageResponse = null;
 		fixture.commitMessageAvailable = true;
+		fixture.gitStashCount = 0;
+		fixture.gitDetached = false;
 		fixture.terminalAvailable = false;
 		fixture.remoteBridgeAvailable = false;
 		fixture.remoteBridgeDevices = [];
@@ -150,6 +169,7 @@ export function createAppTestHarness() {
 		];
 		fixture.staleNextSettingsSave = false;
 		fixture.bootstrapFailureStatus = null;
+		fixture.instanceOffline = false;
 		pwaState.needRefresh = false;
 		pwaState.updateCalls = 0;
 		resetRendererState();
@@ -355,6 +375,7 @@ export function createAppTestHarness() {
 				);
 			}
 			if (url.pathname === "/api/instance" && method === "GET") {
+				if (fixture.instanceOffline) throw new TypeError("offline");
 				return Response.json({
 					service: "couchview",
 					protocolVersion: 5,
@@ -453,6 +474,119 @@ export function createAppTestHarness() {
 				};
 				fixture.packageRuns = [run, ...fixture.packageRuns];
 				return Response.json({ run }, { status: 201 });
+			}
+			const historyCommits = [
+				{
+					id: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+					shortId: "bbbbbbb",
+					parents: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+					subject: "Improve history review",
+					authorName: "Couchview Tests",
+					authoredAt: "2026-08-02T10:00:00.000Z",
+					decorations: ["HEAD -> main"],
+				},
+				{
+					id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+					shortId: "aaaaaaa",
+					parents: [],
+					subject: "Initial review workspace",
+					authorName: "Couchview Tests",
+					authoredAt: "2026-08-01T10:00:00.000Z",
+					decorations: [],
+				},
+			];
+			const gitStatus = () => ({
+				previousBranch: fixture.gitDetached ? "main" : null,
+				stashCount: fixture.gitStashCount,
+				canUndoLastCommit: !fixture.gitDetached,
+				trackedChangeCount: fixture.files.filter((file) => file.kind !== "untracked").length,
+				untrackedChangeCount: fixture.files.filter((file) => file.kind === "untracked").length,
+			});
+			if (nestedPath === "git/history" && method === "GET") {
+				fixture.historyQueries.push(url.search);
+				if (fixture.delayNextHistoryResponse) {
+					fixture.delayNextHistoryResponse = false;
+					await new Promise<void>((resolve) => {
+						fixture.releaseHistoryResponse = resolve;
+					});
+				}
+				const cursor = url.searchParams.get("cursor");
+				return Response.json({
+					commits: fixture.historyPaginated
+						? cursor
+							? historyCommits.slice(1)
+							: historyCommits.slice(0, 1)
+						: historyCommits,
+					nextCursor: fixture.historyPaginated && !cursor ? "fixture-page-2" : null,
+					historyRevision: "fixture-history-1",
+					scope: url.searchParams.get("scope") ?? "current",
+					status: gitStatus(),
+				});
+			}
+			const historyCommitRoute = /^git\/history\/([0-9a-f]{40})$/.exec(nestedPath);
+			if (historyCommitRoute && method === "GET") {
+				if (fixture.delayNextHistoryCommitResponse) {
+					fixture.delayNextHistoryCommitResponse = false;
+					await new Promise<void>((resolve) => {
+						fixture.releaseHistoryCommitResponse = resolve;
+					});
+					fixture.historyCommitRequestAborted = Boolean(init?.signal?.aborted);
+				}
+				const commit = historyCommits.find((item) => item.id === historyCommitRoute[1])!;
+				return Response.json({
+					commit,
+					files: [
+						{
+							id: "history-first",
+							path: "src/first.ts",
+							previousPath: null,
+							kind: "modified",
+							binary: false,
+							additions: 1,
+							deletions: 1,
+						},
+					],
+				});
+			}
+			const historyDiffRoute = /^git\/history\/([0-9a-f]{40})\/files\/history-first\/diff$/.exec(
+				nestedPath,
+			);
+			if (historyDiffRoute && method === "GET") {
+				return Response.json({
+					diff: {
+						...fixture.servedFirstDiff,
+						fileId: "history-first",
+						operationRevision: historyDiffRoute[1],
+					},
+				});
+			}
+			if (nestedPath === "git/actions" && method === "POST") {
+				const action = String((body as { action?: string }).action);
+				if (action === "stash") {
+					fixture.files = [];
+					fixture.gitStashCount += 1;
+				}
+				if (action === "restore-stash") {
+					fixture.files = structuredClone(initialFiles);
+					fixture.gitStashCount = Math.max(0, fixture.gitStashCount - 1);
+				}
+				if (action === "clean") fixture.files = [];
+				if (action === "checkout") fixture.gitDetached = true;
+				if (action === "return") fixture.gitDetached = false;
+				fixture.currentOperationRevision = `operation-git-${action}`;
+				return Response.json({
+					repository: {
+						...requestedRepository,
+						branch: fixture.gitDetached ? null : requestedRepository.branch,
+						head: fixture.gitDetached
+							? String((body as { commit?: string }).commit ?? requestedRepository.head)
+							: requestedRepository.head,
+					},
+					files: fixture.files,
+					operationRevision: fixture.currentOperationRevision,
+					status: gitStatus(),
+					warning: null,
+				});
 			}
 			const packageRunStopRoute = /^package-runs\/([^/]+)\/stop$/.exec(nestedPath);
 			if (packageRunStopRoute && method === "POST") {

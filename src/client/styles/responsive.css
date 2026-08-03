@@ -26,6 +26,8 @@
 	}
 
 	.bottom-bar {
+		grid-template-columns: auto auto minmax(94px, 420px) auto auto;
+		justify-content: center;
 		grid-row: 4;
 		padding-left: 7px;
 		padding-right: 7px;
@@ -57,7 +59,7 @@
 	}
 
 	.top-bar {
-		grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+		grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
 		padding-left: 10px;
 	}
 
@@ -106,14 +108,6 @@
 		grid-template-columns: auto auto minmax(74px, 1fr) auto auto;
 	}
 
-	.file-nav .icon-button:first-child {
-		display: none;
-	}
-
-	.file-nav {
-		width: 42px;
-	}
-
 	.action-button {
 		padding-inline: 7px;
 	}
@@ -125,6 +119,20 @@
 	.remote-bridge-revoke {
 		grid-column: 3;
 		grid-row: 1;
+	}
+}
+
+@media (max-width: 350px) {
+	.bottom-bar {
+		grid-template-columns: auto auto minmax(50px, 1fr) 40px 40px;
+	}
+
+	.bottom-bar .nav-pair .icon-button {
+		width: 38px;
+	}
+
+	.bottom-bar > .icon-button {
+		width: 40px;
 	}
 }
 
@@ -185,12 +193,13 @@
 		min-height: calc(42px + env(safe-area-inset-top));
 		padding: calc(4px + env(safe-area-inset-top)) max(3px, env(safe-area-inset-right)) 4px
 			max(3px, env(safe-area-inset-left));
-		grid-template-columns: 34px minmax(0, 1fr) 34px 34px auto;
+		grid-template-columns: 34px minmax(0, 1fr) 34px 34px 34px auto;
 		gap: 2px;
 	}
 
 	.top-bar > .menu-button,
 	.top-bar .command-palette-trigger,
+	.top-bar .git-history-launch-button,
 	.top-bar .terminal-launch-button {
 		width: 34px;
 		height: 34px;
@@ -269,13 +278,14 @@
 		padding: env(safe-area-inset-top) max(3px, env(safe-area-inset-right)) 0
 			max(3px, env(safe-area-inset-left));
 		grid-row: 1;
-		grid-template-columns: 36px minmax(0, 1fr) auto auto auto auto auto;
+		grid-template-columns: 36px minmax(0, 1fr) auto auto auto auto auto auto;
 		gap: 2px;
 	}
 
 	.compact-landscape .top-bar > .menu-button,
 	.compact-landscape .top-bar .compact-button,
 	.compact-landscape .top-bar .command-palette-trigger,
+	.compact-landscape .top-bar .git-history-launch-button,
 	.compact-landscape .top-bar .terminal-launch-button,
 	.compact-landscape .top-bar .settings-launch-button,
 	.compact-landscape .compact-comments-button {

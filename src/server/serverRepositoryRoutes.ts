@@ -4,6 +4,8 @@ import type {
 	ForgetRepositoryResponse,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResponse,
+	GitActionRequest,
+	GitHistoryScope,
 	PackageRunResponse,
 	PackageRunsResponse,
 	PackageScriptsResponse,
@@ -71,6 +73,8 @@ export async function handleRepositoryApi(
 
 	const repository = await repositories.get(repositoryId);
 	const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath);
+	const historyCommitRoute = /^git\/history\/([^/]+)$/.exec(nestedPath);
+	const historyDiffRoute = /^git\/history\/([^/]+)\/files\/([^/]+)\/diff$/.exec(nestedPath);
 	const packageRunRoute = /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath);
 
 	if (nestedPath === "files" && request.method === "GET") {
@@ -168,6 +172,25 @@ export async function handleRepositoryApi(
 	if (fileRoute?.[2] === "diff" && request.method === "GET") {
 		return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));
 	}
+	if (nestedPath === "git/history" && request.method === "GET") {
+		return json(
+			await repository.history(
+				(url.searchParams.get("scope") ?? "current") as GitHistoryScope,
+				url.searchParams.get("cursor"),
+			),
+		);
+	}
+	if (historyDiffRoute && request.method === "GET") {
+		return json(
+			await repository.historyDiff(
+				decodeSegment(historyDiffRoute[1] ?? ""),
+				decodeSegment(historyDiffRoute[2] ?? ""),
+			),
+		);
+	}
+	if (historyCommitRoute && request.method === "GET") {
+		return json(await repository.historyCommit(decodeSegment(historyCommitRoute[1] ?? "")));
+	}
 	if (nestedPath === "search" && request.method === "GET") {
 		return json(
 			await repository.search(
@@ -206,6 +229,12 @@ export async function handleRepositoryApi(
 		const result = await repository.commit(input);
 		await events.emitRepository(repositoryId, "changes", result.operationRevision);
 		return json(result, { status: 201 });
+	}
+	if (nestedPath === "git/actions" && request.method === "POST") {
+		const input = await readJsonObject<GitActionRequest>(request);
+		const result = await repository.gitAction(input);
+		await events.emitRepository(repositoryId, "changes", result.operationRevision);
+		return json(result);
 	}
 	if (nestedPath === "commit-message" && request.method === "POST") {
 		const input = await readJsonObject<GenerateCommitMessageRequest>(request);

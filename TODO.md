@@ -14,6 +14,11 @@ When adding a task:
 
 <!-- New tasks are added here by default. -->
 
+- [ ] Implement offline diff viewing for explicitly downloaded repository snapshots.
+      Persist the app shell, file list, existing review state, and every diff preview in bounded,
+      revision-keyed browser storage; support navigation after disconnect or reload, stale-cache
+      invalidation, cache removal, download progress, and offline regression coverage.
+- [ ] Add Speech to Text functionality by streaming from server.
 - [ ] Evaluate Tailwind and other suitable styling libraries, then plan an eventual migration.
 - [ ] Simplify sending code and file context to the AI agent helper.
       Keep common code-explanation and file-understanding workflows inside Couchview instead of

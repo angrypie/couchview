@@ -22,6 +22,7 @@ interface RemoteInteractiveSpawnOptions {
 
 export interface RemoteTerminalClientRuntime {
 	paths: RemoteBridgePaths;
+	env: NodeJS.ProcessEnv;
 	which(command: "ssh"): string | null;
 	spawn(command: string[], options: RemoteInteractiveSpawnOptions): RemoteInteractiveProcess;
 	onExit(listener: () => void): void;
@@ -50,6 +51,11 @@ function assertAbsoluteRepository(repositoryRoot: string, launcher: string): voi
 
 function remoteShellCommand(script: string): string {
 	return `exec /bin/sh -c ${shellQuote(script)}`;
+}
+
+function remoteInteractiveEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	if (environment.TERM !== "xterm-ghostty") return environment;
+	return { ...environment, TERM: "xterm-256color" };
 }
 
 export function remoteTerminalLaunchCommand(
@@ -110,6 +116,7 @@ export function remoteClaudeLaunchCommand(
 function defaultRuntime(): RemoteTerminalClientRuntime {
 	return {
 		paths: resolveRemoteBridgePaths(),
+		env: process.env,
 		which: (command) => Bun.which(command),
 		spawn(command, options) {
 			const child = Bun.spawn(command, options);
@@ -171,7 +178,7 @@ async function runRemoteInteractive(
 	try {
 		child = runtime.spawn(command, {
 			cwd: process.cwd(),
-			env: process.env,
+			env: remoteInteractiveEnvironment(runtime.env),
 			stdin: "inherit",
 			stdout: "inherit",
 			stderr: "inherit",

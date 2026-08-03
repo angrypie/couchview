@@ -18,6 +18,7 @@ export interface GitResult {
 export interface RunGitOptions {
 	allowExitCodes?: number[];
 	binaryOutput?: boolean;
+	literalPathspecs?: boolean;
 	maxOutputBytes?: number;
 	truncateOutput?: boolean;
 	timeoutMs?: number;
@@ -110,6 +111,7 @@ export class GitCommandError extends Error {
 
 function gitEnvironment(
 	overrides: Record<string, string | undefined> | undefined,
+	literalPathspecs = true,
 ): Record<string, string | undefined> {
 	const environment: Record<string, string | undefined> = { ...globalThis.process.env };
 	for (const variable of [
@@ -149,11 +151,11 @@ function gitEnvironment(
 	}
 	Object.assign(environment, overrides);
 	Object.assign(environment, {
-		GIT_LITERAL_PATHSPECS: "1",
 		GIT_TERMINAL_PROMPT: "0",
 		LC_ALL: "C",
 		LANG: "C",
 	});
+	if (literalPathspecs) environment.GIT_LITERAL_PATHSPECS = "1";
 	return environment;
 }
 
@@ -227,7 +229,7 @@ export async function runGit(
 				);
 			},
 		});
-		git.env(gitEnvironment(options.env));
+		git.env(gitEnvironment(options.env, options.literalPathspecs !== false));
 		git.outputHandler((_command, stdout, stderr) => {
 			stdout.on("data", (chunk) => {
 				capture(stdoutChunks, chunk, maximumBytes, "stdout");

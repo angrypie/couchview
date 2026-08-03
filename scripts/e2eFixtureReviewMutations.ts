@@ -4,6 +4,8 @@ import type {
 	CreateCommentRequest,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResponse,
+	GitActionRequest,
+	GitActionResponse,
 	ReviewComment,
 	ReviewRecord,
 	SetReviewRequest,
@@ -12,7 +14,7 @@ import type {
 	StageFileRequest,
 	StageFilesRequest,
 } from "../src/shared/contracts.ts";
-import { comments, files, reviews } from "./e2eFixtureData.ts";
+import { comments, files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
 import { fixtureJson } from "./e2eFixtureHttp.ts";
 import type { FixtureMutableState, FixtureRequestContext } from "./e2eFixtureRouteTypes.ts";
 
@@ -26,6 +28,61 @@ export async function handleFixtureReviewMutation(
 ): Promise<Response | null> {
 	const { request, nestedPath, fileRoute, commentRoute } = context;
 	if (request.method === "GET") return null;
+	if (nestedPath === "git/actions" && request.method === "POST") {
+		const body = (await request.json()) as GitActionRequest;
+		if (body.operationRevision !== state.operationRevision) {
+			return fixtureJson(
+				{
+					error: {
+						code: "operation_changed",
+						message: "Project changes changed; refresh before running this Git action",
+					},
+				},
+				409,
+			);
+		}
+		if ((body.action === "checkout" || body.action === "return") && files.length > 0) {
+			return fixtureJson(
+				{ error: { code: "dirty_worktree", message: "Stash or clean changes first" } },
+				409,
+			);
+		}
+		if (body.action === "stash") {
+			files.splice(0);
+			state.gitStashCount += 1;
+		}
+		if (body.action === "restore-stash") {
+			files.splice(0, files.length, ...structuredClone(initialFiles));
+			state.gitStashCount = Math.max(0, state.gitStashCount - 1);
+		}
+		if (body.action === "clean") files.splice(0);
+		if (body.action === "checkout") {
+			state.gitDetached = true;
+			state.gitHead = body.commit;
+		}
+		if (body.action === "return") {
+			state.gitDetached = false;
+			state.gitHead = repository.head;
+		}
+		state.operationRevision = `fixture-operation-${Date.now()}`;
+		return fixtureJson({
+			repository: {
+				...repository,
+				branch: state.gitDetached ? null : repository.branch,
+				head: state.gitHead,
+			},
+			files,
+			operationRevision: state.operationRevision,
+			status: {
+				previousBranch: state.gitDetached ? repository.branch : null,
+				stashCount: state.gitStashCount,
+				canUndoLastCommit: !state.gitDetached,
+				trackedChangeCount: files.filter((file) => file.kind !== "untracked").length,
+				untrackedChangeCount: files.filter((file) => file.kind === "untracked").length,
+			},
+			warning: null,
+		} satisfies GitActionResponse);
+	}
 
 	if (nestedPath === "files/review" && request.method === "PUT") {
 		const body = (await request.json()) as SetReviewsRequest;

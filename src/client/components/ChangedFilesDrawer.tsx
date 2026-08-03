@@ -55,7 +55,6 @@ interface ChangedFilesDrawerProps {
 	packageRuns: PackageRunSummary[];
 	packageScripts: PackageScriptsResponse;
 	reviewFilter: ReviewFilter;
-	reviewedCount: number;
 	filteredReviewedCount: number;
 	splitView: boolean;
 	stageBusy: boolean;
@@ -64,6 +63,24 @@ interface ChangedFilesDrawerProps {
 	stageableReviewedCount: number;
 	stagedCount: number;
 	view: DrawerView;
+}
+
+function FilePath({ path }: { path: string }) {
+	const separatorIndex = path.lastIndexOf("/");
+	const directory = separatorIndex >= 0 ? path.slice(0, separatorIndex + 1) : "";
+	const name = path.slice(separatorIndex + 1);
+	return (
+		<span aria-label={path} className="file-row-path" title={path}>
+			{directory && (
+				<span aria-hidden="true" className="file-row-directory">
+					{directory}
+				</span>
+			)}
+			<span aria-hidden="true" className="file-row-name">
+				{name}
+			</span>
+		</span>
+	);
 }
 
 export function ChangedFilesDrawer({
@@ -93,7 +110,6 @@ export function ChangedFilesDrawer({
 	packageRuns,
 	packageScripts,
 	reviewFilter,
-	reviewedCount,
 	filteredReviewedCount,
 	splitView,
 	stageBusy,
@@ -184,29 +200,31 @@ export function ChangedFilesDrawer({
 								type="search"
 								value={fileQuery}
 							/>
-							<div className="chips" aria-label="Review filters">
-								{(["all", "unreviewed", "reviewed"] as const).map((filter) => (
-									<button
-										className={`chip ${reviewFilter === filter ? "active" : ""}`}
-										key={filter}
-										onClick={() => onReviewFilterChange(filter)}
-										type="button"
+							<div className="drawer-filter-selects">
+								<label>
+									<span>Review</span>
+									<select
+										aria-label="Review filter"
+										onChange={(event) => onReviewFilterChange(event.target.value as ReviewFilter)}
+										value={reviewFilter}
 									>
-										{filter === "all" ? "All reviews" : filter}
-									</button>
-								))}
-							</div>
-							<div className="chips" aria-label="Stage filters">
-								{(["all", "unstaged", "staged"] as const).map((filter) => (
-									<button
-										className={`chip ${stageFilter === filter ? "active" : ""}`}
-										key={filter}
-										onClick={() => onStageFilterChange(filter)}
-										type="button"
+										<option value="all">All</option>
+										<option value="unreviewed">Unreviewed</option>
+										<option value="reviewed">Reviewed</option>
+									</select>
+								</label>
+								<label>
+									<span>Stage</span>
+									<select
+										aria-label="Stage filter"
+										onChange={(event) => onStageFilterChange(event.target.value as StageFilter)}
+										value={stageFilter}
 									>
-										{filter === "all" ? "Any stage" : filter}
-									</button>
-								))}
+										<option value="all">Any</option>
+										<option value="unstaged">Unstaged</option>
+										<option value="staged">Staged</option>
+									</select>
+								</label>
 							</div>
 						</>
 					) : (
@@ -231,8 +249,8 @@ export function ChangedFilesDrawer({
 								) : (
 									<Circle size={16} />
 								)}
-								<span style={{ minWidth: 0 }}>
-									<span className="file-row-path">{file.path}</span>
+								<span className="file-row-copy">
+									<FilePath path={file.path} />
 									<span className="file-row-meta">
 										<span>{changeLabel(file)}</span>
 										{stageLabel(file) && stageLabel(file) !== changeLabel(file) && (
@@ -359,85 +377,74 @@ export function ChangedFilesDrawer({
 				<footer className="drawer-footer">
 					{view === "files" ? (
 						<>
-							<div className="progress-track" aria-hidden="true">
-								<div
-									className="progress-value"
-									style={{
-										width: `${files.length ? (reviewedCount / files.length) * 100 : 0}%`,
-									}}
-								/>
-							</div>
-							<div className="progress-label">
-								{reviewedCount} of {files.length} reviewed
-							</div>
-							<div className="bulk-file-actions">
+							{(filteredReviewedCount > 0 || stageableCount > 0 || stageableReviewedCount > 0) && (
+								<div className="bulk-file-actions">
+									{filteredReviewedCount > 0 && (
+										<button
+											aria-label={`Unreview shown files (${filteredReviewedCount})`}
+											className="action-button secondary"
+											disabled={bulkReviewBusy || stageBusy || bulkStageBusy !== null}
+											onClick={onUnreviewMultiple}
+											title="Unreview files shown by the current filters"
+											type="button"
+										>
+											{bulkReviewBusy ? (
+												<LoaderCircle className="spinner" size={15} />
+											) : (
+												<Undo2 size={15} />
+											)}
+											<span>Unreview {filteredReviewedCount}</span>
+										</button>
+									)}
+									{stageableCount > 0 && (
+										<button
+											aria-label={`Stage all files (${stageableCount})`}
+											className="action-button secondary"
+											disabled={stageBusy || bulkStageBusy !== null || bulkReviewBusy}
+											onClick={() => onStageMultiple("all")}
+											type="button"
+										>
+											{bulkStageBusy === "all" ? (
+												<LoaderCircle className="spinner" size={15} />
+											) : (
+												<GitPullRequestArrow size={15} />
+											)}
+											<span>All {stageableCount}</span>
+										</button>
+									)}
+									{stageableReviewedCount > 0 && (
+										<button
+											aria-label={`Stage reviewed files (${stageableReviewedCount})`}
+											className="action-button secondary"
+											disabled={stageBusy || bulkStageBusy !== null || bulkReviewBusy}
+											onClick={() => onStageMultiple("reviewed")}
+											type="button"
+										>
+											{bulkStageBusy === "reviewed" ? (
+												<LoaderCircle className="spinner" size={15} />
+											) : (
+												<CheckCircle2 size={15} />
+											)}
+											<span>Reviewed {stageableReviewedCount}</span>
+										</button>
+									)}
+								</div>
+							)}
+							{stagedCount > 0 ? (
 								<button
-									aria-label={`Unreview shown files (${filteredReviewedCount})`}
-									className="action-button secondary"
-									disabled={
-										filteredReviewedCount === 0 ||
-										bulkReviewBusy ||
-										stageBusy ||
-										bulkStageBusy !== null
-									}
-									onClick={onUnreviewMultiple}
-									title="Unreview files shown by the current filters"
+									className="action-button commit-action"
+									disabled={commitBusy}
+									onClick={onCommit}
 									type="button"
 								>
-									{bulkReviewBusy ? (
-										<LoaderCircle className="spinner" size={15} />
-									) : (
-										<Undo2 size={15} />
-									)}
-									<span>Unreview {filteredReviewedCount}</span>
+									<GitCommitHorizontal size={16} />
+									Commit {stagedCount} staged {stagedCount === 1 ? "file" : "files"}
 								</button>
-								<button
-									aria-label={`Stage all files (${stageableCount})`}
-									className="action-button secondary"
-									disabled={
-										stageableCount === 0 || stageBusy || bulkStageBusy !== null || bulkReviewBusy
-									}
-									onClick={() => onStageMultiple("all")}
-									type="button"
-								>
-									{bulkStageBusy === "all" ? (
-										<LoaderCircle className="spinner" size={15} />
-									) : (
-										<GitPullRequestArrow size={15} />
-									)}
-									<span>All {stageableCount}</span>
-								</button>
-								<button
-									aria-label={`Stage reviewed files (${stageableReviewedCount})`}
-									className="action-button secondary"
-									disabled={
-										stageableReviewedCount === 0 ||
-										stageBusy ||
-										bulkStageBusy !== null ||
-										bulkReviewBusy
-									}
-									onClick={() => onStageMultiple("reviewed")}
-									type="button"
-								>
-									{bulkStageBusy === "reviewed" ? (
-										<LoaderCircle className="spinner" size={15} />
-									) : (
-										<CheckCircle2 size={15} />
-									)}
-									<span>Reviewed {stageableReviewedCount}</span>
-								</button>
-							</div>
-							<button
-								className="action-button commit-action"
-								disabled={stagedCount === 0 || commitBusy}
-								onClick={onCommit}
-								type="button"
-							>
-								<GitCommitHorizontal size={16} />
-								{stagedCount === 0
-									? "No staged changes"
-									: `Commit ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
-							</button>
+							) : (
+								<div className="commit-status">
+									<GitCommitHorizontal size={15} /> No staged changes
+								</div>
+							)}
 						</>
 					) : (
 						<div className="progress-label command-footer-copy">

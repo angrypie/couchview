@@ -1,11 +1,13 @@
-import { useEffect, useRef } from "react";
+import { type Dispatch, type SetStateAction, useEffect, useRef } from "react";
 import {
 	API_ROUTES,
 	type ChangesResponse,
 	type FileDiff,
 	type ServerEvent,
 } from "../../../shared/contracts.ts";
+import { api } from "../../api.ts";
 import { withDiffFileMetadata } from "../staging/changeFiles.ts";
+import type { RepositoryConnectionState } from "./types.ts";
 import type { RepositoryHistoryMode } from "./useRepositoryWorkspace.ts";
 
 interface UseRepositoryEventsOptions {
@@ -20,6 +22,7 @@ interface UseRepositoryEventsOptions {
 		fileOverride?: ChangesResponse["files"][number],
 	) => Promise<unknown>;
 	loadRepository: (repositoryId: string, historyMode: RepositoryHistoryMode) => Promise<void>;
+	markConnectionFailure: (error: unknown) => void;
 	phase: "loading" | "ready" | "error";
 	queueExternalStageChange: (repositoryId: string, operationRevision: string) => boolean;
 	refreshChanges: () => Promise<ChangesResponse>;
@@ -30,7 +33,7 @@ interface UseRepositoryEventsOptions {
 	refreshReviewState: () => Promise<unknown>;
 	repositoryId: string | null;
 	repositoryLoading: boolean;
-	setConnected: (connected: boolean) => void;
+	setConnectionState: Dispatch<SetStateAction<RepositoryConnectionState>>;
 	setDiff: (diff: FileDiff | null) => void;
 }
 
@@ -42,6 +45,7 @@ export function useRepositoryEvents({
 	getRepositoryId,
 	loadDiff,
 	loadRepository,
+	markConnectionFailure,
 	phase,
 	queueExternalStageChange,
 	refreshChanges,
@@ -50,21 +54,46 @@ export function useRepositoryEvents({
 	refreshReviewState,
 	repositoryId,
 	repositoryLoading,
-	setConnected,
+	setConnectionState,
 	setDiff,
 }: UseRepositoryEventsOptions) {
 	const eventSourceRef = useRef<EventSource | null>(null);
+	const probeRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
 		eventSourceRef.current?.close();
 		eventSourceRef.current = null;
+		probeRef.current?.abort();
+		probeRef.current = null;
 		if (phase !== "ready" || repositoryLoading || !repositoryId) return;
 		const stream = new EventSource(API_ROUTES.events(repositoryId));
 		eventSourceRef.current = stream;
-		stream.onopen = () => setConnected(true);
-		stream.onerror = () => setConnected(false);
+		const markConnected = () => {
+			probeRef.current?.abort();
+			probeRef.current = null;
+			setConnectionState("connected");
+		};
+		stream.onopen = markConnected;
+		stream.onerror = () => {
+			setConnectionState((current) => (current === "offline" ? current : "reconnecting"));
+			probeRef.current?.abort();
+			const controller = new AbortController();
+			probeRef.current = controller;
+			void api.instance(controller.signal).then(
+				() => {
+					if (probeRef.current !== controller) return;
+					probeRef.current = null;
+					setConnectionState((current) => (current === "connected" ? current : "reconnecting"));
+				},
+				(error) => {
+					if (probeRef.current !== controller) return;
+					probeRef.current = null;
+					markConnectionFailure(error);
+				},
+			);
+		};
 		stream.onmessage = (message) => {
-			setConnected(true);
+			markConnected();
 			try {
 				const event = JSON.parse(message.data) as ServerEvent;
 				if (event.repositoryId !== repositoryId) return;
@@ -78,7 +107,7 @@ export function useRepositoryEvents({
 					}
 					if (event.operationRevision === getOperationRevision()) {
 						if (event.type === "ready") {
-							void refreshReviewState().catch(() => setConnected(false));
+							void refreshReviewState().catch(markConnectionFailure);
 						}
 						return;
 					}
@@ -99,10 +128,10 @@ export function useRepositoryEvents({
 							}
 							await loadDiff(fileId, true, file);
 						})
-						.catch(() => setConnected(false));
+						.catch(markConnectionFailure);
 				}
 				if (event.type === "state") {
-					void refreshReviewState().catch(() => setConnected(false));
+					void refreshReviewState().catch(markConnectionFailure);
 				}
 				if (event.type === "repositories") {
 					void refreshRepositories()
@@ -113,13 +142,15 @@ export function useRepositoryEvents({
 							if (next) void loadRepository(next.id, "replace");
 							else clearRepositorySelection();
 						})
-						.catch(() => setConnected(false));
+						.catch(markConnectionFailure);
 				}
 			} catch {
 				// Ignore malformed keep-alives while leaving the stream connected.
 			}
 		};
 		return () => {
+			probeRef.current?.abort();
+			probeRef.current = null;
 			stream.close();
 			if (eventSourceRef.current === stream) eventSourceRef.current = null;
 		};
@@ -131,6 +162,7 @@ export function useRepositoryEvents({
 		getRepositoryId,
 		loadDiff,
 		loadRepository,
+		markConnectionFailure,
 		phase,
 		queueExternalStageChange,
 		refreshChanges,
@@ -139,7 +171,7 @@ export function useRepositoryEvents({
 		refreshReviewState,
 		repositoryId,
 		repositoryLoading,
-		setConnected,
+		setConnectionState,
 		setDiff,
 	]);
 }

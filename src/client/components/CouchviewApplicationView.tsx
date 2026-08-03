@@ -5,6 +5,7 @@ import type {
 	TerminalCapability,
 } from "../../shared/contracts.ts";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
+import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
 import type { useToastNotifications } from "../features/notifications/useToastNotifications.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { usePwaUpdate } from "../features/pwa/usePwaUpdate.ts";
@@ -37,6 +38,7 @@ interface CouchviewApplicationViewProps {
 	drawerView: DrawerView;
 	failure: ReturnType<typeof useFailureReporting>;
 	filters: ReturnType<typeof useChangedFileFilters>;
+	git: ReturnType<typeof useGitWorkspace>;
 	management: ReturnType<typeof useRepositoryManagement>;
 	navigation: ReturnType<typeof useWorkspaceNavigation>;
 	notifications: ReturnType<typeof useToastNotifications>;
@@ -65,6 +67,7 @@ export function CouchviewApplicationView({
 	drawerView,
 	failure,
 	filters,
+	git,
 	management,
 	navigation,
 	notifications,
@@ -171,6 +174,7 @@ export function CouchviewApplicationView({
 					drawerView={drawerView}
 					failureAvailable={Boolean(failure.failure)}
 					filters={filters}
+					git={git}
 					management={management}
 					onDrawerOpenChange={onDrawerOpenChange}
 					onDrawerViewChange={onDrawerViewChange}
@@ -191,7 +195,9 @@ export function CouchviewApplicationView({
 				<ReviewWorkspaceOverlays
 					codexCapability={codexCapability}
 					commitMessageCapability={commitMessageCapability}
+					display={display}
 					failureReporting={failure}
+					git={git}
 					management={management}
 					onRemoteBridgeOpenChange={onRemoteBridgeOpenChange}
 					packages={packages}

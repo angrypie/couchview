@@ -28,6 +28,11 @@ import type {
 	DeleteCommentResponse,
 	DiffResponse,
 	GenerateCommitMessageRequest,
+	GitActionRequest,
+	GitActionResponse,
+	GitCommitChangesResponse,
+	GitHistoryResponse,
+	GitHistoryScope,
 	ReviewStateResponse,
 	SearchResponse,
 	SetReviewRequest,
@@ -46,6 +51,9 @@ import { HttpError } from "./errors.ts";
 import { decodeGitOutput, GitCommandError, type ParsedStatusEntry, runGit, sha256 } from "./git.ts";
 import { RepositoryContent } from "./repositoryContent.ts";
 import { RepositoryDiff } from "./repositoryDiff.ts";
+import { RepositoryGitActions } from "./repositoryGitActions.ts";
+import { RepositoryHistory } from "./repositoryHistory.ts";
+import { RepositoryMutationCoordinator } from "./repositoryMutationCoordinator.ts";
 import { RepositoryReview } from "./repositoryReview.ts";
 import { RepositorySnapshotService } from "./repositorySnapshot.ts";
 import { ReviewStore } from "./state.ts";
@@ -99,7 +107,9 @@ export class GitRepository {
 	private readonly diffs: RepositoryDiff;
 	private readonly snapshots: RepositorySnapshotService;
 	private readonly reviews: RepositoryReview;
-	private stageQueue: Promise<void> = Promise.resolve();
+	private readonly historyService: RepositoryHistory;
+	private readonly gitActions: RepositoryGitActions;
+	private readonly mutations: RepositoryMutationCoordinator;
 
 	private constructor(
 		root: string,
@@ -123,6 +133,7 @@ export class GitRepository {
 		}).added;
 		this.store = new ReviewStore(database, this.id);
 		this.content = new RepositoryContent(root);
+		this.mutations = new RepositoryMutationCoordinator();
 		this.snapshots = new RepositorySnapshotService(
 			root,
 			this.id,
@@ -132,6 +143,15 @@ export class GitRepository {
 		);
 		this.diffs = new RepositoryDiff(root, emptyTree, this.content, (fresh) =>
 			this.snapshots.getSnapshot(fresh),
+		);
+		this.historyService = new RepositoryHistory(root, this.id, emptyTree, (fresh) =>
+			this.snapshots.getSnapshot(fresh),
+		);
+		this.gitActions = new RepositoryGitActions(
+			root,
+			(fresh) => this.snapshots.getSnapshot(fresh),
+			this.historyService,
+			this.mutations,
 		);
 		this.reviews = new RepositoryReview(root, this.store, this.content, this.snapshots, (fileId) =>
 			this.diffs.diff(fileId),
@@ -189,6 +209,22 @@ export class GitRepository {
 
 	async diff(fileId: string): Promise<DiffResponse> {
 		return this.diffs.diff(fileId);
+	}
+
+	async history(scope: GitHistoryScope, cursor: string | null): Promise<GitHistoryResponse> {
+		return this.historyService.list(scope, cursor);
+	}
+
+	async historyCommit(commit: string): Promise<GitCommitChangesResponse> {
+		return this.historyService.commit(commit);
+	}
+
+	async historyDiff(commit: string, fileId: string): Promise<DiffResponse> {
+		return this.historyService.diff(commit, fileId);
+	}
+
+	async gitAction(input: GitActionRequest): Promise<GitActionResponse> {
+		return this.gitActions.perform(input);
 	}
 
 	async search(query: string, currentPath: string): Promise<SearchResponse> {
@@ -262,7 +298,7 @@ export class GitRepository {
 		operationRevision: string,
 		shouldStage: boolean,
 	): Promise<StageFilesResponse> {
-		return this.withStageLock(async () => {
+		return this.mutations.run(async () => {
 			const lockPath = `${this.indexPath}.lock`;
 			const temporaryIndex = path.join(
 				path.dirname(this.indexPath),
@@ -436,7 +472,7 @@ export class GitRepository {
 	}
 
 	async commit(input: CommitRequest): Promise<CommitResponse> {
-		return this.withStageLock(async () => {
+		return this.mutations.run(async () => {
 			if (!input || typeof input !== "object" || Array.isArray(input)) {
 				throw new HttpError(400, "invalid_request", "Commit request is invalid");
 			}
@@ -654,20 +690,6 @@ export class GitRepository {
 				["update-index", "--force-remove", "--", ...conflicts.slice(offset, offset + 256)],
 				{ env: { GIT_INDEX_FILE: indexPath } },
 			);
-		}
-	}
-
-	private async withStageLock<T>(operation: () => Promise<T>): Promise<T> {
-		const previous = this.stageQueue;
-		let release!: () => void;
-		this.stageQueue = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await previous;
-		try {
-			return await operation();
-		} finally {
-			release();
 		}
 	}
 }

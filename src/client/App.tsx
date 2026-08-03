@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type DrawerView } from "./components/ChangedFilesDrawer.tsx";
 import { CouchviewApplicationView } from "./components/CouchviewApplicationView.tsx";
 import { useFailureReporting } from "./features/errors/useFailureReporting.ts";
+import { useGitWorkspace } from "./features/history/useGitWorkspace.ts";
 import { useToastNotifications } from "./features/notifications/useToastNotifications.ts";
 import { usePackageRuns } from "./features/packages/usePackageRuns.ts";
 import { usePwaUpdate } from "./features/pwa/usePwaUpdate.ts";
@@ -79,6 +80,14 @@ export function App() {
 		showToast,
 	});
 	const failureReporting = useFailureReporting({ showToast });
+	const gitWorkspace = useGitWorkspace({
+		csrfToken: bootstrap?.csrfToken,
+		onRepositoryState: workspace.applyRepositoryState,
+		operationRevision: workspace.operationRevision,
+		reportFailure: failureReporting.reportFailure,
+		repositoryId,
+		showToast,
+	});
 	const { clearFailure, setDetailsOpen } = failureReporting;
 	const { resetForRepository } = navigation;
 	const { setPickerOpen } = repositoryManagement;
@@ -139,12 +148,14 @@ export function App() {
 		repositoryManagement.forgetBusy === null &&
 		repositoryManagement.restartPhase === null &&
 		!comments.copyFallbackText;
-	const pwa = usePwaUpdate({ updateSafe: pwaUpdateSafe });
+	const gitUpdateSafe = !gitWorkspace.open && gitWorkspace.actionBusy === null;
+	const pwa = usePwaUpdate({ updateSafe: pwaUpdateSafe && gitUpdateSafe });
 
 	const shellCommands = useReviewShellCommands({
 		display: displayPreferences,
 		drawerOpen,
 		failure: failureReporting,
+		git: gitWorkspace,
 		management: repositoryManagement,
 		navigation,
 		onDrawerOpenChange: setDrawerOpen,
@@ -167,6 +178,7 @@ export function App() {
 			drawerView={drawerView}
 			failure={failureReporting}
 			filters={fileFilters}
+			git={gitWorkspace}
 			management={repositoryManagement}
 			navigation={navigation}
 			notifications={notifications}

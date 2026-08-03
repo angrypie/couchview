@@ -1,6 +1,8 @@
 import type {
 	ChangeFile,
 	DiffResponse,
+	GitCommitSummary,
+	GitHistoryFile,
 	PackageScriptsResponse,
 	RepositoryCatalogEntry,
 	ReviewComment,
@@ -301,6 +303,47 @@ export const diffs: Record<string, DiffResponse> = {
 				},
 			],
 		},
+	},
+};
+
+export const historyCommits: GitCommitSummary[] = [
+	{
+		id: repository.head,
+		shortId: repository.head.slice(0, 7),
+		parents: ["1111111111111111111111111111111111111111"],
+		subject: "Add mobile review workspace",
+		authorName: "Couchview Fixture",
+		authoredAt: "2026-08-02T10:00:00.000Z",
+		decorations: ["HEAD -> feature/mobile-review"],
+	},
+	{
+		id: "1111111111111111111111111111111111111111",
+		shortId: "1111111",
+		parents: [],
+		subject: "Create sample project",
+		authorName: "Couchview Fixture",
+		authoredAt: "2026-08-01T10:00:00.000Z",
+		decorations: ["tag: v1.0.0"],
+	},
+];
+
+export const historyFiles: GitHistoryFile[] = [
+	{
+		id: "fixture-history-review-ts",
+		path: "src/review.ts",
+		previousPath: null,
+		kind: "modified",
+		binary: false,
+		additions: 4,
+		deletions: 2,
+	},
+];
+
+export const historyDiff: DiffResponse = {
+	diff: {
+		...diffs["fixture-review-ts"]!.diff,
+		fileId: historyFiles[0]!.id,
+		operationRevision: repository.head,
 	},
 };
 

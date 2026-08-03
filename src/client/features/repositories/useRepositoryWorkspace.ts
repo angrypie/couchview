@@ -9,6 +9,7 @@ import type {
 import { ApiError, api } from "../../api.ts";
 import { messageOf } from "../../lib/failures.ts";
 import { clearPwaStorage } from "../../offlineApp.ts";
+import type { RepositoryConnectionState } from "./types.ts";
 
 export type AppPhase = "loading" | "ready" | "error";
 export type RepositoryHistoryMode = "none" | "push" | "replace";
@@ -24,7 +25,7 @@ export function useRepositoryWorkspace() {
 	const [loadError, setLoadError] = useState("");
 	const [loadErrorCode, setLoadErrorCode] = useState("");
 	const [appCacheResetBusy, setAppCacheResetBusy] = useState(false);
-	const [connected, setConnected] = useState(true);
+	const [connectionState, setConnectionState] = useState<RepositoryConnectionState>("connected");
 	const repositoryIdRef = useRef<string | null>(null);
 	const operationRevisionRef = useRef("");
 	const catalogRef = useRef<RepositoryCatalogEntry[]>([]);
@@ -39,16 +40,28 @@ export function useRepositoryWorkspace() {
 		setOperationRevision(nextRevision);
 	}, []);
 
+	const markConnectionFailure = useCallback((error: unknown) => {
+		if (error instanceof ApiError && error.status === 0) setConnectionState("offline");
+	}, []);
+
+	const applyRepositoryState = useCallback(
+		(response: ChangesResponse) => {
+			if (repositoryIdRef.current !== response.repository.id) return;
+			applyOperationRevision(response.operationRevision);
+			setFiles(response.files);
+			setRepository(response.repository);
+		},
+		[applyOperationRevision],
+	);
+
 	const refreshChanges = useCallback(async (): Promise<ChangesResponse> => {
 		const activeRepositoryId = repositoryIdRef.current;
 		if (!activeRepositoryId) throw new Error("No repository is selected");
 		const response = await api.changes(activeRepositoryId, requestRef.current?.signal);
 		if (repositoryIdRef.current !== activeRepositoryId) return response;
-		applyOperationRevision(response.operationRevision);
-		setFiles(response.files);
-		setRepository(response.repository);
+		applyRepositoryState(response);
 		return response;
-	}, [applyOperationRevision]);
+	}, [applyRepositoryState]);
 
 	const refreshRepositories = useCallback(async () => {
 		const response = await api.repositories();
@@ -99,19 +112,19 @@ export function useRepositoryWorkspace() {
 						window.history[historyMode === "push" ? "pushState" : "replaceState"](null, "", url);
 					}
 				}
-				setConnected(true);
+				setConnectionState("connected");
 				setPhase("ready");
 			} catch (error) {
 				if (loadGenerationRef.current !== generation) return;
 				if (error instanceof DOMException && error.name === "AbortError") return;
 				setLoadError(messageOf(error));
-				setConnected(!(error instanceof ApiError && error.status === 0));
+				markConnectionFailure(error);
 				setPhase("error");
 			} finally {
 				if (loadGenerationRef.current === generation) setRepositoryLoading(false);
 			}
 		},
-		[applyOperationRevision],
+		[applyOperationRevision, markConnectionFailure],
 	);
 
 	const clearRepositorySelection = useCallback(() => {
@@ -157,7 +170,7 @@ export function useRepositoryWorkspace() {
 				nextBootstrap.repositories.find((item) => item.available);
 			if (!selected) {
 				clearRepositorySelection();
-				setConnected(true);
+				setConnectionState("connected");
 				return;
 			}
 			await loadRepository(selected.id, "replace");
@@ -170,10 +183,10 @@ export function useRepositoryWorkspace() {
 					: errorCode,
 			);
 			clearAccessRefreshMarker();
-			setConnected(!(error instanceof ApiError && error.status === 0));
+			markConnectionFailure(error);
 			setPhase("error");
 		}
-	}, [clearRepositorySelection, loadRepository]);
+	}, [clearRepositorySelection, loadRepository, markConnectionFailure]);
 
 	const resetAppCache = useCallback(async () => {
 		if (appCacheResetBusy) return;
@@ -200,9 +213,10 @@ export function useRepositoryWorkspace() {
 	return {
 		appCacheResetBusy,
 		applyOperationRevision,
+		applyRepositoryState,
 		bootstrap,
 		clearRepositorySelection,
-		connected,
+		connectionState,
 		files,
 		getOperationRevision,
 		getRepositoryId,
@@ -210,6 +224,7 @@ export function useRepositoryWorkspace() {
 		loadError,
 		loadErrorCode,
 		loadRepository,
+		markConnectionFailure,
 		operationRevision,
 		phase,
 		refreshChanges,
@@ -219,7 +234,7 @@ export function useRepositoryWorkspace() {
 		repositoryLoading,
 		resetAppCache,
 		setBootstrap,
-		setConnected,
+		setConnectionState,
 		setFiles,
 	};
 }

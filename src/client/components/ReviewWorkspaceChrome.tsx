@@ -1,5 +1,6 @@
 import { WifiOff } from "lucide-react";
 import type { RemoteBridgeCapability, TerminalCapability } from "../../shared/contracts.ts";
+import type { useGitWorkspace } from "../features/history/useGitWorkspace.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
@@ -22,6 +23,7 @@ interface ReviewWorkspaceChromeProps {
 	drawerView: DrawerView;
 	failureAvailable: boolean;
 	filters: ReturnType<typeof useChangedFileFilters>;
+	git: ReturnType<typeof useGitWorkspace>;
 	management: ReturnType<typeof useRepositoryManagement>;
 	onDrawerOpenChange: (open: boolean) => void;
 	onDrawerViewChange: (view: DrawerView) => void;
@@ -48,6 +50,7 @@ export function ReviewWorkspaceChrome({
 	drawerView,
 	failureAvailable,
 	filters,
+	git,
 	management,
 	onDrawerOpenChange,
 	onDrawerViewChange,
@@ -102,7 +105,6 @@ export function ReviewWorkspaceChrome({
 				packageRuns={packages.runs}
 				packageScripts={packages.scripts}
 				reviewFilter={filters.reviewFilter}
-				reviewedCount={filters.reviewedCount}
 				splitView={splitView}
 				stageBusy={staging.busy}
 				stageFilter={filters.stageFilter}
@@ -118,7 +120,7 @@ export function ReviewWorkspaceChrome({
 				canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
 				commandPaletteShortcut={commandPaletteShortcut}
 				compactLandscape={compactLandscape}
-				connected={workspace.connected}
+				connectionState={workspace.connectionState}
 				diff={diff.diff}
 				fileCount={workspace.files.length}
 				fontSize={display.fontSize}
@@ -131,6 +133,7 @@ export function ReviewWorkspaceChrome({
 				onNavigateHunk={diff.navigateHunk}
 				onOpenCommandPalette={onOpenCommandPalette}
 				onOpenDrawer={() => onDrawerOpenChange(true)}
+				onOpenGitHistory={() => git.setOpen(true)}
 				onOpenRemoteBridge={onOpenRemoteBridge}
 				onOpenRepositoryPicker={management.openPicker}
 				onOpenSettings={onOpenSettings}
@@ -145,18 +148,15 @@ export function ReviewWorkspaceChrome({
 				totalCommentCount={comments.comments.length}
 			/>
 
-			{!workspace.connected && !compactLandscape && (
+			{workspace.connectionState === "offline" && !compactLandscape && (
 				<div className="disconnected-banner" style={{ gridColumn: splitView ? 2 : undefined }}>
-					<WifiOff size={12} /> Disconnected — reconnecting to the local server
+					<WifiOff size={12} /> Offline — cannot reach the local server
 				</div>
 			)}
 
 			<CurrentFileBar
 				activeFile={diff.activeFile}
-				activeFileIndex={diff.activeFileIndex}
 				diff={diff.diff}
-				fileCount={workspace.files.length}
-				onNavigate={diff.navigateFile}
 				onOpenSettings={onOpenSettings}
 				visible={!compactLandscape}
 			/>

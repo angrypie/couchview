@@ -41,7 +41,9 @@ test.describe("desktop review layout", () => {
 		await expect(page).toHaveURL(/\/settings/);
 	});
 
-	test("keeps file controls visible while the changed-files list scrolls", async ({ page }) => {
+	test("keeps filenames and controls visible while the changed-files list scrolls", async ({
+		page,
+	}) => {
 		await page.route("**/api/repositories/*/files", async (route) => {
 			const response = await route.fetch();
 			const body = (await response.json()) as ChangesResponse;
@@ -49,7 +51,10 @@ test.describe("desktop review layout", () => {
 			const extraFiles = Array.from({ length: 28 }, (_, index) => ({
 				...template,
 				id: `fixture-extra-${index + 1}`,
-				path: `src/generated/file-${String(index + 1).padStart(2, "0")}.ts`,
+				path:
+					index === 27
+						? "src/generated/with/a/very/long/directory/that/must/not/hide/file-28-important-name.ts"
+						: `src/generated/file-${String(index + 1).padStart(2, "0")}.ts`,
 				contentRevision: `fixture-extra-v${index + 1}`,
 			}));
 			await route.fulfill({
@@ -63,6 +68,28 @@ test.describe("desktop review layout", () => {
 		const drawer = page.getByRole("complementary", { name: "Changed files" });
 		const fileList = drawer.locator(".file-list");
 		const footer = drawer.locator(".drawer-footer");
+		const currentFile = page.getByRole("region", { name: "Current file" });
+		const commandTrigger = page.getByRole("button", { name: "Open command palette" });
+		const reviewAction = page.getByRole("button", { name: "Review + next" });
+
+		await expect(page.getByRole("button", { name: "Previous file" })).toHaveCount(1);
+		await expect(page.getByRole("button", { name: "Next file" })).toHaveCount(1);
+		await expect(currentFile.getByRole("button", { name: "Previous file" })).toHaveCount(0);
+		await expect(currentFile.getByRole("button", { name: "Next file" })).toHaveCount(0);
+		await expect(page.locator(".git-history-launch-button .lucide-git-graph")).toBeVisible();
+		await expect
+			.poll(() => reviewAction.evaluate((element) => element.getBoundingClientRect().width))
+			.toBeLessThanOrEqual(420);
+		await expect
+			.poll(() =>
+				commandTrigger.evaluate((element) => {
+					const icon = element.querySelector("svg")?.getBoundingClientRect();
+					const shortcut = element.querySelector("kbd")?.getBoundingClientRect();
+					if (!icon || !shortcut) return 99;
+					return Math.abs(icon.top + icon.height / 2 - (shortcut.top + shortcut.height / 2));
+				}),
+			)
+			.toBeLessThanOrEqual(1);
 
 		await expect(drawer.getByRole("button", { name: "Stage all files (30)" })).toBeVisible();
 		await expect(footer).toBeVisible();
@@ -89,11 +116,12 @@ test.describe("desktop review layout", () => {
 			element.scrollTop = element.scrollHeight;
 		});
 		await expect.poll(() => fileList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-		await expect(
-			drawer.getByRole("button", {
-				name: "src/generated/file-28.ts added unstaged +4 −0",
-			}),
-		).toBeVisible();
+		const importantName = drawer.getByText("file-28-important-name.ts", { exact: true });
+		await expect(importantName).toBeVisible();
+		await expect(importantName).toHaveCSS("font-size", "12px");
+		await expect
+			.poll(() => fileList.evaluate((element) => element.scrollWidth - element.clientWidth))
+			.toBeLessThanOrEqual(0);
 	});
 
 	test("pairs and revokes a native IDE without overflowing the desktop sheet", async ({ page }) => {

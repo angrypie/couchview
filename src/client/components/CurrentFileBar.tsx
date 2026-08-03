@@ -1,40 +1,19 @@
-import { ChevronLeft, ChevronRight, Settings2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import type { ChangeFile, FileDiff } from "../../shared/contracts.ts";
 import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
 
 interface CurrentFileBarProps {
 	activeFile: ChangeFile | null;
-	activeFileIndex: number;
 	diff: FileDiff | null;
-	fileCount: number;
-	onNavigate: (direction: -1 | 1) => void;
 	onOpenSettings: () => void;
 	visible: boolean;
 }
 
-export function CurrentFileBar({
-	activeFile,
-	activeFileIndex,
-	diff,
-	fileCount,
-	onNavigate,
-	onOpenSettings,
-	visible,
-}: CurrentFileBarProps) {
+export function CurrentFileBar({ activeFile, diff, onOpenSettings, visible }: CurrentFileBarProps) {
 	if (!visible) return null;
 
 	return (
 		<section className="file-bar" aria-label="Current file">
-			<button
-				aria-label="Previous file"
-				className="icon-button"
-				disabled={activeFileIndex <= 0}
-				onClick={() => onNavigate(-1)}
-				title="Previous file ([)"
-				type="button"
-			>
-				<ChevronLeft size={20} />
-			</button>
 			<div className="file-summary">
 				<div className="file-path" title={activeFile?.path}>
 					{activeFile?.path ?? "No changed file"}
@@ -53,16 +32,6 @@ export function CurrentFileBar({
 					</div>
 				)}
 			</div>
-			<button
-				aria-label="Next file"
-				className="icon-button"
-				disabled={activeFileIndex < 0 || activeFileIndex >= fileCount - 1}
-				onClick={() => onNavigate(1)}
-				title="Next file (])"
-				type="button"
-			>
-				<ChevronRight size={20} />
-			</button>
 			<button
 				aria-label="Open settings"
 				className="icon-button settings-launch-button"

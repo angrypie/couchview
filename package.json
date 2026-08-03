@@ -29,6 +29,7 @@
 		"check:commit": "bun run check:commit:static && bun run benchmark:quality",
 		"check:quality": "bun run check:architecture && bun run format:check && bun run lint && bun run typecheck && bun test src scripts && bun run build",
 		"test": "bun test src scripts",
+		"test:integration:tmux": "bun test tests/integration/remote-terminal-tmux.test.ts",
 		"test:watch": "bun test --watch src",
 		"test:e2e": "playwright test"
 	},

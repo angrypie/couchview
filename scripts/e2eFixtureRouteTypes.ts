@@ -2,6 +2,9 @@ import type { PackageRunSummary, SettingsProfile } from "../src/shared/contracts
 import type { FixtureTerminal } from "./e2eFixtureTerminal.ts";
 
 export interface FixtureMutableState {
+	gitDetached: boolean;
+	gitHead: string;
+	gitStashCount: number;
 	operationRevision: string;
 	packageRuns: PackageRunSummary[];
 	settingsProfileCounter: number;
@@ -19,7 +22,7 @@ export interface FixtureRequestContext {
 		id: string;
 		name: string;
 		root: string;
-		branch: string;
+		branch: string | null;
 		head: string;
 		unborn: boolean;
 	} | null;

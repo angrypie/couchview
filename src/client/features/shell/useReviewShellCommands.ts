@@ -3,6 +3,7 @@ import type { ChangeFile } from "../../../shared/contracts.ts";
 import type { useAppCommands } from "../commands/useAppCommands.ts";
 import { useAppCommands as useCommands } from "../commands/useAppCommands.ts";
 import type { useFailureReporting } from "../errors/useFailureReporting.ts";
+import type { useGitWorkspace } from "../history/useGitWorkspace.ts";
 import type { usePackageRuns } from "../packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorkspace.ts";
@@ -16,6 +17,7 @@ interface UseReviewShellCommandsOptions {
 	display: ReturnType<typeof useDisplayPreferences>;
 	drawerOpen: boolean;
 	failure: ReturnType<typeof useFailureReporting>;
+	git: ReturnType<typeof useGitWorkspace>;
 	management: ReturnType<typeof useRepositoryManagement>;
 	navigation: ReturnType<typeof useWorkspaceNavigation>;
 	onDrawerOpenChange: (open: boolean) => void;
@@ -33,6 +35,7 @@ export function useReviewShellCommands({
 	display,
 	drawerOpen,
 	failure,
+	git,
 	management,
 	navigation,
 	onDrawerOpenChange,
@@ -58,6 +61,7 @@ export function useReviewShellCommands({
 		comments.composerOpen ||
 		comments.trayOpen ||
 		Boolean(comments.copyFallbackText) ||
+		git.open ||
 		(!splitView && drawerOpen);
 
 	const dismissAll = useCallback(() => {
@@ -70,11 +74,14 @@ export function useReviewShellCommands({
 		comments.setComposerOpen(false);
 		comments.setTrayOpen(false);
 		comments.setCopyFallbackText("");
+		git.requestAction(null);
+		git.setOpen(false);
 		onDrawerOpenChange(false);
 	}, [
 		comments,
 		commit,
 		failure,
+		git,
 		management,
 		onDrawerOpenChange,
 		onRemoteBridgeOpenChange,
@@ -147,7 +154,8 @@ export function useReviewShellCommands({
 	});
 
 	const dismissTop = useCallback(() => {
-		if (comments.copyFallbackText) comments.setCopyFallbackText("");
+		if (git.pendingAction) git.requestAction(null);
+		else if (comments.copyFallbackText) comments.setCopyFallbackText("");
 		else if (failure.detailsOpen) failure.setDetailsOpen(false);
 		else if (management.pickerOpen) management.setPickerOpen(false);
 		else if (remoteBridgeOpen) onRemoteBridgeOpenChange(false);
@@ -156,11 +164,13 @@ export function useReviewShellCommands({
 		else if (comments.composerOpen) comments.setComposerOpen(false);
 		else if (comments.trayOpen) comments.setTrayOpen(false);
 		else if (search.open) search.setOpen(false);
+		else if (git.open) git.setOpen(false);
 		else onDrawerOpenChange(false);
 	}, [
 		comments,
 		commit,
 		failure,
+		git,
 		management,
 		onDrawerOpenChange,
 		onRemoteBridgeOpenChange,

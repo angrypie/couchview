@@ -14,10 +14,53 @@ import {
 
 describe("Couchview app repository workflows", () => {
 	const fixture = createAppTestHarness();
+
+	test("shows reconnecting without a banner while the server still responds", async () => {
+		render(<App />);
+
+		await screen.findByTestId("pierre-code-view");
+		await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+		const stream = EventSourceStub.instances[0]!;
+		const connectionStatus = screen.getByTestId("repository-connection-status");
+		expect(connectionStatus.classList.contains("connected")).toBe(true);
+
+		await act(async () => {
+			stream.onerror?.(new Event("error"));
+		});
+
+		await waitFor(() => expect(connectionStatus.classList.contains("reconnecting")).toBe(true));
+		expect(connectionStatus.title).toBe("Reconnecting to local server");
+		expect(screen.queryByText("Offline — cannot reach the local server")).toBeNull();
+		expect(fixture.requests.some((request) => request.path === "/api/instance")).toBe(true);
+
+		await act(async () => {
+			stream.onopen?.(new Event("open"));
+		});
+		expect(connectionStatus.classList.contains("connected")).toBe(true);
+	});
+
+	test("shows offline with a banner after the reachability probe fails", async () => {
+		render(<App />);
+
+		await screen.findByTestId("pierre-code-view");
+		await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
+		fixture.instanceOffline = true;
+		await act(async () => {
+			EventSourceStub.instances[0]?.onerror?.(new Event("error"));
+		});
+
+		const connectionStatus = screen.getByTestId("repository-connection-status");
+		await waitFor(() => expect(connectionStatus.classList.contains("offline")).toBe(true));
+		expect(connectionStatus.title).toBe("Offline — local server unavailable");
+		expect(screen.getByText("Offline — cannot reach the local server")).toBeTruthy();
+	});
+
 	test("preloads adjacent diffs and reuses them for instant back-and-forth navigation", async () => {
 		render(<App />);
 
 		await screen.findByTestId("pierre-code-view");
+		expect(screen.getAllByRole("button", { name: "Previous file" })).toHaveLength(1);
+		expect(screen.getAllByRole("button", { name: "Next file" })).toHaveLength(1);
 		const diffRequestCount = (fileId: string) =>
 			fixture.requests.filter(
 				(request) => request.path === `/api/repositories/repo/files/${fileId}/diff`,
@@ -155,13 +198,7 @@ describe("Couchview app repository workflows", () => {
 			operationRevision: "operation-1",
 		});
 		expect(within(drawer).getByRole("button", { name: "Stage all files (1)" })).toBeTruthy();
-		expect(
-			(
-				within(drawer).getByRole("button", {
-					name: "Stage reviewed files (0)",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
+		expect(within(drawer).queryByRole("button", { name: "Stage reviewed files (0)" })).toBeNull();
 		expect(diffRequestCount()).toBe(initialDiffRequests);
 		expect(screen.getByTestId("pierre-code-view")).toBeTruthy();
 	});
@@ -192,13 +229,7 @@ describe("Couchview app repository workflows", () => {
 				name: "Commit 2 staged files",
 			}),
 		).toBeTruthy();
-		expect(
-			(
-				within(drawer).getByRole("button", {
-					name: "Stage all files (0)",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
+		expect(within(drawer).queryByRole("button", { name: "Stage all files (0)" })).toBeNull();
 	});
 
 	test("unreviews only reviewed files shown by the active drawer filters", async () => {
@@ -217,8 +248,12 @@ describe("Couchview app repository workflows", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
 		const drawer = await screen.findByRole("complementary", { name: "Changed files" });
 		expect(within(drawer).getByRole("button", { name: "Unreview shown files (2)" })).toBeTruthy();
-		fireEvent.click(within(drawer).getByRole("button", { name: /^reviewed$/ }));
-		fireEvent.click(within(drawer).getByRole("button", { name: /^staged$/ }));
+		fireEvent.change(within(drawer).getByRole("combobox", { name: "Review filter" }), {
+			target: { value: "reviewed" },
+		});
+		fireEvent.change(within(drawer).getByRole("combobox", { name: "Stage filter" }), {
+			target: { value: "staged" },
+		});
 		fireEvent.click(within(drawer).getByRole("button", { name: "Unreview shown files (1)" }));
 
 		await screen.findByText("1 review mark removed");
@@ -231,13 +266,7 @@ describe("Couchview app repository workflows", () => {
 		});
 		expect(fixture.files[0]?.reviewed).toBe(false);
 		expect(fixture.files[1]?.reviewed).toBe(true);
-		expect(
-			(
-				within(drawer).getByRole("button", {
-					name: "Unreview shown files (0)",
-				}) as HTMLButtonElement
-			).disabled,
-		).toBe(true);
+		expect(within(drawer).queryByRole("button", { name: "Unreview shown files (0)" })).toBeNull();
 	});
 
 	test("restores review markers when a bulk unreview request fails", async () => {

@@ -42,6 +42,8 @@ Write strict TypeScript and React function components. Biome defines the adopted
 
 Prefer snappy, continuity-preserving interactions, especially during file navigation and repository mutations. Keep useful content mounted while background work completes instead of flashing empty or loading states for short operations. When correctness permits, prefetch likely next and previous states and reuse fetched, parsed, or rendered results through bounded caches. Cache keys must include the repository or resource identity and an authoritative content revision, stale entries must be ignored automatically, and cache limits must protect mobile memory. Use optimistic UI updates when they can be reconciled safely with an authoritative server response. Add regression coverage for visible loading flashes, redundant requests, stale-cache behavior, and back-and-forth navigation.
 
+Keep layouts compact, especially on mobile and in persistent footer or toolbar surfaces. Do not dedicate a full row to an infrequent action when related secondary actions can share a simple grid or condensed control group. Shorten visible labels when space is limited while preserving explicit accessible names and tooltips. Prefer straightforward markup and CSS over new state, abstractions, or components for presentation-only changes.
+
 ## Testing Guidelines
 
 Use Bun's `describe`, `test`, and `expect`; component tests use Happy DOM and Testing Library. Name tests after observable behavior and keep fixtures deterministic. Playwright specs should prefer roles or stable semantic locators. There is no numeric coverage threshold, but bug fixes need regression tests and new branches should exercise success and failure paths.

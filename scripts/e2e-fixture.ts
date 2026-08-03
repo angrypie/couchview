@@ -37,6 +37,9 @@ function defaultSettingsProfile(): SettingsProfile {
 }
 
 const state: FixtureMutableState = {
+	gitDetached: false,
+	gitHead: repository.head,
+	gitStashCount: 0,
 	operationRevision: "fixture-operation-1",
 	packageRuns: [],
 	settingsProfileCounter: 0,
@@ -50,6 +53,9 @@ const state: FixtureMutableState = {
 		this.settingsProfileCounter = 0;
 		this.settingsProfiles = [defaultSettingsProfile()];
 		this.operationRevision = "fixture-operation-1";
+		this.gitDetached = false;
+		this.gitHead = repository.head;
+		this.gitStashCount = 0;
 		this.terminal.reset();
 	},
 };

@@ -103,8 +103,8 @@ export function useReviewWorkflow({
 
 	useEffect(() => {
 		if (!workspace.repositoryId) return;
-		void comments.refreshReviewState().catch(() => workspace.setConnected(false));
-	}, [comments.refreshReviewState, workspace.repositoryId, workspace.setConnected]);
+		void comments.refreshReviewState().catch(workspace.markConnectionFailure);
+	}, [comments.refreshReviewState, workspace.markConnectionFailure, workspace.repositoryId]);
 
 	useRepositoryEvents({
 		clearRepositorySelection: workspace.clearRepositorySelection,
@@ -114,6 +114,7 @@ export function useReviewWorkflow({
 		getRepositoryId: workspace.getRepositoryId,
 		loadDiff: diff.loadDiff,
 		loadRepository: workspace.loadRepository,
+		markConnectionFailure: workspace.markConnectionFailure,
 		phase: workspace.phase,
 		queueExternalStageChange: staging.queueExternalChange,
 		refreshChanges: workspace.refreshChanges,
@@ -122,7 +123,7 @@ export function useReviewWorkflow({
 		refreshReviewState: comments.refreshReviewState,
 		repositoryId: workspace.repositoryId,
 		repositoryLoading: workspace.repositoryLoading,
-		setConnected: workspace.setConnected,
+		setConnectionState: workspace.setConnectionState,
 		setDiff: diff.setDiff,
 	});
 

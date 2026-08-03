@@ -1,6 +1,8 @@
 import type {
 	BootstrapResponse,
 	ChangesResponse,
+	GitCommitChangesResponse,
+	GitHistoryResponse,
 	PackageRunEvent,
 	ReviewStateResponse,
 } from "../src/shared/contracts.ts";
@@ -9,6 +11,9 @@ import {
 	comments,
 	diffs,
 	files,
+	historyCommits,
+	historyDiff,
+	historyFiles,
 	packageScripts,
 	repository,
 	repositoryCatalog,
@@ -109,9 +114,41 @@ export function handleFixtureReadRoute(
 			404,
 		);
 	}
+	const gitStatus = {
+		previousBranch: state.gitDetached ? repository.branch : null,
+		stashCount: state.gitStashCount,
+		canUndoLastCommit: !state.gitDetached,
+		trackedChangeCount: files.filter((file) => file.kind !== "untracked").length,
+		untrackedChangeCount: files.filter((file) => file.kind === "untracked").length,
+	};
+	if (nestedPath === "git/history") {
+		return fixtureJson({
+			commits: historyCommits,
+			nextCursor: null,
+			historyRevision: `fixture-history-${state.gitHead}`,
+			scope: url.searchParams.get("scope") === "all" ? "all" : "current",
+			status: gitStatus,
+		} satisfies GitHistoryResponse);
+	}
+	const historyCommitRoute = /^git\/history\/([0-9a-f]{40})$/.exec(nestedPath);
+	if (historyCommitRoute) {
+		const commit = historyCommits.find((candidate) => candidate.id === historyCommitRoute[1]);
+		return commit
+			? fixtureJson({ commit, files: historyFiles } satisfies GitCommitChangesResponse)
+			: fixtureJson({ error: { code: "not_found", message: "Fixture commit not found" } }, 404);
+	}
+	const historyDiffRoute = /^git\/history\/([0-9a-f]{40})\/files\/([^/]+)\/diff$/.exec(nestedPath);
+	if (historyDiffRoute) {
+		return historyDiffRoute[2] === historyFiles[0]?.id
+			? fixtureJson(historyDiff)
+			: fixtureJson({ error: { code: "not_found", message: "Fixture file not found" } }, 404);
+	}
 	if (nestedPath === "files") {
 		return fixtureJson({
-			repository: selectedRepository!,
+			repository:
+				state.gitDetached && selectedRepository?.id === repository.id
+					? { ...selectedRepository, branch: null, head: state.gitHead }
+					: selectedRepository!,
 			files,
 			operationRevision: state.operationRevision,
 		} satisfies ChangesResponse);

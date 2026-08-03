@@ -222,11 +222,14 @@ body {
 	font-weight: 800;
 }
 
-.command-palette-trigger {
+button.command-palette-trigger {
 	width: auto;
 	min-width: 38px;
 	gap: 6px;
 	padding-inline: 9px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .settings-toolbar-actions,

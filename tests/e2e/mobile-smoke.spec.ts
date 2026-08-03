@@ -52,6 +52,22 @@ test.describe("mobile fixture review", () => {
 		expect(response.ok()).toBe(true);
 	});
 
+	test("shows a quiet reconnecting indicator while the server remains reachable", async ({
+		page,
+	}, testInfo) => {
+		test.skip(
+			testInfo.project.name !== "mobile-375-webkit",
+			"The installed iOS PWA is the representative resume case.",
+		);
+		await page.route("**/api/repositories/*/events", (route) => route.abort("connectionrefused"));
+		await openFixture(page);
+
+		const status = page.getByTestId("repository-connection-status");
+		await expect(status).toHaveClass(/reconnecting/);
+		await expect(status).toHaveCSS("background-color", "rgb(234, 191, 98)");
+		await expect(page.locator(".disconnected-banner")).toHaveCount(0);
+	});
+
 	test("uses the touch command palette across review, terminal, and Settings", async ({ page }) => {
 		await openFixture(page);
 		await page.getByRole("button", { name: "Open command palette" }).click();
@@ -508,7 +524,7 @@ test.describe("mobile fixture review", () => {
 			.toEqual({
 				aligned: true,
 				contained: true,
-				count: 5,
+				count: 6,
 				heightIsCompact: true,
 				noOverlap: true,
 				wideEnough: true,
@@ -607,9 +623,7 @@ test.describe("mobile fixture review", () => {
 			textInflationDisabled: true,
 		});
 
-		const fileSwitchControls = testInfo.project.name.includes("landscape")
-			? page.getByRole("navigation", { name: "Review actions" })
-			: currentFile;
+		const fileSwitchControls = page.getByRole("navigation", { name: "Review actions" });
 		await fileSwitchControls.getByRole("button", { name: "Next file" }).click();
 		await expect(currentFile).toContainText("src/format.ts");
 		await expect.poll(renderedFont).toEqual({
@@ -716,9 +730,7 @@ test.describe("mobile fixture review", () => {
 
 		await actions.getByRole("button", { name: "Next file" }).click();
 		await expect(currentFile).toContainText("src/format.ts");
-		const previousFile = testInfo.project.name.includes("landscape")
-			? actions.getByRole("button", { name: "Previous file" })
-			: currentFile.getByRole("button", { name: "Previous file" });
+		const previousFile = actions.getByRole("button", { name: "Previous file" });
 		await previousFile.click();
 		await expect(currentFile).toContainText("src/review.ts");
 	});
@@ -758,9 +770,7 @@ test.describe("mobile fixture review", () => {
 		await actions.getByRole("button", { name: "Next file" }).click();
 		await expect(currentFile).toContainText("src/format.ts");
 		await expect(page.getByText("Loading diff…")).toHaveCount(0);
-		const previousFile = testInfo.project.name.includes("landscape")
-			? actions.getByRole("button", { name: "Previous file" })
-			: currentFile.getByRole("button", { name: "Previous file" });
+		const previousFile = actions.getByRole("button", { name: "Previous file" });
 		await previousFile.click();
 		await expect(currentFile).toContainText("src/review.ts");
 
@@ -913,7 +923,7 @@ test.describe("mobile fixture review", () => {
 		await expect(drawer.getByRole("button", { name: "Stage reviewed files (1)" })).toBeVisible();
 		await drawer.getByRole("button", { name: "Stage reviewed files (1)" }).click();
 		await expect(page.getByText("1 reviewed file staged", { exact: true })).toBeVisible();
-		await expect(drawer.getByRole("button", { name: "Stage reviewed files (0)" })).toBeDisabled();
+		await expect(drawer.getByRole("button", { name: "Stage reviewed files (0)" })).toHaveCount(0);
 		await expect(drawer.getByRole("button", { name: "Stage all files (1)" })).toBeEnabled();
 
 		await drawer.getByRole("button", { name: "Stage all files (1)" }).click();
@@ -922,7 +932,7 @@ test.describe("mobile fixture review", () => {
 
 		await drawer.getByRole("button", { name: "Unreview shown files (1)" }).click();
 		await expect(page.getByText("1 review mark removed", { exact: true })).toBeVisible();
-		await expect(drawer.getByRole("button", { name: "Unreview shown files (0)" })).toBeDisabled();
+		await expect(drawer.getByRole("button", { name: "Unreview shown files (0)" })).toHaveCount(0);
 	});
 
 	test("runs grouped package commands and reconnects to their output", async ({ page }) => {

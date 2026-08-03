@@ -90,6 +90,7 @@ interface DiffViewerProps {
 	widthAdjustment: number;
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
+	interactive?: boolean;
 	selectedRange: SelectedLineRange | null;
 	onCommentClick(comment: ReviewComment): void;
 	onIdentifierClick(identifier: string): void;
@@ -140,12 +141,15 @@ function enhanceRenderedDiff(
 	fontSize: number,
 	lineHeight: number,
 	letterSpacing: number,
+	interactive: boolean,
 ): void {
 	const root = host.shadowRoot;
 	if (!root) return;
 
-	const interactive = root.querySelectorAll<HTMLElement>("[data-column-number], [data-char]");
-	for (const element of interactive) {
+	const interactiveElements = root.querySelectorAll<HTMLElement>(
+		"[data-column-number], [data-char]",
+	);
+	for (const element of interactiveElements) {
 		element.onkeydown = null;
 		element.removeAttribute("role");
 		element.removeAttribute("tabindex");
@@ -164,6 +168,7 @@ function enhanceRenderedDiff(
 	host.style.setProperty("--diffs-font-size", `${fontSize}px`);
 	host.style.setProperty("--diffs-line-height", `${lineHeight}px`);
 	host.style.setProperty("--diffs-letter-spacing", `${letterSpacing}px`);
+	if (!interactive) return;
 
 	if (lineNumbersVisible) {
 		for (const number of root.querySelectorAll<HTMLElement>("[data-column-number]")) {
@@ -218,6 +223,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 		diff,
 		fontFamily,
 		fontSize,
+		interactive = true,
 		lineHeightAdjustment,
 		widthAdjustment,
 		lineNumbersVisible,
@@ -353,7 +359,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			disableFileHeader: true,
 			disableLineNumbers: !lineNumbersVisible,
 			enableLineSelection: false,
-			lineHoverHighlight: lineNumbersVisible ? "both" : "line",
+			lineHoverHighlight: interactive && lineNumbersVisible ? "both" : "line",
 			useTokenTransformer: true,
 			tokenizeMaxLineLength: 2_000,
 			tokenizeMaxLength: 100_000,
@@ -365,11 +371,12 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
 			unsafeCSS: PIERRE_UNSAFE_CSS,
 			onLineNumberClick(props) {
-				if (!lineNumbersVisible || props.type !== "diff-line") return;
+				if (!interactive || !lineNumbersVisible || props.type !== "diff-line") return;
 				onLineNumberClick(props.lineNumber, fromPierreSide(props.annotationSide));
 			},
 			onTokenClick(props) {
-				if (props.type !== "token" || !IDENTIFIER_PATTERN.test(props.tokenText)) return;
+				if (!interactive || props.type !== "token" || !IDENTIFIER_PATTERN.test(props.tokenText))
+					return;
 				onIdentifierClick(props.tokenText);
 			},
 			onPostRender(node, _instance, phase) {
@@ -381,12 +388,14 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 					fontSize,
 					lineHeight,
 					widthAdjustment,
+					interactive,
 				);
 			},
 		}),
 		[
 			fontFamily,
 			fontSize,
+			interactive,
 			lineHeight,
 			lineHeightAdjustment,
 			lineNumbersVisible,

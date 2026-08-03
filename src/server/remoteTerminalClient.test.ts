@@ -158,6 +158,7 @@ describe("remote terminal lifecycle", () => {
 		let exitListener: (() => void) | null = null;
 		const runtime: RemoteTerminalClientRuntime = {
 			paths: stored.paths,
+			env: { TERM: "xterm-ghostty", USER: "mini" },
 			which: () => "/usr/bin/ssh",
 			spawn(command, options) {
 				commands.push(command);
@@ -191,11 +192,13 @@ describe("remote terminal lifecycle", () => {
 		expect(commands[1]?.at(-1)).toContain("Project One");
 		expect(spawnOptions).toEqual([
 			expect.objectContaining({
+				env: { TERM: "xterm-256color", USER: "mini" },
 				stdin: "inherit",
 				stdout: "inherit",
 				stderr: "inherit",
 			}),
 			expect.objectContaining({
+				env: { TERM: "xterm-256color", USER: "mini" },
 				stdin: "inherit",
 				stdout: "inherit",
 				stderr: "inherit",
