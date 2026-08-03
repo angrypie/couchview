@@ -73,6 +73,7 @@ export function createAppTestHarness() {
 		servedFirstDiff: structuredClone(firstDiff) as FileDiff,
 		currentOperationRevision: "operation-1",
 		diffFailure: false,
+		bulkReviewFailure: false,
 		stageFailure: false,
 		delayNextDiffResponse: false,
 		releaseDiffResponse: null as (() => void) | null,
@@ -121,6 +122,7 @@ export function createAppTestHarness() {
 		fixture.servedFirstDiff = structuredClone(firstDiff);
 		fixture.currentOperationRevision = "operation-1";
 		fixture.diffFailure = false;
+		fixture.bulkReviewFailure = false;
 		fixture.stageFailure = false;
 		fixture.delayNextDiffResponse = false;
 		fixture.releaseDiffResponse = null;
@@ -504,6 +506,41 @@ export function createAppTestHarness() {
 				return Response.json({ diff: fixture.servedFirstDiff });
 			}
 			if (nestedPath === "files/second/diff") return Response.json({ diff: secondDiff });
+			if (nestedPath === "files/review" && method === "PUT") {
+				if (fixture.bulkReviewFailure) {
+					return Response.json(
+						{
+							error: {
+								code: "review_update_failed",
+								message: "Could not remove review marks.",
+							},
+						},
+						{ status: 409 },
+					);
+				}
+				const input = body as {
+					files: Array<{ fileId: string; contentRevision: string }>;
+					reviewed: boolean;
+				};
+				const targetIds = new Set(input.files.map((target) => target.fileId));
+				const reviews = fixture.files
+					.filter((file) => targetIds.has(file.id))
+					.map((file) => {
+						file.reviewed = input.reviewed;
+						return {
+							fileId: file.id,
+							path: file.path,
+							contentRevision: file.contentRevision,
+							reviewed: file.reviewed,
+							updatedAt: new Date().toISOString(),
+						};
+					});
+				fixture.reviews = [
+					...fixture.reviews.filter((review) => !targetIds.has(String(review.fileId))),
+					...reviews,
+				];
+				return Response.json({ reviews });
+			}
 			if (nestedPath === "search") {
 				const query = url.searchParams.get("q") ?? "";
 				return Response.json({

@@ -562,20 +562,4 @@ describe("Couchview app lifecycle and settings", () => {
 			fixture.settingsProfiles[0]!.data.typography.terminal,
 		);
 	});
-
-	test("migrates pre-rename display preferences", async () => {
-		localStorage.setItem("couch-review:font-size", "13");
-		localStorage.setItem("couch-review:line-numbers", "true");
-		localStorage.setItem("couch-review:line-wrap", "true");
-
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		expect(screen.getByText("11px")).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Show line numbers" })).toBeTruthy();
-		expect(screen.getByRole("button", { name: "Wrap long lines" })).toBeTruthy();
-		expect(localStorage.getItem("couch-review:font-size")).toBe("13");
-		expect(localStorage.getItem("couch-review:line-numbers")).toBe("true");
-		expect(localStorage.getItem("couch-review:line-wrap")).toBe("true");
-	});
 });

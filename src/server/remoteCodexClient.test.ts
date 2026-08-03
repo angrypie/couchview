@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
+import { resolveRemoteBridgePaths, storeRemoteBridgeProfile } from "./remoteBridgeClient.ts";
 import {
 	type RemoteCodexClientRuntime,
 	remoteCodexLaunchCommands,
 	resolveRemoteCodexProfile,
 	runRemoteCodex,
 } from "./remoteCodexClient.ts";
-import { resolveRemoteBridgePaths, storeRemoteBridgeProfile } from "./remoteBridgeClient.ts";
 
 function profile(overrides: Partial<RemoteBridgeProfile> = {}): RemoteBridgeProfile {
 	return {

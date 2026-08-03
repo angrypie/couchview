@@ -1,16 +1,16 @@
-import { useEffect, useState } from "react";
 import { ArrowLeft, RotateCcw, Settings2, SquareTerminal, Type } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { GhosttyTerminalPreview } from "./GhosttyTerminalPreview.tsx";
 
 import {
+	type CodeFontFamily,
 	codeFontStack,
 	DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
 	DEFAULT_TYPOGRAPHY_PREFERENCES,
-	TYPOGRAPHY_LIMITS,
-	type CodeFontFamily,
 	type DiffTypographyPreferences,
 	type TerminalTypographyPreferences,
+	TYPOGRAPHY_LIMITS,
 	type TypographyPreferences,
 } from "./typographyPreferences.ts";
 

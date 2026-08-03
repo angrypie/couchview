@@ -10,8 +10,8 @@ import {
 	paletteShortcutHasRequiredModifier,
 	parseSettingsProfileData,
 	parseShortcutSequence,
-	shortcutSequenceKey,
 	type ShortcutSequence,
+	shortcutSequenceKey,
 } from "./settings.ts";
 
 const keys = (sequence: ShortcutSequence | null) =>

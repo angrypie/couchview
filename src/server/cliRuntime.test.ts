@@ -15,8 +15,6 @@ import { type CouchviewApp, createCouchviewApp } from "./server.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
 const initialHost = Bun.env.COUCHVIEW_HOST;
-const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
-const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
 const initialTerminal = Bun.env.COUCHVIEW_TERMINAL;
 const initialTerminalP2p = Bun.env.COUCHVIEW_TERMINAL_P2P;
@@ -30,7 +28,6 @@ const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
 const initialDisableReuse = Bun.env.COUCHVIEW_DISABLE_REUSE;
-const initialLegacyDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 
 function restoreEnvironment() {
 	if (initialRoot === undefined) delete Bun.env.COUCHVIEW_ROOT;
@@ -38,12 +35,6 @@ function restoreEnvironment() {
 
 	if (initialHost === undefined) delete Bun.env.COUCHVIEW_HOST;
 	else Bun.env.COUCHVIEW_HOST = initialHost;
-
-	if (initialLegacyRoot === undefined) delete Bun.env.COUCH_REVIEW_ROOT;
-	else Bun.env.COUCH_REVIEW_ROOT = initialLegacyRoot;
-
-	if (initialLegacyHost === undefined) delete Bun.env.COUCH_REVIEW_HOST;
-	else Bun.env.COUCH_REVIEW_HOST = initialLegacyHost;
 
 	if (initialPort === undefined) delete Bun.env.PORT;
 	else Bun.env.PORT = initialPort;
@@ -92,12 +83,6 @@ function restoreEnvironment() {
 
 	if (initialDisableReuse === undefined) delete Bun.env.COUCHVIEW_DISABLE_REUSE;
 	else Bun.env.COUCHVIEW_DISABLE_REUSE = initialDisableReuse;
-
-	if (initialLegacyDisableReuse === undefined) {
-		delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
-	} else {
-		Bun.env.COUCH_REVIEW_DISABLE_REUSE = initialLegacyDisableReuse;
-	}
 }
 
 describe("restartCapability", () => {
@@ -308,7 +293,6 @@ describe("multi-project CLI startup", () => {
 		delete Bun.env.COUCHVIEW_TERMINAL_P2P;
 		delete Bun.env.COUCHVIEW_TERMINAL_STUN;
 		delete Bun.env.COUCHVIEW_DISABLE_REUSE;
-		delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 		const dataHome = await mkdtemp(path.join(tmpdir(), "couchview-cli-data-"));
 		temporaryDirectories.push(dataHome);
 		Bun.env.XDG_DATA_HOME = dataHome;

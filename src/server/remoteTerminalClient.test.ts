@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
+import { resolveRemoteBridgePaths, storeRemoteBridgeProfile } from "./remoteBridgeClient.ts";
 import {
-	remoteClaudeLaunchCommand,
 	type RemoteTerminalClientRuntime,
+	remoteClaudeLaunchCommand,
 	remoteTerminalLaunchCommand,
 	runRemoteClaude,
 	runRemoteTerminal,
 } from "./remoteTerminalClient.ts";
-import { resolveRemoteBridgePaths, storeRemoteBridgeProfile } from "./remoteBridgeClient.ts";
 
 function profile(overrides: Partial<RemoteBridgeProfile> = {}): RemoteBridgeProfile {
 	return {

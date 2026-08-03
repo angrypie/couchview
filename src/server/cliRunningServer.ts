@@ -30,7 +30,7 @@ interface RestartCliRuntime {
 
 export function parseRestartCli(argv: string[]): RestartCliOptions {
 	const parsed = parseRestartArguments(argv);
-	const host = parsed.host ?? Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
+	const host = parsed.host ?? Bun.env.COUCHVIEW_HOST ?? "127.0.0.1";
 	const port = Number(parsed.port ?? Bun.env.PORT ?? 4173);
 	if (!host) throw new Error("Host is required");
 	if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {

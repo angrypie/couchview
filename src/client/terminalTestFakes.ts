@@ -1,10 +1,10 @@
-import type { TerminalRendererConfig } from "./typographyPreferences.ts";
 import type {
-	BrowserTerminalRenderer,
 	BrowserTerminalPreviewRenderer,
+	BrowserTerminalRenderer,
 	BrowserTerminalWriteProfile,
 } from "./ghosttyTerminal.ts";
 import type { TerminalKeyInput } from "./terminalKeyboard.ts";
+import type { TerminalRendererConfig } from "./typographyPreferences.ts";
 
 interface RendererOptions {
 	container: HTMLElement;

@@ -77,12 +77,8 @@ export async function startServer(
 		serve: runtimeOverrides.serve ?? Bun.serve,
 	};
 	const { options, parsed } = parseCliState(argv);
-	const explicitHost =
-		parsed.explicit.host ||
-		Bun.env.COUCHVIEW_HOST !== undefined ||
-		Bun.env.COUCH_REVIEW_HOST !== undefined;
-	const reuseEnabled =
-		(Bun.env.COUCHVIEW_DISABLE_REUSE ?? Bun.env.COUCH_REVIEW_DISABLE_REUSE) !== "1";
+	const explicitHost = parsed.explicit.host || Bun.env.COUCHVIEW_HOST !== undefined;
+	const reuseEnabled = Bun.env.COUCHVIEW_DISABLE_REUSE !== "1";
 	if (reuseEnabled) {
 		const running = await registerWithRunningServer(options, explicitHost, runtime.fetch);
 		if (running) {

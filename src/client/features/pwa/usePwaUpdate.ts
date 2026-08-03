@@ -10,7 +10,6 @@ interface InstallPromptEvent extends Event {
 }
 
 const INSTALL_DISMISSED_KEY = "couchview:install-hint-dismissed";
-const LEGACY_INSTALL_DISMISSED_KEY = "couch-review:install-hint-dismissed";
 
 interface PwaUpdateOptions {
 	updateSafe: boolean;
@@ -20,12 +19,7 @@ export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
 	const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
 	const [installDismissed, setInstallDismissed] = useState(() => {
 		try {
-			const current = localStorage.getItem(INSTALL_DISMISSED_KEY);
-			const stored = current ?? localStorage.getItem(LEGACY_INSTALL_DISMISSED_KEY);
-			if (current === null && stored !== null) {
-				localStorage.setItem(INSTALL_DISMISSED_KEY, stored);
-			}
-			return stored === "1";
+			return localStorage.getItem(INSTALL_DISMISSED_KEY) === "1";
 		} catch {
 			return false;
 		}

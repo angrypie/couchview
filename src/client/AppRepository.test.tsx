@@ -201,6 +201,60 @@ describe("Couchview app repository workflows", () => {
 		).toBe(true);
 	});
 
+	test("unreviews only reviewed files shown by the active drawer filters", async () => {
+		fixture.files[0] = {
+			...fixture.files[0]!,
+			indexStatus: "M",
+			reviewed: true,
+			staged: true,
+			unstaged: false,
+			worktreeStatus: ".",
+		};
+		fixture.files[1] = { ...fixture.files[1]!, reviewed: true };
+		render(<App />);
+
+		await screen.findByTestId("pierre-code-view");
+		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+		const drawer = await screen.findByRole("complementary", { name: "Changed files" });
+		expect(within(drawer).getByRole("button", { name: "Unreview shown files (2)" })).toBeTruthy();
+		fireEvent.click(within(drawer).getByRole("button", { name: /^reviewed$/ }));
+		fireEvent.click(within(drawer).getByRole("button", { name: /^staged$/ }));
+		fireEvent.click(within(drawer).getByRole("button", { name: "Unreview shown files (1)" }));
+
+		await screen.findByText("1 review mark removed");
+		expect(
+			fixture.requests.find((request) => request.path === "/api/repositories/repo/files/review")
+				?.body,
+		).toEqual({
+			files: [{ fileId: "first", contentRevision: "first-v1" }],
+			reviewed: false,
+		});
+		expect(fixture.files[0]?.reviewed).toBe(false);
+		expect(fixture.files[1]?.reviewed).toBe(true);
+		expect(
+			(
+				within(drawer).getByRole("button", {
+					name: "Unreview shown files (0)",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+	});
+
+	test("restores review markers when a bulk unreview request fails", async () => {
+		fixture.files[0] = { ...fixture.files[0]!, reviewed: true };
+		fixture.bulkReviewFailure = true;
+		render(<App />);
+
+		await screen.findByTestId("pierre-code-view");
+		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
+		const drawer = await screen.findByRole("complementary", { name: "Changed files" });
+		fireEvent.click(within(drawer).getByRole("button", { name: "Unreview shown files (1)" }));
+
+		await screen.findByText("Could not remove review marks.");
+		expect(fixture.files[0]?.reviewed).toBe(true);
+		expect(within(drawer).getByRole("button", { name: "Unreview shown files (1)" })).toBeTruthy();
+	});
+
 	test("selects the next file when an authoritative stage delta removes the active file", async () => {
 		fixture.files[0] = {
 			...fixture.files[0]!,

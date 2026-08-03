@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { createCouchviewApp, type CouchviewApp } from "./server.ts";
+import { type CouchviewApp, createCouchviewApp } from "./server.ts";
 
 const temporaryDirectories: string[] = [];
 const applications: CouchviewApp[] = [];

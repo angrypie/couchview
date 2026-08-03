@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-
+import { exportCommentsForCodex } from "../shared/commentExport.ts";
 import type {
 	CodexApprovalDecision,
 	CodexCapability,
@@ -7,9 +7,8 @@ import type {
 	CodexThreadStatus,
 	CodexThreadSummary,
 	CodexTurnResponse,
+	ReviewComment,
 } from "../shared/contracts.ts";
-import { exportCommentsForCodex } from "../shared/commentExport.ts";
-import type { ReviewComment } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
 
 type RpcId = number | string;

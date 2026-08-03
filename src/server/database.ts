@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -16,18 +15,18 @@ import {
 	type SettingsProfileData,
 } from "../shared/settings.ts";
 import {
-	commentFromRow,
 	type CommentRow,
+	commentFromRow,
 	type InstanceRow,
 	type MetadataRow,
-	remoteBridgeDeviceFromRow,
 	type RemoteBridgeDeviceRow,
-	repositoryFromRow,
 	type RepositoryRow,
-	reviewFromRow,
 	type ReviewRow,
-	settingsProfileFromRow,
+	remoteBridgeDeviceFromRow,
+	repositoryFromRow,
+	reviewFromRow,
 	type SettingsProfileRow,
+	settingsProfileFromRow,
 } from "./databaseRows.ts";
 
 const SCHEMA_VERSION = 4;
@@ -80,9 +79,7 @@ export function resolveStateDatabasePath(
 		configured && path.isAbsolute(configured)
 			? configured
 			: path.join(homeDirectory, ".local", "share");
-	const currentPath = path.join(dataHome, "couchview", "state.sqlite");
-	const legacyPath = path.join(dataHome, "couch-review", "state.sqlite");
-	return !existsSync(currentPath) && existsSync(legacyPath) ? legacyPath : currentPath;
+	return path.join(dataHome, "couchview", "state.sqlite");
 }
 
 export class StateDatabase {

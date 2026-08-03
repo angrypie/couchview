@@ -1,7 +1,7 @@
 import {
-	parsePatchFiles,
 	type DiffLineAnnotation,
 	type FileDiffMetadata,
+	parsePatchFiles,
 	type SelectedLineRange,
 } from "@pierre/diffs";
 import type { DiffSide, FileDiff, ReviewComment } from "../shared/contracts.ts";

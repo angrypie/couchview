@@ -7,6 +7,7 @@ import type {
 	CreateCommentRequest,
 	DeleteCommentRequest,
 	SetReviewRequest,
+	SetReviewsRequest,
 	UpdateCommentRequest,
 } from "../shared/contracts.ts";
 import { codexPrompt } from "./codexAppServer.ts";
@@ -35,6 +36,12 @@ export async function handleRepositoryCollaborationRoutes(
 
 	if (nestedPath === "comments" && request.method === "GET") {
 		return json(await repository.reviewState());
+	}
+	if (nestedPath === "files/review" && request.method === "PUT") {
+		const input = await readJsonObject<SetReviewsRequest>(request);
+		const result = await repository.setReviews(input);
+		await events.emitRepository(repositoryId, "state");
+		return json(result);
 	}
 
 	if (nestedPath === "codex/threads" && request.method === "GET") {

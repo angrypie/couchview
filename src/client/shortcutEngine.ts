@@ -2,11 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
 	COMMAND_IDS,
-	shortcutSequenceKey,
 	type CommandId,
 	type ShortcutModifier,
 	type ShortcutSequence,
 	type ShortcutStroke,
+	shortcutSequenceKey,
 } from "../shared/settings.ts";
 import type { RuntimeCommand } from "./commands.ts";
 

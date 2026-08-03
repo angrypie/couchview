@@ -7,6 +7,8 @@ import type {
 	ReviewStateResponse,
 	SetReviewRequest,
 	SetReviewResponse,
+	SetReviewsRequest,
+	SetReviewsResponse,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
 import { decodeGitOutput, runGit } from "./git.ts";
@@ -159,6 +161,46 @@ export class RepositoryReview {
 			updatedAt: new Date().toISOString(),
 		});
 		return { review };
+	}
+
+	async setReviews(input: SetReviewsRequest): Promise<SetReviewsResponse> {
+		if (!input || typeof input !== "object" || Array.isArray(input)) {
+			throw new HttpError(400, "invalid_request", "Review request is invalid");
+		}
+		if (!Array.isArray(input.files) || input.files.length === 0 || input.files.length > 1_000) {
+			throw new HttpError(400, "invalid_request", "Review files must be a non-empty array");
+		}
+		if (typeof input.reviewed !== "boolean") {
+			throw new HttpError(400, "invalid_request", "reviewed must be a boolean");
+		}
+
+		const snapshot = await this.snapshots.getSnapshot();
+		const seen = new Set<string>();
+		const updatedAt = new Date().toISOString();
+		const records = input.files.map((target) => {
+			if (!target || typeof target !== "object" || Array.isArray(target)) {
+				throw new HttpError(400, "invalid_request", "Review file is invalid");
+			}
+			assertNonEmptyString(target.fileId, "file id", 100);
+			assertNonEmptyString(target.contentRevision, "content revision", 200);
+			if (seen.has(target.fileId)) {
+				throw new HttpError(400, "invalid_request", "Review files must be unique");
+			}
+			seen.add(target.fileId);
+			const file = this.content.requireCurrentContent(
+				snapshot,
+				target.fileId,
+				target.contentRevision,
+			);
+			return {
+				fileId: file.id,
+				path: file.path,
+				contentRevision: file.contentRevision,
+				reviewed: input.reviewed,
+				updatedAt,
+			};
+		});
+		return { reviews: await this.store.setReviews(records) };
 	}
 
 	async createComment(input: CreateCommentRequest): Promise<CommentResponse> {

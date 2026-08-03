@@ -7,6 +7,7 @@ import {
 	LoaderCircle,
 	Play,
 	SquareTerminal,
+	Undo2,
 	X,
 } from "lucide-react";
 import type {
@@ -29,6 +30,7 @@ export type { DrawerView, ReviewFilter, StageFilter };
 
 interface ChangedFilesDrawerProps {
 	bulkStageBusy: BulkStageScope | null;
+	bulkReviewBusy: boolean;
 	changeTotals: { additions: number; deletions: number };
 	commandsAvailable: boolean;
 	commandsLoading: boolean;
@@ -45,6 +47,7 @@ interface ChangedFilesDrawerProps {
 	onSelectFile: (fileId: string) => void;
 	onStageFilterChange: (filter: StageFilter) => void;
 	onStageMultiple: (scope: BulkStageScope) => void;
+	onUnreviewMultiple: () => void;
 	onStartScript: (packageEntry: PackageScriptsPackage, script: PackageScriptDefinition) => void;
 	onViewChange: (view: DrawerView) => void;
 	open: boolean;
@@ -53,6 +56,7 @@ interface ChangedFilesDrawerProps {
 	packageScripts: PackageScriptsResponse;
 	reviewFilter: ReviewFilter;
 	reviewedCount: number;
+	filteredReviewedCount: number;
 	splitView: boolean;
 	stageBusy: boolean;
 	stageFilter: StageFilter;
@@ -63,6 +67,7 @@ interface ChangedFilesDrawerProps {
 }
 
 export function ChangedFilesDrawer({
+	bulkReviewBusy,
 	bulkStageBusy,
 	changeTotals,
 	commandsAvailable,
@@ -81,6 +86,7 @@ export function ChangedFilesDrawer({
 	onStageFilterChange,
 	onStageMultiple,
 	onStartScript,
+	onUnreviewMultiple,
 	onViewChange,
 	open,
 	packageRunBusy,
@@ -88,6 +94,7 @@ export function ChangedFilesDrawer({
 	packageScripts,
 	reviewFilter,
 	reviewedCount,
+	filteredReviewedCount,
 	splitView,
 	stageBusy,
 	stageFilter,
@@ -363,11 +370,33 @@ export function ChangedFilesDrawer({
 							<div className="progress-label">
 								{reviewedCount} of {files.length} reviewed
 							</div>
-							<div className="bulk-stage-actions">
+							<div className="bulk-file-actions">
+								<button
+									aria-label={`Unreview shown files (${filteredReviewedCount})`}
+									className="action-button secondary"
+									disabled={
+										filteredReviewedCount === 0 ||
+										bulkReviewBusy ||
+										stageBusy ||
+										bulkStageBusy !== null
+									}
+									onClick={onUnreviewMultiple}
+									title="Unreview files shown by the current filters"
+									type="button"
+								>
+									{bulkReviewBusy ? (
+										<LoaderCircle className="spinner" size={15} />
+									) : (
+										<Undo2 size={15} />
+									)}
+									<span>Unreview {filteredReviewedCount}</span>
+								</button>
 								<button
 									aria-label={`Stage all files (${stageableCount})`}
 									className="action-button secondary"
-									disabled={stageableCount === 0 || stageBusy || bulkStageBusy !== null}
+									disabled={
+										stageableCount === 0 || stageBusy || bulkStageBusy !== null || bulkReviewBusy
+									}
 									onClick={() => onStageMultiple("all")}
 									type="button"
 								>
@@ -376,12 +405,17 @@ export function ChangedFilesDrawer({
 									) : (
 										<GitPullRequestArrow size={15} />
 									)}
-									<span>Stage all ({stageableCount})</span>
+									<span>All {stageableCount}</span>
 								</button>
 								<button
 									aria-label={`Stage reviewed files (${stageableReviewedCount})`}
 									className="action-button secondary"
-									disabled={stageableReviewedCount === 0 || stageBusy || bulkStageBusy !== null}
+									disabled={
+										stageableReviewedCount === 0 ||
+										stageBusy ||
+										bulkStageBusy !== null ||
+										bulkReviewBusy
+									}
 									onClick={() => onStageMultiple("reviewed")}
 									type="button"
 								>
@@ -390,7 +424,7 @@ export function ChangedFilesDrawer({
 									) : (
 										<CheckCircle2 size={15} />
 									)}
-									<span>Stage reviewed ({stageableReviewedCount})</span>
+									<span>Reviewed {stageableReviewedCount}</span>
 								</button>
 							</div>
 							<button

@@ -25,6 +25,7 @@ export function useChangedFileFilters(files: ChangeFile[]) {
 		});
 	}, [fileQuery, files, reviewFilter, stageFilter]);
 
+	const filteredReviewedFiles = filteredFiles.filter((file) => file.reviewed);
 	const reviewedCount = files.filter((file) => file.reviewed).length;
 	const stagedCount = files.filter((file) => file.staged).length;
 	const changeTotals = files.reduce(
@@ -41,6 +42,7 @@ export function useChangedFileFilters(files: ChangeFile[]) {
 		changeTotals,
 		fileQuery,
 		filteredFiles,
+		filteredReviewedFiles,
 		reviewFilter,
 		reviewedCount,
 		setFileQuery,

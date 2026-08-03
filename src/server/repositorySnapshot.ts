@@ -74,12 +74,7 @@ export class RepositorySnapshotService {
 		try {
 			this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
 				const name = filename?.toString() ?? "";
-				if (
-					name.startsWith(`.git${path.sep}couchview`) ||
-					name.startsWith(".git/couchview") ||
-					name.startsWith(`.git${path.sep}couch-review`) ||
-					name.startsWith(".git/couch-review")
-				)
+				if (name.startsWith(`.git${path.sep}couchview`) || name.startsWith(".git/couchview"))
 					return;
 				if (this.watchTimer) clearTimeout(this.watchTimer);
 				this.watchTimer = setTimeout(() => {

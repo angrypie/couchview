@@ -12,13 +12,13 @@ import {
 	isLoopbackHostname,
 	TERMINAL_PROTOCOL,
 	TERMINAL_TICKET_PREFIX,
-	terminalAccessIsLoopback,
-	TerminalSessionService,
 	type TerminalCommandRunner,
 	type TerminalDataChannel,
 	type TerminalEvent,
 	type TerminalPeerConnection,
+	TerminalSessionService,
 	type TerminalSocketData,
+	terminalAccessIsLoopback,
 } from "./terminalSessions.ts";
 
 const temporaryDirectories: string[] = [];

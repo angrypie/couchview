@@ -1,12 +1,4 @@
-import {
-	forwardRef,
-	type CSSProperties,
-	useCallback,
-	useEffect,
-	useImperativeHandle,
-	useMemo,
-	useRef,
-} from "react";
+import type { CodeViewLineSelection, CodeViewOptions } from "@pierre/diffs";
 import {
 	CodeView,
 	type CodeViewHandle,
@@ -15,22 +7,30 @@ import {
 	type DiffLineAnnotation,
 	type SelectedLineRange,
 } from "@pierre/diffs/react";
-import type { CodeViewLineSelection, CodeViewOptions } from "@pierre/diffs";
 import { MessageSquareText } from "lucide-react";
+import {
+	type CSSProperties,
+	forwardRef,
+	useCallback,
+	useEffect,
+	useImperativeHandle,
+	useMemo,
+	useRef,
+} from "react";
 import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
-import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 import { formatCommentReference } from "./commentExport.ts";
 import {
 	adaptFileDiff,
 	annotationsForFile,
+	type CommentAnnotationMetadata,
 	commentAnnotation,
 	commentAnnotationsVersion,
 	fromPierreSide,
 	reconstructUnifiedPatch,
 	toPierreSide,
-	type CommentAnnotationMetadata,
 } from "./diffAdapter.ts";
 import type { DiffViewerHandle, ViewerLineTarget } from "./features/review/types.ts";
+import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 
 export type { DiffViewerHandle, ViewerLineTarget };
 

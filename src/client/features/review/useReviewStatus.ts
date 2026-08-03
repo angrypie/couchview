@@ -44,6 +44,7 @@ export function useReviewStatus({
 	showToast,
 }: UseReviewStatusOptions) {
 	const [busy, setBusy] = useState(false);
+	const [bulkBusy, setBulkBusy] = useState(false);
 	const requestRef = useRef<AbortController | null>(null);
 	const repositoryIdRef = useRef(repositoryId);
 	repositoryIdRef.current = repositoryId;
@@ -52,12 +53,13 @@ export function useReviewStatus({
 		requestRef.current?.abort();
 		requestRef.current = repositoryId ? new AbortController() : null;
 		setBusy(false);
+		setBulkBusy(false);
 		return () => requestRef.current?.abort();
 	}, [repositoryId]);
 
 	const setReviewed = useCallback(
 		async (file: ChangeFile, reviewed: boolean, advance: boolean) => {
-			if (!csrfToken || !repositoryId || busy) return;
+			if (!csrfToken || !repositoryId || busy || bulkBusy) return;
 			const activeRepositoryId = repositoryId;
 			const signal = requestRef.current?.signal;
 			setBusy(true);
@@ -103,7 +105,66 @@ export function useReviewStatus({
 				if (repositoryIdRef.current === activeRepositoryId) setBusy(false);
 			}
 		},
-		[activeFileIndex, busy, csrfToken, files, onSelectFile, repositoryId, setFiles, showToast],
+		[
+			activeFileIndex,
+			bulkBusy,
+			busy,
+			csrfToken,
+			files,
+			onSelectFile,
+			repositoryId,
+			setFiles,
+			showToast,
+		],
+	);
+
+	const unreviewMultiple = useCallback(
+		async (targets: ChangeFile[]) => {
+			const reviewedTargets = targets.filter((file) => file.reviewed);
+			if (!csrfToken || !repositoryId || busy || bulkBusy || reviewedTargets.length === 0) {
+				return;
+			}
+			const activeRepositoryId = repositoryId;
+			const signal = requestRef.current?.signal;
+			const targetIds = new Set(reviewedTargets.map((file) => file.id));
+			setBulkBusy(true);
+			setFiles((current) =>
+				current.map((file) => (targetIds.has(file.id) ? { ...file, reviewed: false } : file)),
+			);
+			try {
+				await api.setReviewedFiles(
+					activeRepositoryId,
+					{
+						files: reviewedTargets.map((file) => ({
+							fileId: file.id,
+							contentRevision: file.contentRevision,
+						})),
+						reviewed: false,
+					},
+					csrfToken,
+					signal,
+				);
+				if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return;
+				const noun = reviewedTargets.length === 1 ? "mark" : "marks";
+				showToast(`${reviewedTargets.length} review ${noun} removed`);
+			} catch (error) {
+				if (
+					signal?.aborted ||
+					repositoryIdRef.current !== activeRepositoryId ||
+					isAbortError(error)
+				) {
+					return;
+				}
+				setFiles((current) =>
+					current.map((file) => (targetIds.has(file.id) ? { ...file, reviewed: true } : file)),
+				);
+				void refreshReviewState();
+				showToast(messageOf(error));
+			} finally {
+				if (repositoryIdRef.current === activeRepositoryId) setBulkBusy(false);
+			}
+		},
+		[bulkBusy, busy, csrfToken, refreshReviewState, repositoryId, setFiles, showToast],
 	);
 
 	const undoReview = useCallback(
@@ -145,5 +206,5 @@ export function useReviewStatus({
 		[csrfToken, dismissToast, files, refreshReviewState, repositoryId, setFiles, showToast],
 	);
 
-	return { busy, setReviewed, undoReview };
+	return { bulkBusy, busy: busy || bulkBusy, setReviewed, undoReview, unreviewMultiple };
 }

@@ -24,7 +24,7 @@ function git(directory: string, args: string[]): string {
 async function committedRepository(files: Record<string, string | Uint8Array>): Promise<string> {
 	const directory = await mkdtemp(path.join(tmpdir(), "couchview-backend-"));
 	temporaryDirectories.push(directory);
-	git(directory, ["init", "-q"]);
+	git(directory, ["init", "-q", "--initial-branch=main"]);
 	git(directory, ["config", "user.name", "Couchview Tests"]);
 	git(directory, ["config", "user.email", "couchview@example.invalid"]);
 	for (const [relativePath, contents] of Object.entries(files)) {
@@ -310,7 +310,7 @@ describe("GitRepository advanced behavior", () => {
 		const stateDirectory = await mkdtemp(path.join(tmpdir(), "couchview-database-"));
 		temporaryDirectories.push(directory);
 		temporaryDirectories.push(stateDirectory);
-		git(directory, ["init", "-q"]);
+		git(directory, ["init", "-q", "--initial-branch=main"]);
 		await writeFile(path.join(directory, "state.ts"), "export const state = true;\n");
 		const database = await StateDatabase.open(path.join(stateDirectory, "state.sqlite"));
 		const first = await GitRepository.open(directory, database);
@@ -682,8 +682,7 @@ describe("GitRepository advanced behavior", () => {
 	test("coalesces overlapping unborn-repository snapshots without publishing a false clean state", async () => {
 		const directory = await mkdtemp(path.join(tmpdir(), "couchview-concurrent-"));
 		temporaryDirectories.push(directory);
-		git(directory, ["init", "-q"]);
-		git(directory, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+		git(directory, ["init", "-q", "--initial-branch=main"]);
 		await writeFile(path.join(directory, "first.ts"), "export const first = 1;\n");
 		await writeFile(path.join(directory, "second.ts"), "export const second = 2;\n");
 		const repository = await GitRepository.open(directory);

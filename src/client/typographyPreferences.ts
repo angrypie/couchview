@@ -1,25 +1,25 @@
 import {
+	type CodeFontFamily,
 	DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
 	DEFAULT_TYPOGRAPHY_PREFERENCES,
 	normalizeTypographyPreferences,
-	TYPOGRAPHY_LIMITS,
-	type CodeFontFamily,
 	type TerminalTypographyPreferences,
+	TYPOGRAPHY_LIMITS,
 	type TypographyPreferences,
 } from "../shared/settings.ts";
 
-export {
-	DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
-	DEFAULT_TYPOGRAPHY_PREFERENCES,
-	normalizeTypographyPreferences,
-	TYPOGRAPHY_LIMITS,
-};
 export type {
 	CodeFontFamily,
 	DiffTypographyPreferences,
 	TerminalTypographyPreferences,
 	TypographyPreferences,
 } from "../shared/settings.ts";
+export {
+	DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
+	DEFAULT_TYPOGRAPHY_PREFERENCES,
+	normalizeTypographyPreferences,
+	TYPOGRAPHY_LIMITS,
+};
 
 export const TYPOGRAPHY_STORAGE_KEY = "couchview:typography:v1";
 
@@ -82,11 +82,7 @@ export function loadTypographyPreferences(
 		const stored = storage.getItem(TYPOGRAPHY_STORAGE_KEY);
 		if (stored) return normalizeTypographyPreferences(JSON.parse(stored));
 
-		const legacySize = Number(
-			storage.getItem("couchview:font-size") ??
-				storage.getItem("couch-review:font-size") ??
-				Number.NaN,
-		);
+		const legacySize = Number(storage.getItem("couchview:font-size") ?? Number.NaN);
 		if (Number.isFinite(legacySize)) {
 			const migrated = normalizeTypographyPreferences({
 				...DEFAULT_TYPOGRAPHY_PREFERENCES,

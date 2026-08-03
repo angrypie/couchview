@@ -58,7 +58,7 @@ enabled policy is intentional:
 - project import-cycle detection;
 - direct whole-tree size ceilings plus complexity ceilings for `App.tsx` and
   the extracted `features/`, `components/`, and `lib/` areas;
-- deterministic two-space, double-quote, semicolon, trailing-comma, LF, and
+- deterministic tab-indented, double-quote, semicolon, trailing-comma, LF, and
   100-column formatting plus import organization.
 
 The React `noLeakedRender` rule was tested and deferred because it produced 36
@@ -85,10 +85,10 @@ bun run check:architecture
 bun run check:quality
 ```
 
-`format:check` is the formatter/import-organization gate for `App.tsx` and the
-new `features/`, `components/`, and `lib/` surface. Full lint and architecture
-checks remain mandatory. A whole-tree formatting migration can be scheduled
-separately to avoid hiding functional changes in formatting churn.
+`format`, `format:check`, `lint`, `lint:fix`, and Biome's import-cycle pass use
+the repository root and rely on `biome.jsonc` for exclusions. New supported files
+are therefore covered automatically. Bun unit tests remain scoped to `src` and
+`scripts`; Playwright owns `tests/e2e` through `test:e2e`.
 
 ## AI and agent integration
 
@@ -98,3 +98,53 @@ workflow locally: deterministic checks run from Codex hooks and CI, while a
 repo-local architecture skill tells an agent when to map responsibilities and
 review coupling. AI can interpret and repair findings, but Biome and the
 architecture checker produce the findings without AI.
+
+Codex edit hooks run the Couchview-specific architecture checker for immediate
+feedback. They deliberately do not format after every write: Biome's deterministic
+output is enforced once at the commit boundary, which avoids repeated work and keeps
+automated edits from changing partially staged files.
+
+## Local fixed-baseline performance guard
+
+Activate the repository's pre-commit hook in a development clone with repository-local
+Git configuration:
+
+```sh
+git config --local core.hooksPath .githooks
+```
+
+The hook runs `bun run check:commit`. Its static phase materializes the staged Git
+index in a temporary directory and runs architecture, formatting, lint, and type
+checks against exactly that candidate. Formatting is checked rather than rewritten;
+if it fails, run `bun run format`, review and stage the result, then retry the commit.
+Tests and the production build remain in `check:quality` and GitHub Actions so every
+local commit does not pay their longer runtime.
+
+The second phase shares the already-installed `node_modules` and compares multi-sample
+median runtimes for the custom architecture checker and complete architecture gate
+with the values committed in `benchmarks/quality-checks.json`. Unstaged changes cannot
+affect the candidate or its baseline. The commit is rejected when either median
+exceeds 120% of its tracked baseline; there is no absolute millisecond allowance.
+
+The comparison is read-only. It deletes its temporary snapshot and never updates the
+baseline. Because the reference remains fixed across commits, several individually
+small slowdowns still produce a failure once their cumulative effect exceeds 20%.
+GitHub Actions does not invoke this machine-specific performance comparison. Another
+clone runs it only after activating `.githooks`; environment metadata in the baseline
+is informational and does not suppress comparisons on a different machine.
+
+Updating the reference values is a deliberate, reviewable operation. Stage the exact
+implementation to measure, run the dedicated writer, inspect its Git diff, and then
+stage the generated file:
+
+```sh
+git add <implementation paths>
+bun run benchmark:quality:update
+git diff -- benchmarks/quality-checks.json
+git add benchmarks/quality-checks.json
+```
+
+`benchmark:quality:update` is the only benchmark command that writes the tracked
+baseline. It records the timestamp, Bun version, platform, architecture, staged-index
+hash, sample count, and timing summaries. Neither pre-commit nor
+`benchmark:quality` invokes it automatically.

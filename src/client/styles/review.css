@@ -702,17 +702,20 @@
 	text-align: center;
 }
 
-.bulk-stage-actions {
+.bulk-file-actions {
 	margin-top: 8px;
 	display: grid;
-	grid-template-columns: 1fr 1fr;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
 	gap: 6px;
 }
 
-.bulk-stage-actions .action-button {
-	min-height: 38px;
-	padding-inline: 6px;
-	font-size: 10px;
+.bulk-file-actions .action-button {
+	min-width: 0;
+	min-height: 34px;
+	padding-inline: 4px;
+	gap: 4px;
+	font-size: 9px;
+	white-space: nowrap;
 }
 
 .commit-action {

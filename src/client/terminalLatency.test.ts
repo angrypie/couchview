@@ -3,10 +3,10 @@ import { describe, expect, test } from "bun:test";
 import {
 	eligibleTerminalLatencyKey,
 	normalizedTerminalKeyTimestamp,
+	type TerminalLatencyKeyEvent,
 	TerminalLatencyTracker,
 	TerminalRoundTripTracker,
 	terminalLatencyEnabled,
-	type TerminalLatencyKeyEvent,
 } from "./terminalLatency.ts";
 
 function keyEvent(

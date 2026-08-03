@@ -32,6 +32,8 @@ import type {
 	SearchResponse,
 	SetReviewRequest,
 	SetReviewResponse,
+	SetReviewsRequest,
+	SetReviewsResponse,
 	SourcePreviewResponse,
 	StageFileRequest,
 	StageFileResponse,
@@ -515,6 +517,10 @@ export class GitRepository {
 
 	async setReview(input: SetReviewRequest): Promise<SetReviewResponse> {
 		return this.reviews.setReview(input);
+	}
+
+	async setReviews(input: SetReviewsRequest): Promise<SetReviewsResponse> {
+		return this.reviews.setReviews(input);
 	}
 
 	async createComment(input: CreateCommentRequest): Promise<CommentResponse> {

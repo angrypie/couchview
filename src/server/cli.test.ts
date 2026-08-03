@@ -12,8 +12,6 @@ import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
 const initialHost = Bun.env.COUCHVIEW_HOST;
-const initialLegacyRoot = Bun.env.COUCH_REVIEW_ROOT;
-const initialLegacyHost = Bun.env.COUCH_REVIEW_HOST;
 const initialPort = Bun.env.PORT;
 const initialTerminal = Bun.env.COUCHVIEW_TERMINAL;
 const initialTerminalP2p = Bun.env.COUCHVIEW_TERMINAL_P2P;
@@ -27,7 +25,6 @@ const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
 const initialDisableReuse = Bun.env.COUCHVIEW_DISABLE_REUSE;
-const initialLegacyDisableReuse = Bun.env.COUCH_REVIEW_DISABLE_REUSE;
 
 function restoreEnvironment() {
 	if (initialRoot === undefined) delete Bun.env.COUCHVIEW_ROOT;
@@ -35,12 +32,6 @@ function restoreEnvironment() {
 
 	if (initialHost === undefined) delete Bun.env.COUCHVIEW_HOST;
 	else Bun.env.COUCHVIEW_HOST = initialHost;
-
-	if (initialLegacyRoot === undefined) delete Bun.env.COUCH_REVIEW_ROOT;
-	else Bun.env.COUCH_REVIEW_ROOT = initialLegacyRoot;
-
-	if (initialLegacyHost === undefined) delete Bun.env.COUCH_REVIEW_HOST;
-	else Bun.env.COUCH_REVIEW_HOST = initialLegacyHost;
 
 	if (initialPort === undefined) delete Bun.env.PORT;
 	else Bun.env.PORT = initialPort;
@@ -89,20 +80,12 @@ function restoreEnvironment() {
 
 	if (initialDisableReuse === undefined) delete Bun.env.COUCHVIEW_DISABLE_REUSE;
 	else Bun.env.COUCHVIEW_DISABLE_REUSE = initialDisableReuse;
-
-	if (initialLegacyDisableReuse === undefined) {
-		delete Bun.env.COUCH_REVIEW_DISABLE_REUSE;
-	} else {
-		Bun.env.COUCH_REVIEW_DISABLE_REUSE = initialLegacyDisableReuse;
-	}
 }
 
 describe("parseCli", () => {
 	beforeEach(() => {
 		delete Bun.env.COUCHVIEW_ROOT;
 		delete Bun.env.COUCHVIEW_HOST;
-		delete Bun.env.COUCH_REVIEW_ROOT;
-		delete Bun.env.COUCH_REVIEW_HOST;
 		delete Bun.env.PORT;
 		delete Bun.env.COUCHVIEW_TERMINAL;
 		delete Bun.env.COUCHVIEW_TERMINAL_P2P;
@@ -189,25 +172,6 @@ describe("parseCli", () => {
 			root: path.resolve("flag-project"),
 			host: "0.0.0.0",
 			port: 4999,
-			terminalMode: "auto",
-			terminalP2pMode: "auto",
-			terminalStunUrls: ["stun:stun.cloudflare.com:3478"],
-			remoteBridgeMode: "auto",
-			remoteBridgeP2pMode: "auto",
-			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
-			remoteBridgePort: 22,
-			remoteBridgeOriginAccess: "auto",
-		});
-	});
-
-	test("accepts pre-rename environment defaults when new names are absent", () => {
-		Bun.env.COUCH_REVIEW_ROOT = "legacy-environment-project";
-		Bun.env.COUCH_REVIEW_HOST = "127.0.0.1";
-
-		expect(parseCli([])).toEqual({
-			root: path.resolve("legacy-environment-project"),
-			host: "127.0.0.1",
-			port: 4173,
 			terminalMode: "auto",
 			terminalP2pMode: "auto",
 			terminalStunUrls: ["stun:stun.cloudflare.com:3478"],

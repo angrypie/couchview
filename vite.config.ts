@@ -23,24 +23,9 @@ function externalizeGhosttyWasm() {
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), "");
 	const apiOrigin =
-		process.env.COUCHVIEW_API_ORIGIN ||
-		env.COUCHVIEW_API_ORIGIN ||
-		process.env.COUCH_REVIEW_API_ORIGIN ||
-		env.COUCH_REVIEW_API_ORIGIN ||
-		"http://127.0.0.1:3001";
-	const webHost =
-		process.env.COUCHVIEW_WEB_HOST ||
-		env.COUCHVIEW_WEB_HOST ||
-		process.env.COUCH_REVIEW_WEB_HOST ||
-		env.COUCH_REVIEW_WEB_HOST ||
-		"127.0.0.1";
-	const webPort = Number(
-		process.env.COUCHVIEW_WEB_PORT ||
-			env.COUCHVIEW_WEB_PORT ||
-			process.env.COUCH_REVIEW_WEB_PORT ||
-			env.COUCH_REVIEW_WEB_PORT ||
-			5173,
-	);
+		process.env.COUCHVIEW_API_ORIGIN || env.COUCHVIEW_API_ORIGIN || "http://127.0.0.1:3001";
+	const webHost = process.env.COUCHVIEW_WEB_HOST || env.COUCHVIEW_WEB_HOST || "127.0.0.1";
+	const webPort = Number(process.env.COUCHVIEW_WEB_PORT || env.COUCHVIEW_WEB_PORT || 5173);
 
 	return {
 		plugins: [

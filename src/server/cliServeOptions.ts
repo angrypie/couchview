@@ -36,8 +36,8 @@ export function parseCliState(argv: string[]): {
 	parsed: ReturnType<typeof parseServeArguments>;
 } {
 	const parsed = parseServeArguments(argv);
-	const root = parsed.repo ?? Bun.env.COUCHVIEW_ROOT ?? Bun.env.COUCH_REVIEW_ROOT ?? process.cwd();
-	const host = parsed.host ?? Bun.env.COUCHVIEW_HOST ?? Bun.env.COUCH_REVIEW_HOST ?? "127.0.0.1";
+	const root = parsed.repo ?? Bun.env.COUCHVIEW_ROOT ?? process.cwd();
+	const host = parsed.host ?? Bun.env.COUCHVIEW_HOST ?? "127.0.0.1";
 	const port = Number(parsed.port ?? Bun.env.PORT ?? 4173);
 	const terminalEnvironment = Bun.env.COUCHVIEW_TERMINAL;
 	let environmentTerminalMode: TerminalMode = "auto";

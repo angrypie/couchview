@@ -902,6 +902,14 @@ test.describe("mobile fixture review", () => {
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
 		const drawer = page.getByRole("complementary", { name: "Changed files" });
+		await expect(drawer.getByRole("button", { name: "Unreview shown files (1)" })).toBeVisible();
+		const bulkActions = drawer.locator(".bulk-file-actions > button");
+		await expect(bulkActions).toHaveCount(3);
+		expect(
+			await bulkActions.evaluateAll(
+				(buttons) => new Set(buttons.map((button) => button.getBoundingClientRect().top)).size,
+			),
+		).toBe(1);
 		await expect(drawer.getByRole("button", { name: "Stage reviewed files (1)" })).toBeVisible();
 		await drawer.getByRole("button", { name: "Stage reviewed files (1)" }).click();
 		await expect(page.getByText("1 reviewed file staged", { exact: true })).toBeVisible();
@@ -911,6 +919,10 @@ test.describe("mobile fixture review", () => {
 		await drawer.getByRole("button", { name: "Stage all files (1)" }).click();
 		await expect(page.getByText("1 file staged", { exact: true })).toBeVisible();
 		await expect(drawer.getByRole("button", { name: "Commit 2 staged files" })).toBeEnabled();
+
+		await drawer.getByRole("button", { name: "Unreview shown files (1)" }).click();
+		await expect(page.getByText("1 review mark removed", { exact: true })).toBeVisible();
+		await expect(drawer.getByRole("button", { name: "Unreview shown files (0)" })).toBeDisabled();
 	});
 
 	test("runs grouped package commands and reconnects to their output", async ({ page }) => {

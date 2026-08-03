@@ -6,8 +6,8 @@ import {
 	cloudflareOriginAccessProvider,
 } from "./cloudflareAccess.ts";
 import {
-	remoteBridgeOriginAccessSession,
 	type RemoteBridgeOriginAccessProvider,
+	remoteBridgeOriginAccessSession,
 } from "./remoteBridgeOriginAccess.ts";
 
 describe("native bridge origin access", () => {

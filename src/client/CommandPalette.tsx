@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { Search } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { CommandId } from "../shared/settings.ts";
 import { COMMAND_CATEGORIES, type RuntimeCommand } from "./commands.ts";

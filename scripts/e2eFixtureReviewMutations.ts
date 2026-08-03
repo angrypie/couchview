@@ -7,6 +7,8 @@ import type {
 	ReviewComment,
 	ReviewRecord,
 	SetReviewRequest,
+	SetReviewsRequest,
+	SetReviewsResponse,
 	StageFileRequest,
 	StageFilesRequest,
 } from "../src/shared/contracts.ts";
@@ -25,6 +27,31 @@ export async function handleFixtureReviewMutation(
 	const { request, nestedPath, fileRoute, commentRoute } = context;
 	if (request.method === "GET") return null;
 
+	if (nestedPath === "files/review" && request.method === "PUT") {
+		const body = (await request.json()) as SetReviewsRequest;
+		const targets = body.files.map((target) =>
+			files.find(
+				(file) => file.id === target.fileId && file.contentRevision === target.contentRevision,
+			),
+		);
+		if (targets.some((file) => !file)) return missingFile();
+		const updated = targets.map((file) => {
+			if (!file) throw new Error("Validated fixture review target is missing");
+			file.reviewed = body.reviewed;
+			const review = {
+				fileId: file.id,
+				path: file.path,
+				contentRevision: file.contentRevision,
+				reviewed: file.reviewed,
+				updatedAt: new Date().toISOString(),
+			} satisfies ReviewRecord;
+			const existing = reviews.findIndex((candidate) => candidate.fileId === file.id);
+			if (existing >= 0) reviews[existing] = review;
+			else reviews.push(review);
+			return review;
+		});
+		return fixtureJson({ reviews: updated } satisfies SetReviewsResponse);
+	}
 	if (fileRoute?.[2] === "review" && request.method === "PUT") {
 		const body = (await request.json()) as SetReviewRequest;
 		const file = files.find((candidate) => candidate.id === body.fileId);

@@ -4,9 +4,9 @@ import { useMemo } from "react";
 
 import {
 	COMMAND_IDS,
+	type CommandId,
 	createDefaultSettingsProfileData,
 	effectiveKeybindings,
-	type CommandId,
 } from "../shared/settings.ts";
 import { COMMAND_DEFINITIONS, type RuntimeCommand } from "./commands.ts";
 import { formatShortcut, shortcutStrokeFromEvent, useShortcutEngine } from "./shortcutEngine.ts";

@@ -1,15 +1,15 @@
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
 
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
-import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
 import { installTerminalClipboardPaste } from "./terminalClipboardPaste.ts";
-import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
+import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
 import {
+	type TerminalKeyInput,
 	terminalControlCharacter,
 	terminalKeyboardCode,
 	terminalModifierOnlyKey,
-	type TerminalKeyInput,
 } from "./terminalKeyboard.ts";
+import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
 import { codeFontStack, type TerminalRendererConfig } from "./typographyPreferences.ts";
 
 export interface BrowserTerminalRenderer {

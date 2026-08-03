@@ -33,7 +33,7 @@ function git(directory: string, args: string[]): string {
 async function committedRepository(files: Record<string, string | Uint8Array>): Promise<string> {
 	const directory = await mkdtemp(path.join(tmpdir(), "couchview-backend-"));
 	temporaryDirectories.push(directory);
-	git(directory, ["init", "-q"]);
+	git(directory, ["init", "-q", "--initial-branch=main"]);
 	git(directory, ["config", "user.name", "Couchview Tests"]);
 	git(directory, ["config", "user.email", "couchview@example.invalid"]);
 	for (const [relativePath, contents] of Object.entries(files)) {

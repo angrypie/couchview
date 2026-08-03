@@ -1,7 +1,7 @@
-import { defineConfig, devices } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { defineConfig, devices } from "@playwright/test";
 
 const externalBaseURL = process.env.PLAYWRIGHT_BASE_URL;
 const fixtureHost = process.env.E2E_HOST || "127.0.0.1";

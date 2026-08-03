@@ -2,9 +2,9 @@ import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
 import {
+	type RemoteBridgePaths,
 	resolveRemoteBridgePaths,
 	resolveRemoteBridgeProfile,
-	type RemoteBridgePaths,
 } from "./remoteBridgeClient.ts";
 
 interface RemoteInteractiveProcess {

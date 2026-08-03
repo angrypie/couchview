@@ -5,9 +5,9 @@ import {
 	DEFAULT_TYPOGRAPHY_PREFERENCES,
 	loadTypographyPreferences,
 	normalizeTypographyPreferences,
-	terminalRendererConfig,
 	TYPOGRAPHY_STORAGE_KEY,
 	type TypographyPreferences,
+	terminalRendererConfig,
 } from "./typographyPreferences.ts";
 
 class MemoryStorage {
@@ -86,7 +86,7 @@ describe("browser typography preferences", () => {
 
 	test("migrates the previous diff font size without coupling terminal defaults", () => {
 		const storage = new MemoryStorage();
-		storage.setItem("couch-review:font-size", "13");
+		storage.setItem("couchview:font-size", "13");
 
 		const preferences = loadTypographyPreferences(storage);
 

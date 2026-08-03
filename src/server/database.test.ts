@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -70,21 +70,6 @@ describe("global SQLite state", () => {
 		expect(resolveStateDatabasePath({}, "/home/reviewer")).toBe(
 			"/home/reviewer/.local/share/couchview/state.sqlite",
 		);
-	});
-
-	test("continues using an existing pre-rename database", async () => {
-		const directory = await mkdtemp(path.join(tmpdir(), "couchview-path-"));
-		temporaryDirectories.push(directory);
-		const legacyPath = path.join(directory, "couch-review", "state.sqlite");
-		await mkdir(path.dirname(legacyPath), { recursive: true });
-		await writeFile(legacyPath, "");
-
-		expect(resolveStateDatabasePath({ XDG_DATA_HOME: directory })).toBe(legacyPath);
-
-		const currentPath = path.join(directory, "couchview", "state.sqlite");
-		await mkdir(path.dirname(currentPath), { recursive: true });
-		await writeFile(currentPath, "");
-		expect(resolveStateDatabasePath({ XDG_DATA_HOME: directory })).toBe(currentPath);
 	});
 
 	test("rejects an explicitly relative database location", async () => {

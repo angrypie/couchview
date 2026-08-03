@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-	createBrowserTerminalPreview,
 	type BrowserTerminalPreviewRenderer,
+	createBrowserTerminalPreview,
 } from "./ghosttyTerminal.ts";
 import {
-	terminalRendererConfig,
 	type TerminalTypographyPreferences,
+	terminalRendererConfig,
 } from "./typographyPreferences.ts";
 
 interface GhosttyTerminalPreviewProps {

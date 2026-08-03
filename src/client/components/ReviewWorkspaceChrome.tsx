@@ -75,6 +75,7 @@ export function ReviewWorkspaceChrome({
 	return (
 		<>
 			<ChangedFilesDrawer
+				bulkReviewBusy={review.bulkBusy}
 				bulkStageBusy={staging.bulkBusy}
 				changeTotals={filters.changeTotals}
 				commandsAvailable={commandsAvailable}
@@ -84,6 +85,7 @@ export function ReviewWorkspaceChrome({
 				fileQuery={filters.fileQuery}
 				files={workspace.files}
 				filteredFiles={filters.filteredFiles}
+				filteredReviewedCount={filters.filteredReviewedFiles.length}
 				onClose={() => onDrawerOpenChange(false)}
 				onCommit={workflow.commit.openComposer}
 				onFileQueryChange={filters.setFileQuery}
@@ -93,6 +95,7 @@ export function ReviewWorkspaceChrome({
 				onStageFilterChange={filters.setStageFilter}
 				onStageMultiple={(scope) => void staging.stageMultiple(scope)}
 				onStartScript={(packageEntry, script) => void packages.start(packageEntry, script)}
+				onUnreviewMultiple={() => void review.unreviewMultiple(filters.filteredReviewedFiles)}
 				onViewChange={onDrawerViewChange}
 				open={drawerOpen || splitView}
 				packageRunBusy={packages.runBusy}

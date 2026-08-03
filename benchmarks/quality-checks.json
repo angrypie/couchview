@@ -1,0 +1,32 @@
+{
+	"architecture": "arm64",
+	"benchmarks": [
+		{
+			"name": "custom architecture checker",
+			"summary": {
+				"maxMs": 23.858708,
+				"meanMs": 23.328116533333333,
+				"medianMs": 23.286833,
+				"minMs": 22.930417,
+				"p95Ms": 23.858708,
+				"samples": 15
+			}
+		},
+		{
+			"name": "complete architecture gate",
+			"summary": {
+				"maxMs": 123.0525,
+				"meanMs": 119.64937499999999,
+				"medianMs": 118.979959,
+				"minMs": 117.792458,
+				"p95Ms": 123.0525,
+				"samples": 5
+			}
+		}
+	],
+	"bunVersion": "1.3.14",
+	"createdAt": "2026-08-02T09:23:33.911Z",
+	"platform": "darwin",
+	"schemaVersion": 1,
+	"sourceIndexHash": "9606deafe5f5eb62db601846a5be76af267177c3c4ba1af520efcafff7a2c84b"
+}

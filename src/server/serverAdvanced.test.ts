@@ -15,6 +15,7 @@ import {
 	type RepositoryCatalogResponse,
 	type ReviewStateResponse,
 	type ServerEvent,
+	type SetReviewsResponse,
 	type StageFilesResponse,
 } from "../shared/contracts.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
@@ -336,6 +337,57 @@ describe("Couchview HTTP advanced routes", () => {
 		expect(result.files).toHaveLength(2);
 		expect(result.files.every((file) => file.staged && !file.unstaged)).toBe(true);
 		expect(result.changes.upserted).toHaveLength(2);
+	});
+
+	test("updates review markers in one batch after validating every target", async () => {
+		const app = await fixture();
+		await writeFile(path.join(app.repository.root, "second.ts"), "const second = true;\n");
+		const changes = await app.repository.changes();
+		expect(changes.files).toHaveLength(2);
+		const headers = {
+			"content-type": "application/json",
+			origin: "http://127.0.0.1:3001",
+			[CSRF_HEADER]: app.csrfToken,
+		};
+		const files = changes.files.map((file) => ({
+			fileId: file.id,
+			contentRevision: file.contentRevision,
+		}));
+
+		const marked = await app.fetch(
+			request(API_ROUTES.fileReviews(app.repository.id), {
+				method: "PUT",
+				headers,
+				body: JSON.stringify({ files, reviewed: true }),
+			}),
+		);
+		expect(marked.status).toBe(200);
+		expect(((await marked.json()) as SetReviewsResponse).reviews).toHaveLength(2);
+
+		const stale = await app.fetch(
+			request(API_ROUTES.fileReviews(app.repository.id), {
+				method: "PUT",
+				headers,
+				body: JSON.stringify({
+					files: [files[0], { ...files[1], contentRevision: "stale" }],
+					reviewed: false,
+				}),
+			}),
+		);
+		expect(stale.status).toBe(409);
+		let state = await app.repository.reviewState();
+		expect(state.reviews.map((review) => review.reviewed)).toEqual([true, true]);
+
+		const unreviewed = await app.fetch(
+			request(API_ROUTES.fileReviews(app.repository.id), {
+				method: "PUT",
+				headers,
+				body: JSON.stringify({ files, reviewed: false }),
+			}),
+		);
+		expect(unreviewed.status).toBe(200);
+		state = await app.repository.reviewState();
+		expect(state.reviews.map((review) => review.reviewed)).toEqual([false, false]);
 	});
 
 	test("rejects missing origins and malformed mutation bodies with structured errors", async () => {

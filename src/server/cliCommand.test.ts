@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
-
-import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
-
 import {
 	CLI_VERSION,
 	CliPromptInterrupted,
@@ -16,6 +13,7 @@ import {
 	renderCliHelp,
 	renderCompletion,
 } from "./cliCommand.ts";
+import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 function fakePrompter(
 	answers: string[],

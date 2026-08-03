@@ -38,6 +38,7 @@ export const API_ROUTES = {
 	fileStage: (repositoryId: string, fileId: string) =>
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/stage`,
 	fileStages: (repositoryId: string) => `${repositoryFilesApiPath(repositoryId)}/stage`,
+	fileReviews: (repositoryId: string) => `${repositoryFilesApiPath(repositoryId)}/review`,
 	fileReview: (repositoryId: string, fileId: string) =>
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/review`,
 	fileComments: (repositoryId: string, fileId: string) =>
@@ -551,6 +552,20 @@ export interface SetReviewRequest {
 
 export interface SetReviewResponse {
 	review: ReviewRecord;
+}
+
+export interface ReviewTarget {
+	fileId: string;
+	contentRevision: string;
+}
+
+export interface SetReviewsRequest {
+	files: ReviewTarget[];
+	reviewed: boolean;
+}
+
+export interface SetReviewsResponse {
+	reviews: ReviewRecord[];
 }
 
 export interface CreateCommentRequest extends CommentAnchor {

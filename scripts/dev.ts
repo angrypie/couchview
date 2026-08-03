@@ -13,8 +13,8 @@ function readArguments(args: string[]): {
 	host: string;
 	terminal: "1" | "0" | undefined;
 } {
-	let root = process.env.COUCHVIEW_ROOT || process.env.COUCH_REVIEW_ROOT || process.cwd();
-	let host = process.env.COUCHVIEW_HOST || process.env.COUCH_REVIEW_HOST || "127.0.0.1";
+	let root = process.env.COUCHVIEW_ROOT || process.cwd();
+	let host = process.env.COUCHVIEW_HOST || "127.0.0.1";
 	let explicitRoot = false;
 	let terminal = process.env.COUCHVIEW_TERMINAL;
 	let terminalFlag: "1" | "0" | undefined;
@@ -73,10 +73,8 @@ if (!rootStats?.isDirectory()) {
 const reviewRoot = await realpath(requestedRoot);
 const apiHost = devOptions.host;
 const apiPort = Number(process.env.PORT || 3001);
-const webHost = normalizeBindHost(
-	process.env.COUCHVIEW_WEB_HOST || process.env.COUCH_REVIEW_WEB_HOST || apiHost,
-);
-const webPort = Number(process.env.COUCHVIEW_WEB_PORT || process.env.COUCH_REVIEW_WEB_PORT || 5173);
+const webHost = normalizeBindHost(process.env.COUCHVIEW_WEB_HOST || apiHost);
+const webPort = Number(process.env.COUCHVIEW_WEB_PORT || 5173);
 
 for (const [name, port] of [
 	["PORT", apiPort],

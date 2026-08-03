@@ -18,6 +18,10 @@ export class ReviewStore {
 		return this.database.setReview(this.repositoryId, record);
 	}
 
+	async setReviews(records: ReviewRecord[]): Promise<ReviewRecord[]> {
+		return Promise.all(records.map((record) => this.setReview(record)));
+	}
+
 	async createComment(input: CreateCommentRequest, pathName: string): Promise<ReviewComment> {
 		const now = new Date().toISOString();
 		return this.database.insertComment(this.repositoryId, {

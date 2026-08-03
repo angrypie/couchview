@@ -4,9 +4,9 @@ import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
 import {
-	resolveRemoteBridgeProfile,
-	resolveRemoteBridgePaths,
 	type RemoteBridgePaths,
+	resolveRemoteBridgePaths,
+	resolveRemoteBridgeProfile,
 } from "./remoteBridgeClient.ts";
 
 const CODEX_STARTUP_TIMEOUT_MS = 20_000;

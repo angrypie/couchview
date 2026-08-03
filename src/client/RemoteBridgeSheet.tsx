@@ -1,4 +1,3 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
 	Copy,
 	ExternalLink,
@@ -10,6 +9,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
 	RemoteBridgeCapability,
