@@ -94,6 +94,13 @@ test.describe("mobile fixture review", () => {
 		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("diff review");
 		await palette.getByText("Go to diff review", { exact: true }).click();
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+		await page.getByRole("button", { name: "Open command palette" }).click();
+		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("artifacts");
+		await palette.getByText("Go to artifacts", { exact: true }).click();
+		await expect(page.getByRole("main", { name: "Repository artifacts" })).toBeVisible();
+		await expect(page).toHaveURL(/\/artifacts\?repo=fixture-repository$/);
+		await page.getByRole("button", { name: "Review", exact: true }).click();
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 	});
 
 	test("uses mobile terminal helper keys and a one-shot Ctrl modifier", async ({
@@ -524,7 +531,7 @@ test.describe("mobile fixture review", () => {
 			.toEqual({
 				aligned: true,
 				contained: true,
-				count: 6,
+				count: 7,
 				heightIsCompact: true,
 				noOverlap: true,
 				wideEnough: true,

@@ -105,6 +105,20 @@ describe("settings profiles and keymaps", () => {
 		};
 		unknown.keyboard.bindings["missing.command"] = null;
 		expect(() => parseSettingsProfileData(unknown)).toThrow("Unknown command ID");
+		const invalidModel = structuredClone(data);
+		invalidModel.codex.model = "model with spaces";
+		expect(() => parseSettingsProfileData(invalidModel)).toThrow("Codex model");
+	});
+
+	test("defaults older profiles to the shared commit and artifact generation model", () => {
+		const legacy = createDefaultSettingsProfileData() as Partial<
+			ReturnType<typeof createDefaultSettingsProfileData>
+		>;
+		delete legacy.codex;
+		expect(parseSettingsProfileData(legacy).codex).toEqual({
+			model: "gpt-5.6-luna",
+			reasoning: "low",
+		});
 	});
 
 	test("trims names and enforces their portable length", () => {

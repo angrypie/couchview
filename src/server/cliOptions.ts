@@ -12,7 +12,14 @@ export interface CliOptionDefinition {
 	completion?: "directory";
 }
 
-export const commandNames = ["serve", "restart", "completion", "bridge", "help"] as const;
+export const commandNames = [
+	"serve",
+	"restart",
+	"completion",
+	"bridge",
+	"artifacts",
+	"help",
+] as const;
 export const completionShells: readonly CompletionShell[] = ["zsh", "bash", "fish"];
 
 export const optionDefinitions: readonly CliOptionDefinition[] = [
@@ -21,14 +28,14 @@ export const optionDefinitions: readonly CliOptionDefinition[] = [
 		short: "h",
 		type: "boolean",
 		description: "Show command help and exit.",
-		commands: ["serve", "restart", "completion", "bridge"],
+		commands: ["serve", "restart", "completion", "bridge", "artifacts"],
 	},
 	{
 		name: "version",
 		short: "V",
 		type: "boolean",
 		description: "Show the Couchview version and exit.",
-		commands: ["serve", "restart", "completion", "bridge"],
+		commands: ["serve", "restart", "completion", "bridge", "artifacts"],
 	},
 	{
 		name: "install",
@@ -41,8 +48,8 @@ export const optionDefinitions: readonly CliOptionDefinition[] = [
 		short: "r",
 		type: "string",
 		valueName: "path",
-		description: "Repository path to serve or open through the native bridge.",
-		commands: ["serve", "bridge"],
+		description: "Local repository path to serve, bridge, or match for artifacts.",
+		commands: ["serve", "bridge", "artifacts"],
 		completion: "directory",
 	},
 	{
@@ -142,7 +149,42 @@ export const optionDefinitions: readonly CliOptionDefinition[] = [
 		type: "string",
 		valueName: "id-or-host",
 		description: "Saved bridge profile ID or managed SSH host alias.",
-		commands: ["bridge"],
+		commands: ["bridge", "artifacts"],
+	},
+	{
+		name: "repository",
+		type: "string",
+		valueName: "id-or-name",
+		description: "Stable server repository ID or unique repository name.",
+		commands: ["artifacts"],
+	},
+	{
+		name: "build",
+		type: "string",
+		valueName: "id",
+		description: "Download a specific retained build ID.",
+		commands: ["artifacts"],
+	},
+	{
+		name: "output",
+		short: "o",
+		type: "string",
+		valueName: "file",
+		description: "Write the download to this file.",
+		commands: ["artifacts"],
+	},
+	{
+		name: "force",
+		short: "f",
+		type: "boolean",
+		description: "Replace an existing output file.",
+		commands: ["artifacts"],
+	},
+	{
+		name: "json",
+		type: "boolean",
+		description: "Print structured JSON; live build logs use stderr.",
+		commands: ["artifacts"],
 	},
 	{
 		name: "origin-access",

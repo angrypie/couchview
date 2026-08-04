@@ -23,6 +23,30 @@ export const restartDelayMs = 250;
 export const supervisedWorkerEnvironment = "COUCHVIEW_SUPERVISED_WORKER";
 export const SUPERVISOR_RESTART_EXIT_CODE = 75;
 
+interface CliProcessRuntime {
+	bunMain: string;
+	executable: string;
+	cliPath: string;
+}
+
+export function isCompiledExecutable(bunMain = Bun.main): boolean {
+	return bunMain.startsWith("/$bunfs/");
+}
+
+export function cliProcessCommand(
+	argv: readonly string[],
+	runtimeOverrides: Partial<CliProcessRuntime> = {},
+): string[] {
+	const runtime: CliProcessRuntime = {
+		bunMain: runtimeOverrides.bunMain ?? Bun.main,
+		executable: runtimeOverrides.executable ?? process.execPath,
+		cliPath: runtimeOverrides.cliPath ?? fileURLToPath(new URL("./cli.ts", import.meta.url)),
+	};
+	return isCompiledExecutable(runtime.bunMain)
+		? [runtime.executable, ...argv]
+		: [runtime.executable, "run", runtime.cliPath, ...argv];
+}
+
 export async function superviseServer(
 	argv: string[] = [],
 	runtimeOverrides: Partial<SupervisorRuntime> = {},
@@ -34,7 +58,6 @@ export async function superviseServer(
 		onSignal: runtimeOverrides.onSignal ?? ((signal, listener) => process.on(signal, listener)),
 		offSignal: runtimeOverrides.offSignal ?? ((signal, listener) => process.off(signal, listener)),
 	};
-	const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 	let child: SupervisedChild | null = null;
 	let stopping = false;
 	let restarting = false;
@@ -52,7 +75,7 @@ export async function superviseServer(
 	runtime.onSignal("SIGTERM", terminate);
 	try {
 		while (!stopping) {
-			child = runtime.spawn([process.execPath, "run", cliPath, ...argv], {
+			child = runtime.spawn(cliProcessCommand(argv), {
 				cwd: process.cwd(),
 				env: {
 					...process.env,

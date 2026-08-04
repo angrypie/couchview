@@ -10,6 +10,7 @@ import {
 	type CliInvocation,
 	CliUsageError,
 	type CompletionShell,
+	type ParsedArtifactArguments,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
@@ -100,6 +101,9 @@ function parseOptions(command: CliCommandName, args: string[]) {
 			["code", "Couchview bridge pairing code is required"],
 			["profile", "Couchview bridge profile ID is required"],
 			["origin-access", "Couchview bridge origin-access provider is required"],
+			["repository", "Server repository ID or name is required"],
+			["build", "Artifact build ID is required"],
+			["output", "Artifact output file is required"],
 			["remote-bridge-origin-access", "Native bridge origin-access provider is required"],
 		].find(
 			([name]) =>
@@ -431,6 +435,76 @@ function parseBridgeArguments(args: string[]): CliInvocation {
 	);
 }
 
+function parseArtifactArguments(args: string[]): CliInvocation {
+	const parsed = parseOptions("artifacts", args);
+	rejectDuplicateOptions("artifacts", parsed.tokens);
+	if (booleanValue(parsed.values, "help")) return { kind: "help", command: "artifacts" };
+	if (booleanValue(parsed.values, "version")) return { kind: "version" };
+	const action = parsed.positionals[0];
+	const actions = ["list", "build", "download", "pull"] as const;
+	if (!action || !actions.includes(action as (typeof actions)[number])) {
+		const suggestion = action ? nearestValue(action, actions) : null;
+		throw new CliUsageError(
+			`The artifacts command requires list, build, download, or pull.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+			"artifacts",
+		);
+	}
+	const artifactAction = action as ParsedArtifactArguments["action"];
+	const expectedPositionals = artifactAction === "list" ? 1 : 2;
+	if (parsed.positionals.length !== expectedPositionals) {
+		throw new CliUsageError(
+			artifactAction === "list"
+				? "The artifacts list command does not accept an artifact name."
+				: `The artifacts ${artifactAction} command requires exactly one artifact name.`,
+			"artifacts",
+		);
+	}
+	const name = parsed.positionals[1] ?? null;
+	if (name && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
+		throw new CliUsageError("Artifact name is invalid.", "artifacts");
+	}
+	const profile = stringValue(parsed.values, "profile") ?? null;
+	const repository = stringValue(parsed.values, "repository") ?? null;
+	const repo = stringValue(parsed.values, "repo") ?? null;
+	const build = stringValue(parsed.values, "build") ?? null;
+	const output = stringValue(parsed.values, "output") ?? null;
+	const force = booleanValue(parsed.values, "force");
+	if (build && artifactAction !== "download") {
+		throw new CliUsageError("--build is only valid for artifacts download.", "artifacts");
+	}
+	if ((output || force) && artifactAction !== "download" && artifactAction !== "pull") {
+		throw new CliUsageError(
+			"--output and --force are only valid for artifacts download or pull.",
+			"artifacts",
+		);
+	}
+	for (const [option, value] of [
+		["profile", profile],
+		["repository", repository],
+		["repo", repo],
+		["build", build],
+		["output", output],
+	] as const) {
+		if (value !== null && (!value || value.includes("\0"))) {
+			throw new CliUsageError(`--${option} is invalid.`, "artifacts");
+		}
+	}
+	return {
+		kind: "artifacts",
+		parsed: {
+			action: artifactAction,
+			name,
+			profile,
+			repository,
+			repo,
+			build,
+			output,
+			force,
+			json: booleanValue(parsed.values, "json"),
+		},
+	};
+}
+
 function canonicalServeArguments(parsed: ParsedServeArguments): string[] {
 	const argv: string[] = [];
 	if (parsed.explicit.repo && parsed.repo !== undefined) argv.push(`--repo=${parsed.repo}`);
@@ -460,7 +534,10 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
 		}
 		const requested = argv[1];
 		if (requested === "help") return { kind: "help", command: null };
-		if (!requested || !["serve", "restart", "completion", "bridge"].includes(requested)) {
+		if (
+			!requested ||
+			!["serve", "restart", "completion", "bridge", "artifacts"].includes(requested)
+		) {
 			const suggestion = requested ? nearestValue(requested, commandNames) : null;
 			throw new CliUsageError(
 				`Unknown command '${requested ?? ""}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
@@ -499,6 +576,7 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
 	}
 
 	if (first === "bridge") return parseBridgeArguments(argv.slice(1));
+	if (first === "artifacts") return parseArtifactArguments(argv.slice(1));
 
 	const explicitServe = first === "serve";
 	const commandArgv = explicitServe ? argv.slice(1) : argv;

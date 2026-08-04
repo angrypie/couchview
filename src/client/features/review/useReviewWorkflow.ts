@@ -1,5 +1,8 @@
 import { useEffect } from "react";
-import type { CommitMessageCapability } from "../../../shared/contracts.ts";
+import type {
+	CodexGenerationPreferences,
+	CommitMessageCapability,
+} from "../../../shared/contracts.ts";
 import type { FailureState } from "../../lib/failures.ts";
 import { useReviewComments } from "../comments/useReviewComments.ts";
 import { useCommitWorkflow } from "../commit/useCommitWorkflow.ts";
@@ -14,6 +17,7 @@ import { useReviewStatus } from "./useReviewStatus.ts";
 interface UseReviewWorkflowOptions {
 	closeDrawer: () => void;
 	commitMessageCapability: CommitMessageCapability;
+	codexPreferences: CodexGenerationPreferences;
 	dismissToast: () => void;
 	refreshPackageScripts: () => Promise<unknown>;
 	reportFailure: (error: unknown, context: string) => FailureState;
@@ -25,6 +29,7 @@ interface UseReviewWorkflowOptions {
 export function useReviewWorkflow({
 	closeDrawer,
 	commitMessageCapability,
+	codexPreferences,
 	dismissToast,
 	refreshPackageScripts,
 	reportFailure,
@@ -89,6 +94,7 @@ export function useReviewWorkflow({
 	});
 	const commit = useCommitWorkflow({
 		capability: commitMessageCapability,
+		codexPreferences,
 		csrfToken: workspace.bootstrap?.csrfToken,
 		onCommittedStateRefresh: comments.refreshReviewState,
 		onOpen: closeDrawer,

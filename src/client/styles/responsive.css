@@ -59,7 +59,7 @@
 	}
 
 	.top-bar {
-		grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
+		grid-template-columns: minmax(0, 1fr) auto auto auto auto auto auto;
 		padding-left: 10px;
 	}
 
@@ -193,12 +193,13 @@
 		min-height: calc(42px + env(safe-area-inset-top));
 		padding: calc(4px + env(safe-area-inset-top)) max(3px, env(safe-area-inset-right)) 4px
 			max(3px, env(safe-area-inset-left));
-		grid-template-columns: 34px minmax(0, 1fr) 34px 34px 34px auto;
+		grid-template-columns: 34px minmax(0, 1fr) 34px 34px 34px 34px auto;
 		gap: 2px;
 	}
 
 	.top-bar > .menu-button,
 	.top-bar .command-palette-trigger,
+	.top-bar .artifacts-launch-button,
 	.top-bar .git-history-launch-button,
 	.top-bar .terminal-launch-button {
 		width: 34px;
@@ -278,13 +279,14 @@
 		padding: env(safe-area-inset-top) max(3px, env(safe-area-inset-right)) 0
 			max(3px, env(safe-area-inset-left));
 		grid-row: 1;
-		grid-template-columns: 36px minmax(0, 1fr) auto auto auto auto auto auto;
+		grid-template-columns: 36px minmax(0, 1fr) auto auto auto auto auto auto auto;
 		gap: 2px;
 	}
 
 	.compact-landscape .top-bar > .menu-button,
 	.compact-landscape .top-bar .compact-button,
 	.compact-landscape .top-bar .command-palette-trigger,
+	.compact-landscape .top-bar .artifacts-launch-button,
 	.compact-landscape .top-bar .git-history-launch-button,
 	.compact-landscape .top-bar .terminal-launch-button,
 	.compact-landscape .top-bar .settings-launch-button,

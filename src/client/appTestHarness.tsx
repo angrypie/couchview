@@ -263,6 +263,12 @@ export function createAppTestHarness() {
 							? null
 							: "Codex CLI is unavailable in this test.",
 					},
+					artifactProposal: {
+						available: fixture.commitMessageAvailable,
+						reason: fixture.commitMessageAvailable
+							? null
+							: "Codex CLI is unavailable in this test.",
+					},
 					terminal: {
 						available: fixture.terminalAvailable,
 						reason: fixture.terminalAvailable ? null : "tmux is unavailable in this test.",

@@ -1,11 +1,9 @@
-import { randomUUID } from "node:crypto";
 import { lstat, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type {
 	PackageRunEvent,
 	PackageRunner,
-	PackageRunOutputChunk,
 	PackageRunSnapshot,
 	PackageRunSummary,
 	PackageScriptsPackage,
@@ -15,50 +13,38 @@ import type {
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
 import { decodeGitOutput, runGit, sha256 } from "./git/index.ts";
+import {
+	RepositoryCommandRunner,
+	type RepositoryCommandSummary,
+	type SpawnRepositoryCommand,
+} from "./repositoryCommandRunner.ts";
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
-const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
-const DEFAULT_MAX_CONCURRENT_RUNS = 4;
-const DEFAULT_COMPLETED_RUNS_PER_REPOSITORY = 20;
-const STOP_GRACE_MS = 3_000;
-const ACTIVE_STATUSES = new Set<PackageRunSummary["status"]>(["running", "stopping"]);
+const RUN_OWNER = "packages";
 
 interface ParsedPackage {
 	contract: PackageScriptsPackage;
 	packageManager: PackageRunner | null;
 }
 
-interface ProcessHandle {
-	pid: number;
-	stdout: ReadableStream<Uint8Array> | null;
-	stderr: ReadableStream<Uint8Array> | null;
-	exited: Promise<number>;
-	kill(signal?: NodeJS.Signals): void;
-}
-
-interface SpawnOptions {
-	cwd: string;
-	env: Record<string, string | undefined>;
-}
-
-type SpawnProcess = (command: readonly string[], options: SpawnOptions) => ProcessHandle;
-
 interface PackageCommandServiceOptions {
 	maxConcurrentRuns?: number;
 	maxOutputBytes?: number;
 	completedRunsPerRepository?: number;
 	resolveExecutable?: (runner: PackageRunner) => string | null;
-	spawn?: SpawnProcess;
+	spawn?: SpawnRepositoryCommand;
+	commandRunner?: RepositoryCommandRunner;
 }
 
-interface StoredRun {
-	summary: PackageRunSummary;
-	output: PackageRunOutputChunk[];
-	outputBytes: number;
-	nextSequence: number;
-	process: ProcessHandle | null;
-	stopRequested: boolean;
-	stopTimer: ReturnType<typeof setTimeout> | null;
+interface PackageRunMetadata {
+	repositoryId: string;
+	packagePath: string;
+	packageName: string | null;
+	directory: string;
+	scriptName: string;
+	command: string;
+	runner: PackageRunner;
+	invocation: string;
 }
 
 type RunListener = (event: Exclude<PackageRunEvent, { type: "snapshot" }>) => void;
@@ -83,44 +69,25 @@ function invocationArgument(value: string): string {
 	return /^[A-Za-z0-9_./:@+-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
-function defaultSpawn(command: readonly string[], options: SpawnOptions): ProcessHandle {
-	const child = Bun.spawn([...command], {
-		cwd: options.cwd,
-		detached: true,
-		env: options.env,
-		stdin: "ignore",
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	return {
-		pid: child.pid,
-		stdout: child.stdout,
-		stderr: child.stderr,
-		exited: child.exited,
-		kill(signal) {
-			child.kill(signal);
-		},
-	};
-}
-
 export class PackageCommandService {
-	private readonly maxConcurrentRuns: number;
-	private readonly maxOutputBytes: number;
-	private readonly completedRunsPerRepository: number;
 	private readonly resolveExecutable: (runner: PackageRunner) => string | null;
-	private readonly spawnProcess: SpawnProcess;
-	private readonly storedRuns = new Map<string, StoredRun>();
-	private readonly listeners = new Map<string, Set<RunListener>>();
+	private readonly commandRunner: RepositoryCommandRunner;
+	private readonly ownsCommandRunner: boolean;
+	private readonly runMetadata = new Map<string, PackageRunMetadata>();
 
 	constructor(options: PackageCommandServiceOptions = {}) {
-		this.maxConcurrentRuns = options.maxConcurrentRuns ?? DEFAULT_MAX_CONCURRENT_RUNS;
-		this.maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-		this.completedRunsPerRepository =
-			options.completedRunsPerRepository ?? DEFAULT_COMPLETED_RUNS_PER_REPOSITORY;
 		this.resolveExecutable =
 			options.resolveExecutable ??
 			((runner) => (runner === "bun" ? process.execPath : Bun.which(runner)));
-		this.spawnProcess = options.spawn ?? defaultSpawn;
+		this.ownsCommandRunner = !options.commandRunner;
+		this.commandRunner =
+			options.commandRunner ??
+			new RepositoryCommandRunner({
+				maxConcurrentRuns: options.maxConcurrentRuns,
+				maxOutputBytes: options.maxOutputBytes,
+				completedRunsPerOwner: options.completedRunsPerRepository,
+				spawn: options.spawn,
+			});
 	}
 
 	async discover(root: string): Promise<PackageScriptsResponse> {
@@ -169,15 +136,14 @@ export class PackageCommandService {
 	}
 
 	runs(repositoryId: string): PackageRunSummary[] {
-		return [...this.storedRuns.values()]
-			.map((item) => item.summary)
-			.filter((run) => run.repositoryId === repositoryId)
-			.sort((left, right) => {
-				const activeDifference =
-					Number(ACTIVE_STATUSES.has(right.status)) - Number(ACTIVE_STATUSES.has(left.status));
-				return activeDifference || right.startedAt.localeCompare(left.startedAt);
-			})
-			.map((run) => structuredClone(run));
+		const commands = this.commandRunner.runs(RUN_OWNER, repositoryId);
+		const retainedIds = new Set(commands.map((command) => command.id));
+		for (const [runId, metadata] of this.runMetadata) {
+			if (metadata.repositoryId === repositoryId && !retainedIds.has(runId)) {
+				this.runMetadata.delete(runId);
+			}
+		}
+		return commands.map((command) => this.toPackageRun(command));
 	}
 
 	async start(
@@ -186,17 +152,6 @@ export class PackageCommandService {
 		input: StartPackageRunRequest,
 	): Promise<PackageRunSummary> {
 		this.validateStartRequest(input);
-		if (
-			[...this.storedRuns.values()].filter((run) => ACTIVE_STATUSES.has(run.summary.status))
-				.length >= this.maxConcurrentRuns
-		) {
-			throw new HttpError(
-				429,
-				"package_run_limit",
-				`At most ${this.maxConcurrentRuns} package scripts can run at once`,
-			);
-		}
-
 		const discovery = await this.discover(root);
 		const selectedPackage = discovery.packages.find(
 			(item) => item.packagePath === input.packagePath,
@@ -219,99 +174,55 @@ export class PackageCommandService {
 				"The selected package script is no longer available",
 			);
 		}
-		const duplicate = [...this.storedRuns.values()].some(
-			(run) =>
-				run.summary.repositoryId === repositoryId &&
-				run.summary.packagePath === selectedPackage.packagePath &&
-				run.summary.scriptName === script.name &&
-				ACTIVE_STATUSES.has(run.summary.status),
-		);
-		if (duplicate) {
-			throw new HttpError(409, "package_script_running", "This package script is already running");
-		}
-
-		const now = new Date().toISOString();
 		const command = [selectedPackage.runner, "run", script.name] as const;
-		const run: StoredRun = {
-			summary: {
-				id: randomUUID(),
-				repositoryId,
-				packagePath: selectedPackage.packagePath,
-				packageName: selectedPackage.name,
-				directory: selectedPackage.directory,
-				scriptName: script.name,
-				command: script.command,
-				runner: selectedPackage.runner,
-				invocation: command.map(invocationArgument).join(" "),
-				status: "running",
-				exitCode: null,
-				startedAt: now,
-				finishedAt: null,
-				outputTruncated: false,
-			},
-			output: [],
-			outputBytes: 0,
-			nextSequence: 1,
-			process: null,
-			stopRequested: false,
-			stopTimer: null,
-		};
-		this.storedRuns.set(run.summary.id, run);
-
 		const executable = this.resolveExecutable(selectedPackage.runner);
-		if (!executable) {
-			this.appendOutput(
-				run,
-				"stderr",
-				`Could not find ${selectedPackage.runner} on the Couchview server PATH.\n`,
-			);
-			this.finishRun(run, "failed", null);
-			return structuredClone(run.summary);
-		}
-
 		const workingDirectory =
 			selectedPackage.directory === "."
 				? root
 				: path.join(root, ...selectedPackage.directory.split("/"));
+		let started: RepositoryCommandSummary;
 		try {
-			run.process = this.spawnProcess([executable, "run", script.name], {
+			started = this.commandRunner.start({
+				owner: RUN_OWNER,
+				repositoryId,
+				key: `${selectedPackage.packagePath}\0${script.name}`,
+				argv: [executable ?? selectedPackage.runner, "run", script.name],
 				cwd: workingDirectory,
-				env: { ...process.env },
+				...(executable
+					? {}
+					: {
+							startError: `Could not find ${selectedPackage.runner} on the Couchview server PATH.`,
+						}),
 			});
 		} catch (error) {
-			this.appendOutput(
-				run,
-				"stderr",
-				`Could not start ${selectedPackage.runner}: ${
-					error instanceof Error ? error.message : String(error)
-				}\n`,
-			);
-			this.finishRun(run, "failed", null);
-			return structuredClone(run.summary);
+			if (error instanceof HttpError && error.code === "command_run_limit") {
+				throw new HttpError(429, "package_run_limit", error.message);
+			}
+			if (error instanceof HttpError && error.code === "command_already_running") {
+				throw new HttpError(
+					409,
+					"package_script_running",
+					"This package script is already running",
+				);
+			}
+			throw error;
 		}
-
-		void this.monitorRun(run);
-		return structuredClone(run.summary);
+		this.runMetadata.set(started.id, {
+			repositoryId,
+			packagePath: selectedPackage.packagePath,
+			packageName: selectedPackage.name,
+			directory: selectedPackage.directory,
+			scriptName: script.name,
+			command: script.command,
+			runner: selectedPackage.runner,
+			invocation: command.map(invocationArgument).join(" "),
+		});
+		return this.toPackageRun(started);
 	}
 
 	stop(repositoryId: string, runId: string): PackageRunSummary {
-		const run = this.requireRun(repositoryId, runId);
-		if (!ACTIVE_STATUSES.has(run.summary.status)) {
-			return structuredClone(run.summary);
-		}
-		if (run.summary.status !== "stopping") {
-			run.stopRequested = true;
-			run.summary.status = "stopping";
-			this.emit(run, { type: "status", run: structuredClone(run.summary) });
-			this.killRun(run, "SIGTERM");
-			run.stopTimer = setTimeout(() => {
-				if (ACTIVE_STATUSES.has(run.summary.status)) {
-					this.killRun(run, "SIGKILL");
-				}
-			}, STOP_GRACE_MS);
-			run.stopTimer.unref?.();
-		}
-		return structuredClone(run.summary);
+		this.requireMetadata(repositoryId, runId);
+		return this.toPackageRun(this.commandRunner.stop(RUN_OWNER, repositoryId, runId));
 	}
 
 	subscribe(
@@ -319,37 +230,30 @@ export class PackageCommandService {
 		runId: string,
 		listener: RunListener,
 	): { snapshot: PackageRunSnapshot; unsubscribe: () => void } {
-		const run = this.requireRun(repositoryId, runId);
-		const runListeners = this.listeners.get(runId) ?? new Set<RunListener>();
-		runListeners.add(listener);
-		this.listeners.set(runId, runListeners);
+		this.requireMetadata(repositoryId, runId);
+		const subscription = this.commandRunner.subscribe(RUN_OWNER, repositoryId, runId, (event) => {
+			if (event.type === "output") listener({ type: "output", chunk: event.chunk });
+			else listener({ type: "status", run: this.toPackageRun(event.run) });
+		});
 		return {
 			snapshot: {
-				run: structuredClone(run.summary),
-				output: structuredClone(run.output),
+				run: this.toPackageRun(subscription.snapshot.run),
+				output: subscription.snapshot.output,
 			},
-			unsubscribe: () => {
-				runListeners.delete(listener);
-				if (runListeners.size === 0) this.listeners.delete(runId);
-			},
+			unsubscribe: subscription.unsubscribe,
 		};
 	}
 
 	stopRepository(repositoryId: string): void {
-		for (const run of this.storedRuns.values()) {
-			if (run.summary.repositoryId === repositoryId && ACTIVE_STATUSES.has(run.summary.status)) {
-				this.stop(repositoryId, run.summary.id);
-			}
-		}
+		this.commandRunner.stopOwnerRepository(RUN_OWNER, repositoryId);
 	}
 
 	close(): void {
-		for (const run of this.storedRuns.values()) {
-			if (ACTIVE_STATUSES.has(run.summary.status)) {
-				this.stop(run.summary.repositoryId, run.summary.id);
-			}
+		for (const metadata of this.runMetadata.values()) {
+			this.commandRunner.stopOwnerRepository(RUN_OWNER, metadata.repositoryId);
 		}
-		this.listeners.clear();
+		if (this.ownsCommandRunner) this.commandRunner.close();
+		this.runMetadata.clear();
 	}
 
 	private async readPackage(
@@ -492,149 +396,31 @@ export class PackageCommandService {
 		}
 	}
 
-	private requireRun(repositoryId: string, runId: string): StoredRun {
-		const run = this.storedRuns.get(runId);
-		if (!run || run.summary.repositoryId !== repositoryId) {
+	private requireMetadata(repositoryId: string, runId: string): PackageRunMetadata {
+		const metadata = this.runMetadata.get(runId);
+		if (!metadata || metadata.repositoryId !== repositoryId) {
 			throw new HttpError(404, "package_run_not_found", "Package run not found");
 		}
-		return run;
+		return metadata;
 	}
 
-	private async monitorRun(run: StoredRun): Promise<void> {
-		const process = run.process;
-		if (!process) return;
-		const stdout = this.captureStream(run, "stdout", process.stdout);
-		const stderr = this.captureStream(run, "stderr", process.stderr);
-		let exitCode: number | null = null;
-		try {
-			exitCode = await process.exited;
-		} catch (error) {
-			this.appendOutput(
-				run,
-				"stderr",
-				`${error instanceof Error ? error.message : String(error)}\n`,
-			);
-		}
-		await Promise.allSettled([stdout, stderr]);
-		this.finishRun(
-			run,
-			run.stopRequested ? "stopped" : exitCode === 0 ? "succeeded" : "failed",
-			exitCode,
-		);
-	}
-
-	private async captureStream(
-		run: StoredRun,
-		stream: PackageRunOutputChunk["stream"],
-		readable: ReadableStream<Uint8Array> | null,
-	): Promise<void> {
-		if (!readable) return;
-		const reader = readable.getReader();
-		const decoder = new TextDecoder("utf-8", { fatal: false });
-		try {
-			while (true) {
-				const result = await reader.read();
-				if (result.done) break;
-				const text = decoder.decode(result.value, { stream: true });
-				if (text) this.appendOutput(run, stream, text);
-			}
-			const tail = decoder.decode();
-			if (tail) this.appendOutput(run, stream, tail);
-		} catch (error) {
-			if (!run.stopRequested) {
-				this.appendOutput(
-					run,
-					"stderr",
-					`Could not read ${stream}: ${error instanceof Error ? error.message : String(error)}\n`,
-				);
-			}
-		} finally {
-			reader.releaseLock();
-		}
-	}
-
-	private appendOutput(
-		run: StoredRun,
-		stream: PackageRunOutputChunk["stream"],
-		text: string,
-	): void {
-		let sanitized = text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replaceAll("\0", "�");
-		if (!sanitized) return;
-		const encoded = Buffer.from(sanitized);
-		if (encoded.byteLength > this.maxOutputBytes) {
-			sanitized = encoded.subarray(encoded.byteLength - this.maxOutputBytes).toString("utf8");
-			run.summary.outputTruncated = true;
-		}
-		const chunk: PackageRunOutputChunk = {
-			sequence: run.nextSequence,
-			stream,
-			text: sanitized,
+	private toPackageRun(command: RepositoryCommandSummary): PackageRunSummary {
+		const metadata = this.requireMetadata(command.repositoryId, command.id);
+		return {
+			id: command.id,
+			repositoryId: command.repositoryId,
+			packagePath: metadata.packagePath,
+			packageName: metadata.packageName,
+			directory: metadata.directory,
+			scriptName: metadata.scriptName,
+			command: metadata.command,
+			runner: metadata.runner,
+			invocation: metadata.invocation,
+			status: command.status === "finalizing" ? "running" : command.status,
+			exitCode: command.exitCode,
+			startedAt: command.startedAt,
+			finishedAt: command.finishedAt,
+			outputTruncated: command.outputTruncated,
 		};
-		run.nextSequence += 1;
-		run.output.push(chunk);
-		run.outputBytes += Buffer.byteLength(sanitized);
-		while (run.outputBytes > this.maxOutputBytes && run.output.length > 1) {
-			const removed = run.output.shift();
-			if (removed) run.outputBytes -= Buffer.byteLength(removed.text);
-			run.summary.outputTruncated = true;
-		}
-		this.emit(run, { type: "output", chunk: structuredClone(chunk) });
-	}
-
-	private finishRun(
-		run: StoredRun,
-		status: Extract<PackageRunSummary["status"], "succeeded" | "failed" | "stopped">,
-		exitCode: number | null,
-	): void {
-		if (!ACTIVE_STATUSES.has(run.summary.status)) return;
-		if (run.stopTimer) clearTimeout(run.stopTimer);
-		run.stopTimer = null;
-		run.summary.status = status;
-		run.summary.exitCode = exitCode;
-		run.summary.finishedAt = new Date().toISOString();
-		run.process = null;
-		this.emit(run, { type: "status", run: structuredClone(run.summary) });
-		this.prune(run.summary.repositoryId);
-	}
-
-	private emit(run: StoredRun, event: Exclude<PackageRunEvent, { type: "snapshot" }>): void {
-		for (const listener of this.listeners.get(run.summary.id) ?? []) {
-			try {
-				listener(event);
-			} catch {
-				// A disconnected response removes its listener independently.
-			}
-		}
-	}
-
-	private prune(repositoryId: string): void {
-		const completed = [...this.storedRuns.values()]
-			.filter(
-				(run) =>
-					run.summary.repositoryId === repositoryId && !ACTIVE_STATUSES.has(run.summary.status),
-			)
-			.sort((left, right) => right.summary.startedAt.localeCompare(left.summary.startedAt));
-		for (const run of completed.slice(this.completedRunsPerRepository)) {
-			this.storedRuns.delete(run.summary.id);
-			this.listeners.delete(run.summary.id);
-		}
-	}
-
-	private killRun(run: StoredRun, signal: NodeJS.Signals): void {
-		const child = run.process;
-		if (!child) return;
-		if (process.platform !== "win32" && child.pid > 0) {
-			try {
-				process.kill(-child.pid, signal);
-				return;
-			} catch {
-				// Fall back to Bun's direct child signal when process groups are unavailable.
-			}
-		}
-		try {
-			child.kill(signal);
-		} catch {
-			// The child may already have exited.
-		}
 	}
 }

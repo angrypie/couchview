@@ -8,8 +8,8 @@ mutations, network streams, browser overlays, or substantial screen markup.
 
 - `src/client/features/` owns stateful use cases and side effects. Each folder
   owns one product capability: repositories, review, staging, comments,
-  packages, settings, commands, PWA lifecycle, notifications, or application
-  shell behavior.
+  packages, artifacts, settings, commands, PWA lifecycle, notifications, or
+  application shell behavior.
 - `src/client/components/` owns rendering and local presentation behavior.
   Components may consume feature controllers; feature code must not import
   components.
@@ -38,6 +38,27 @@ repository architecture checker enforces these entry-point boundaries.
 The client presents the module as the URL-backed `/history` workspace page;
 route state belongs to the shell navigation feature, while history data and
 mutations remain owned by the Git feature controller.
+
+## Artifact workspace
+
+The URL-backed `/artifacts` workspace keeps catalog and proposal loading, stale-response
+protection, mutations, polling, and run-event streams in
+`src/client/features/artifacts/`. Components under
+`src/client/components/artifacts/` own forms, logs, attachment links, and copied
+CLI commands. `App.tsx` only wires the feature controller into the application
+view.
+
+On the server, `StateDatabase` composes artifact definition and build metadata,
+`ArtifactStore` owns private XDG payload capture and reconciliation, and
+`ArtifactService` owns orchestration and live run state. The shared repository
+command runner owns direct argv subprocesses, bounded output, concurrency, and
+cancellation for both artifact and package commands. Shared contracts own
+validation, the command-field argv parser, route builders, shell-safe display
+quoting, and credential-free Git remote identity normalization. The artifact
+proposal service owns bounded allowlisted configuration discovery and proposal
+validation; the structured Codex runner owns the shared ephemeral subprocess,
+model/reasoning selection, schema output, limits, and cancellation used by
+artifact suggestions and commit messages.
 
 ## React Native Web direction
 

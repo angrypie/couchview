@@ -15,6 +15,7 @@
 		"dev": "bun run scripts/dev.ts",
 		"start": "bun run src/server/cli.ts",
 		"build": "vite build",
+		"build:binary": "bun run build && bun build ./src/server/cli.ts --compile --outfile ./dist/couchview",
 		"preview": "bun run src/server/cli.ts",
 		"typecheck": "tsc --noEmit",
 		"benchmark:quality": "bun run scripts/benchmarkQualityChecks.ts",
@@ -29,6 +30,7 @@
 		"check:commit": "bun run check:commit:static && bun run benchmark:quality",
 		"check:quality": "bun run check:architecture && bun run format:check && bun run lint && bun run typecheck && bun test src scripts && bun run build",
 		"test": "bun test src scripts",
+		"test:binary": "bun test tests/integration/compiled-binary.test.ts",
 		"test:integration:tmux": "bun test tests/integration/remote-terminal-tmux.test.ts",
 		"test:watch": "bun test --watch src",
 		"test:e2e": "playwright test"

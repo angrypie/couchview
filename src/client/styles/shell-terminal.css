@@ -20,7 +20,7 @@
 		max(4px, env(safe-area-inset-left));
 	border-bottom: 1px solid var(--line);
 	display: grid;
-	grid-template-columns: 44px minmax(0, 1fr) auto auto auto auto;
+	grid-template-columns: 44px minmax(0, 1fr) auto auto auto auto auto;
 	align-items: center;
 	gap: 3px;
 }

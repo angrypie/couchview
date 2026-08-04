@@ -28,6 +28,7 @@ interface ReviewWorkspaceChromeProps {
 	onOpenCommandPalette: () => void;
 	onOpenComments: () => void;
 	onOpenFailure: () => void;
+	onOpenArtifacts: () => void;
 	onOpenGitHistory: () => void;
 	onOpenRemoteBridge: () => void;
 	onOpenSettings: () => void;
@@ -55,6 +56,7 @@ export function ReviewWorkspaceChrome({
 	onOpenCommandPalette,
 	onOpenComments,
 	onOpenFailure,
+	onOpenArtifacts,
 	onOpenGitHistory,
 	onOpenRemoteBridge,
 	onOpenSettings,
@@ -132,6 +134,7 @@ export function ReviewWorkspaceChrome({
 				onNavigateHunk={diff.navigateHunk}
 				onOpenCommandPalette={onOpenCommandPalette}
 				onOpenDrawer={() => onDrawerOpenChange(true)}
+				onOpenArtifacts={onOpenArtifacts}
 				onOpenGitHistory={onOpenGitHistory}
 				onOpenRemoteBridge={onOpenRemoteBridge}
 				onOpenRepositoryPicker={management.openPicker}

@@ -23,8 +23,15 @@ import {
 	runRemoteBridgeProxy,
 	storeRemoteBridgeProfile,
 } from "./remoteBridgeClient.ts";
+import { defaultRemoteBridgeExecutableCommand } from "./remoteBridgeConfig.ts";
 
 const temporaryDirectories: string[] = [];
+
+test("uses the compiled binary path when couchview is not installed on PATH", () => {
+	expect(
+		defaultRemoteBridgeExecutableCommand(true, "/opt/Couchview App/couchview", () => null),
+	).toBe("'/opt/Couchview App/couchview'");
+});
 
 afterEach(async () => {
 	await Promise.all(

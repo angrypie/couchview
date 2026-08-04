@@ -9,6 +9,12 @@ import {
 	type RestartCapability,
 	remoteBridgeOriginAccessIdIsValid,
 } from "../shared/contracts.ts";
+import {
+	type ArtifactProposalGenerator,
+	CodexArtifactProposalService,
+} from "./artifactProposal.ts";
+import { ArtifactService } from "./artifactService.ts";
+import { ArtifactStore } from "./artifactStore.ts";
 import { CodexAppServerService } from "./codexAppServer.ts";
 import { CodexCommitMessageService, type CommitMessageGenerator } from "./commitMessage.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
@@ -17,6 +23,7 @@ import { PackageCommandService } from "./packageCommands.ts";
 import { RemoteBridgeService, type RemoteBridgeSocketData } from "./remoteBridgeService.ts";
 import { RepositoryManager } from "./repositories.ts";
 import { GitRepository } from "./repository.ts";
+import { RepositoryCommandRunner } from "./repositoryCommandRunner.ts";
 import { ServerEventStreams } from "./serverEvents.ts";
 import { normalizeOrigin } from "./serverHttp.ts";
 import { handleRepositoryApi } from "./serverRepositoryRoutes.ts";
@@ -48,6 +55,7 @@ export interface CouchviewAppOptions {
 		request?(): Promise<void>;
 	};
 	commitMessages?: CommitMessageGenerator;
+	artifactProposals?: ArtifactProposalGenerator;
 	codex?: CodexAppServerService;
 	terminal?: {
 		enabled: boolean;
@@ -66,6 +74,7 @@ export interface CouchviewAppOptions {
 		originAccess?: string;
 	};
 	remoteBridgeService?: RemoteBridgeService;
+	artifactStore?: ArtifactStore;
 }
 
 export type CouchviewSocketData = TerminalSocketData | RemoteBridgeSocketData;
@@ -74,6 +83,8 @@ export interface CouchviewApp {
 	repository: GitRepository;
 	repositories: RepositoryManager;
 	packageCommands: PackageCommandService;
+	artifacts: ArtifactService;
+	artifactProposals: ArtifactProposalGenerator;
 	commitMessages: CommitMessageGenerator;
 	codex: CodexAppServerService;
 	terminalSessions: TerminalSessionService;
@@ -161,8 +172,16 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	const stateDatabasePath = path.resolve(options.stateDatabasePath ?? resolveStateDatabasePath());
 	const database = await StateDatabase.open(stateDatabasePath);
 	const repositories = new RepositoryManager(database);
-	const packageCommands = new PackageCommandService();
+	const commandRunner = new RepositoryCommandRunner();
+	const packageCommands = new PackageCommandService({ commandRunner });
+	const artifacts = await ArtifactService.create({
+		database,
+		repositories,
+		runner: commandRunner,
+		store: options.artifactStore ?? ArtifactStore.besideDatabase(stateDatabasePath),
+	});
 	const commitMessages = options.commitMessages ?? new CodexCommitMessageService();
+	const artifactProposals = options.artifactProposals ?? new CodexArtifactProposalService();
 	const codex = options.codex ?? new CodexAppServerService();
 	let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
 	let initialBackend: GitRepository;
@@ -170,9 +189,12 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		initial = await repositories.register(options.root);
 		initialBackend = await repositories.get(initial.repository.id);
 	} catch (error) {
+		artifactProposals.close();
 		commitMessages.close();
 		codex.close();
 		packageCommands.close();
+		artifacts.close();
+		commandRunner.close();
 		repositories.close();
 		database.close();
 		throw error;
@@ -218,9 +240,12 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	) {
 		remoteBridge.close();
 		terminalSessions.close();
+		artifactProposals.close();
 		commitMessages.close();
 		codex.close();
 		packageCommands.close();
+		artifacts.close();
+		commandRunner.close();
 		repositories.close();
 		database.close();
 		throw new Error("The native bridge origin-access provider is invalid");
@@ -247,7 +272,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	};
 
 	const handleApi = async (request: Request, url: URL): Promise<Response> => {
-		authorizeApiRequest(request, url, controlToken, csrfToken);
+		authorizeApiRequest(request, url, controlToken, csrfToken, remoteBridge);
 		const systemResponse = await handleSystemApi(
 			{
 				controlToken,
@@ -260,6 +285,8 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				accessOrigins,
 				remoteBridgeOriginAccess,
 				database,
+				artifacts,
+				artifactProposals,
 				repositories,
 				commitMessages,
 				codex,
@@ -276,6 +303,8 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		return handleRepositoryApi(
 			{
 				database,
+				artifacts,
+				artifactProposals,
 				repositories,
 				packageCommands,
 				commitMessages,
@@ -356,6 +385,8 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		repository: initialBackend,
 		repositories,
 		packageCommands,
+		artifacts,
+		artifactProposals,
 		commitMessages,
 		codex,
 		terminalSessions,
@@ -412,9 +443,12 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 			database.removeServerInstance(instanceId);
 			terminalSessions.close();
 			remoteBridge.close();
+			artifactProposals.close();
 			commitMessages.close();
 			codex.close();
 			packageCommands.close();
+			artifacts.close();
+			commandRunner.close();
 			repositories.close();
 			database.close();
 		},

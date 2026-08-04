@@ -1,4 +1,5 @@
 import {
+	Archive,
 	ChevronDown,
 	ChevronUp,
 	GitBranch,
@@ -43,6 +44,7 @@ interface ReviewTopBarProps {
 	onNavigateHunk: (direction: -1 | 1) => void;
 	onOpenCommandPalette: () => void;
 	onOpenDrawer: () => void;
+	onOpenArtifacts: () => void;
 	onOpenGitHistory: () => void;
 	onOpenRemoteBridge: () => void;
 	onOpenRepositoryPicker: () => void;
@@ -83,6 +85,7 @@ export function ReviewTopBar({
 	onNavigateHunk,
 	onOpenCommandPalette,
 	onOpenDrawer,
+	onOpenArtifacts,
 	onOpenGitHistory,
 	onOpenRemoteBridge,
 	onOpenRepositoryPicker,
@@ -215,6 +218,16 @@ export function ReviewTopBar({
 			>
 				<Search size={18} />
 				{splitView && <kbd>{commandPaletteShortcut}</kbd>}
+			</button>
+			<button
+				aria-label="Open repository artifacts"
+				className="icon-button artifacts-launch-button"
+				disabled={!repositoryId || !repository}
+				onClick={onOpenArtifacts}
+				title="Build and download repository artifacts"
+				type="button"
+			>
+				<Archive size={18} />
 			</button>
 			<button
 				aria-label="Open Git history"

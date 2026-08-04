@@ -76,6 +76,7 @@ test.describe("desktop review layout", () => {
 		await expect(page.getByRole("button", { name: "Next file" })).toHaveCount(1);
 		await expect(currentFile.getByRole("button", { name: "Previous file" })).toHaveCount(0);
 		await expect(currentFile.getByRole("button", { name: "Next file" })).toHaveCount(0);
+		await expect(page.locator(".artifacts-launch-button .lucide-archive")).toBeVisible();
 		await expect(page.locator(".git-history-launch-button .lucide-git-graph")).toBeVisible();
 		await expect
 			.poll(() => reviewAction.evaluate((element) => element.getBoundingClientRect().width))

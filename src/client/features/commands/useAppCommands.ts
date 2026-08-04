@@ -18,6 +18,7 @@ interface UseAppCommandsOptions {
 	onDismissOverlays: () => void;
 	onNavigateFile: (direction: -1 | 1) => void;
 	onNavigateHunk: (direction: -1 | 1) => void;
+	onOpenArtifacts: () => void;
 	onOpenCommit: () => void;
 	onOpenFiles: () => void;
 	onOpenPackageCommands: () => void;
@@ -35,7 +36,7 @@ interface UseAppCommandsOptions {
 	stageBusy: boolean;
 	stagedCount: number;
 	terminalCapability: TerminalCapability;
-	workspaceMode: "review" | "history" | "terminal" | "settings";
+	workspaceMode: "review" | "history" | "artifacts" | "terminal" | "settings";
 }
 
 export function useAppCommands({
@@ -52,6 +53,7 @@ export function useAppCommands({
 	onDismissOverlays,
 	onNavigateFile,
 	onNavigateHunk,
+	onOpenArtifacts,
 	onOpenCommit,
 	onOpenFiles,
 	onOpenPackageCommands,
@@ -101,6 +103,12 @@ export function useAppCommands({
 				true,
 				null,
 				reviewAction(() => {}),
+			),
+			"navigate.artifacts": command(
+				"navigate.artifacts",
+				repositoryReady,
+				"Select a repository first",
+				reviewAction(onOpenArtifacts),
 			),
 			"navigate.terminal": command(
 				"navigate.terminal",
@@ -202,6 +210,7 @@ export function useAppCommands({
 		onDismissOverlays,
 		onNavigateFile,
 		onNavigateHunk,
+		onOpenArtifacts,
 		onOpenCommit,
 		onOpenFiles,
 		onOpenPackageCommands,

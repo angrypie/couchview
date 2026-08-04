@@ -1,5 +1,10 @@
 import type {
+	ArtifactDefinitionResponse,
+	ArtifactProposalRequest,
+	ArtifactProposalResponse,
+	ArtifactRunResponse,
 	CommitRequest,
+	CreateArtifactDefinitionRequest,
 	CreateRemoteBridgePairingRequest,
 	ForgetRepositoryResponse,
 	GenerateCommitMessageRequest,
@@ -14,11 +19,19 @@ import type {
 	StartPackageRunRequest,
 	TerminalAttachmentRequest,
 	TerminalLeaseRequest,
+	UpdateArtifactDefinitionRequest,
 } from "../shared/contracts.ts";
-import { REMOTE_BRIDGE_NO_ORIGIN_ACCESS } from "../shared/contracts.ts";
+import {
+	DEFAULT_CODEX_GENERATION_PREFERENCES,
+	parseArtifactProposalRequest,
+	parseCodexGenerationPreferences,
+	REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
+} from "../shared/contracts.ts";
+import { artifactDownloadResponse } from "./artifactDownload.ts";
 import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 import { HttpError } from "./errors.ts";
 import { handleGitWorkspaceRoute } from "./git/index.ts";
+import { openArtifactRunEvents } from "./serverArtifactRunEvents.ts";
 import {
 	decodeSegment,
 	json,
@@ -40,6 +53,8 @@ export async function handleRepositoryApi(
 		database,
 		repositories,
 		packageCommands,
+		artifacts,
+		artifactProposals,
 		commitMessages,
 		terminalSessions,
 		remoteBridge,
@@ -59,6 +74,7 @@ export async function handleRepositoryApi(
 		if (terminalStatus.running) await terminalSessions.end(repositoryId);
 		remoteBridge.closeRepository(repositoryId);
 		packageCommands.stopRepository(repositoryId);
+		await artifacts.forgetRepository(repositoryId);
 		repositories.forget(repositoryId);
 		if (context.defaultRepositoryId() === repositoryId) {
 			context.setDefaultRepositoryId(
@@ -73,6 +89,97 @@ export async function handleRepositoryApi(
 	const repository = await repositories.get(repositoryId);
 	const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath);
 	const packageRunRoute = /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath);
+	const artifactRoute = /^artifacts\/([^/]+)$/.exec(nestedPath);
+	const artifactRunRoute = /^artifacts\/([^/]+)\/runs(?:\/([^/]+)\/(stop|events))?$/.exec(
+		nestedPath,
+	);
+	const artifactDownloadRoute = /^artifacts\/([^/]+)\/builds\/([^/]+)\/download$/.exec(nestedPath);
+
+	if (nestedPath === "artifacts" && request.method === "GET") {
+		return json(artifacts.catalog(repositoryId));
+	}
+	if (nestedPath === "artifacts" && request.method === "POST") {
+		const input = await readJsonObject<CreateArtifactDefinitionRequest>(request);
+		const response: ArtifactDefinitionResponse = {
+			definition: artifacts.createDefinition(repositoryId, input),
+		};
+		return json(response, { status: 201 });
+	}
+	if (nestedPath === "artifacts/proposal" && request.method === "POST") {
+		const value = await readJsonObject<ArtifactProposalRequest>(request);
+		let input: Required<ArtifactProposalRequest>;
+		try {
+			input = parseArtifactProposalRequest(value);
+		} catch (error) {
+			throw new HttpError(
+				400,
+				"artifact_proposal_invalid",
+				error instanceof Error ? error.message : "Artifact proposal request is invalid",
+			);
+		}
+		const response: ArtifactProposalResponse = await artifactProposals.propose(
+			repository.root,
+			input,
+			artifacts.catalog(repositoryId).artifacts.map((item) => item.definition.name),
+			request.signal,
+		);
+		return json(response);
+	}
+	if (artifactRoute && request.method === "PUT") {
+		const artifactId = decodeSegment(artifactRoute[1] ?? "");
+		const input = await readJsonObject<UpdateArtifactDefinitionRequest>(request);
+		const response: ArtifactDefinitionResponse = {
+			definition: artifacts.updateDefinition(
+				repositoryId,
+				artifactId,
+				input,
+				input.expectedRevision,
+			),
+		};
+		return json(response);
+	}
+	if (artifactRoute && request.method === "DELETE") {
+		await artifacts.deleteDefinition(repositoryId, decodeSegment(artifactRoute[1] ?? ""));
+		return new Response(null, { status: 204 });
+	}
+	if (artifactRunRoute && !artifactRunRoute[2] && request.method === "POST") {
+		const response: ArtifactRunResponse = {
+			run: await artifacts.start(repositoryId, decodeSegment(artifactRunRoute[1] ?? "")),
+		};
+		return json(response, { status: 201 });
+	}
+	if (artifactRunRoute?.[3] === "stop" && request.method === "POST") {
+		const response: ArtifactRunResponse = {
+			run: artifacts.stop(
+				repositoryId,
+				decodeSegment(artifactRunRoute[1] ?? ""),
+				decodeSegment(artifactRunRoute[2] ?? ""),
+			),
+		};
+		return json(response);
+	}
+	if (artifactRunRoute?.[3] === "events" && request.method === "GET") {
+		return openArtifactRunEvents(
+			request,
+			artifacts,
+			repositoryId,
+			decodeSegment(artifactRunRoute[1] ?? ""),
+			decodeSegment(artifactRunRoute[2] ?? ""),
+		);
+	}
+	if (artifactDownloadRoute && (request.method === "GET" || request.method === "HEAD")) {
+		const artifactId = decodeSegment(artifactDownloadRoute[1] ?? "");
+		const build = artifacts.build(
+			repositoryId,
+			artifactId,
+			decodeSegment(artifactDownloadRoute[2] ?? ""),
+		);
+		const payload = artifacts.store.payloadPath(build);
+		if (!(await Bun.file(payload).exists())) {
+			throw new HttpError(404, "artifact_payload_missing", "Artifact payload is unavailable");
+		}
+		return artifactDownloadResponse(request, build, payload);
+	}
 
 	if (nestedPath === "files" && request.method === "GET") {
 		return json(await repository.changes());
@@ -220,7 +327,19 @@ export async function handleRepositoryApi(
 	if (nestedPath === "commit-message" && request.method === "POST") {
 		const input = await readJsonObject<GenerateCommitMessageRequest>(request);
 		const context = await repository.commitMessageContext(input);
-		const message = await commitMessages.generate(context, request.signal);
+		let preferences;
+		try {
+			preferences = parseCodexGenerationPreferences(
+				input.codex ?? DEFAULT_CODEX_GENERATION_PREFERENCES,
+			);
+		} catch (error) {
+			throw new HttpError(
+				400,
+				"codex_preferences_invalid",
+				error instanceof Error ? error.message : "Codex preferences are invalid",
+			);
+		}
+		const message = await commitMessages.generate(context, preferences, request.signal);
 		await repository.assertCommitMessageRevision(input.operationRevision);
 		const response: GenerateCommitMessageResponse = {
 			message,

@@ -224,6 +224,41 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(window.location.pathname).toBe("/");
 	});
 
+	test("persists one Codex model and reasoning choice for commit and artifact generation", async () => {
+		window.history.replaceState(null, "", "/settings?repo=repo");
+		render(<App />);
+
+		const settings = await screen.findByRole("region", { name: "Settings" });
+		const codexCard = within(settings)
+			.getByRole("heading", { name: "Codex generation" })
+			.closest("section")!;
+		fireEvent.change(within(codexCard).getByLabelText("Model"), {
+			target: { value: "gpt-5.6-terra" },
+		});
+		fireEvent.change(within(codexCard).getByLabelText("Reasoning effort"), {
+			target: { value: "medium" },
+		});
+		fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() =>
+			expect(fixture.settingsProfiles[0]?.data.codex).toEqual({
+				model: "gpt-5.6-terra",
+				reasoning: "medium",
+			}),
+		);
+	});
+
+	test("defaults a legacy settings profile without entering a bootstrap update loop", async () => {
+		delete (fixture.settingsProfiles[0]!.data as { codex?: unknown }).codex;
+		window.history.replaceState(null, "", "/settings?repo=repo");
+		render(<App />);
+
+		const settings = await screen.findByRole("region", { name: "Settings" });
+		expect((within(settings).getByLabelText("Model") as HTMLInputElement).value).toBe(
+			"gpt-5.6-luna",
+		);
+	});
+
 	test("opens the global command palette, filters commands, and executes a destination", async () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");

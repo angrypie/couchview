@@ -29,6 +29,7 @@ import {
 import { GhosttyTerminalPreview } from "../GhosttyTerminalPreview.tsx";
 import { formatShortcut } from "../shortcutEngine.ts";
 import { codeFontStack, DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "../typographyPreferences.ts";
+import { CodexGenerationSettingsCard } from "./CodexGenerationSettingsCard.tsx";
 
 interface ProfileSettingsPageProps {
 	busy: boolean;
@@ -582,6 +583,7 @@ export function ProfileSettingsPage(props: ProfileSettingsPageProps) {
 				<div className="settings-grid settings-profile-grid">
 					<AppearanceSettingsCard editor={editor} />
 					<DisplaySettingsCard editor={editor} />
+					<CodexGenerationSettingsCard editor={editor} />
 					<KeyboardSettingsCard editor={editor} />
 				</div>
 			</div>

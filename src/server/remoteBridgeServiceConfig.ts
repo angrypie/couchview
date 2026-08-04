@@ -3,6 +3,13 @@ import { userInfo } from "node:os";
 import type { StateDatabase } from "./database.ts";
 import type { RemoteBridgeTcpSocket, TerminalPeerConnection } from "./remoteBridgeTransport.ts";
 
+export const BRIDGE_LIMITS = {
+	negotiationMs: 10_000,
+	leaseMs: 120_000,
+	bufferedBytes: 1024 * 1024,
+	frameBytes: 32 * 1024,
+} as const;
+
 export interface RemoteBridgeServiceOptions {
 	enabled: boolean;
 	database: StateDatabase;

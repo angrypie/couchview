@@ -97,13 +97,13 @@ describe("global SQLite state", () => {
 			"wal",
 		);
 		expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-			4,
+			5,
 		);
 		expect(
 			raw
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(4);
+		).toBe(5);
 		raw.close();
 
 		const reopened = await StateDatabase.open(filePath);
@@ -167,12 +167,12 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(4);
+		).toBe(5);
 		expect(
 			inspected
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(4);
+		).toBe(5);
 		inspected.close();
 	});
 
@@ -238,7 +238,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(4);
+		).toBe(5);
 		expect(
 			inspected
 				.query<{ table: string }, []>("PRAGMA foreign_key_list(remote_bridge_devices)")
@@ -310,7 +310,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(4);
+		).toBe(5);
 		inspected.close();
 	});
 
@@ -512,5 +512,135 @@ describe("global SQLite state", () => {
 		} finally {
 			database.close();
 		}
+	});
+
+	test("migrates v4 metadata and retains exactly two successful artifact builds", async () => {
+		const filePath = await databasePath();
+		await mkdir(path.dirname(filePath), { recursive: true });
+		const raw = new Database(filePath, { create: true, strict: true });
+		raw.run(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL UNIQUE,
+        git_directory TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        state_revision INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE settings_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        data_json TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO metadata(key, value) VALUES ('schema_version', 4), ('catalog_revision', 0);
+      INSERT INTO repositories(
+        id, name, root, git_directory, added_at, updated_at, state_revision
+      ) VALUES (
+        'repo-one', 'one', '/projects/one', '/projects/one/.git',
+        '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z', 0
+      ), (
+        'repo-two', 'two', '/projects/two', '/projects/two/.git',
+        '2026-08-01T10:00:00.000Z', '2026-08-01T10:00:00.000Z', 0
+      );
+      PRAGMA user_version = 4;
+    `);
+		raw.close();
+
+		const database = await StateDatabase.open(filePath);
+		let artifactId = "";
+		let secondArtifactId = "";
+		try {
+			const definition = database.artifacts.createDefinition("repo-one", {
+				name: "couchview-cli",
+				argv: ["bun", "run", "build"],
+				workingDirectory: ".",
+				outputPath: "dist/couchview",
+				outputKind: "file",
+			});
+			artifactId = definition.id;
+			const secondDefinition = database.artifacts.createDefinition("repo-two", {
+				name: "couchview-cli",
+				argv: ["bun", "run", "build"],
+				workingDirectory: ".",
+				outputPath: "dist/couchview",
+				outputKind: "file",
+			});
+			secondArtifactId = secondDefinition.id;
+			expect(database.artifacts.definitions("repo-one")).toHaveLength(1);
+			expect(database.artifacts.definitions("repo-two")).toHaveLength(1);
+			const stale = database.artifacts.updateDefinition(
+				"repo-one",
+				definition.id,
+				{ ...definition, argv: ["bun", "run", "compile"] },
+				99,
+			);
+			expect(stale).toMatchObject({ status: "stale", definition: { revision: 1 } });
+			const updated = database.artifacts.updateDefinition(
+				"repo-one",
+				definition.id,
+				{ ...definition, argv: ["bun", "run", "compile"] },
+				1,
+			);
+			expect(updated).toMatchObject({ status: "updated", definition: { revision: 2 } });
+
+			const build = (id: string) => ({
+				id,
+				repositoryId: "repo-one",
+				artifactId: definition.id,
+				definitionRevision: 2,
+				downloadName: "couchview",
+				mediaType: "application/octet-stream",
+				sizeBytes: 10,
+				sha256: id.padEnd(64, "0"),
+				createdAt: "2026-08-01T10:01:00.000Z",
+			});
+			expect(database.artifacts.insertBuild(build("build-one"))).toEqual([]);
+			expect(database.artifacts.insertBuild(build("build-two"))).toEqual([]);
+			expect(database.artifacts.insertBuild(build("build-three"))).toEqual([
+				expect.objectContaining({ id: "build-one" }),
+			]);
+			expect(database.artifacts.builds("repo-one", definition.id).map(({ id }) => id)).toEqual([
+				"build-three",
+				"build-two",
+			]);
+			database.artifacts.insertBuild({
+				...build("build-second-repo"),
+				repositoryId: "repo-two",
+				artifactId: secondDefinition.id,
+			});
+		} finally {
+			database.close();
+		}
+
+		const reopened = await StateDatabase.open(filePath);
+		try {
+			expect(reopened.artifacts.definition("repo-one", artifactId)).toMatchObject({ revision: 2 });
+			expect(reopened.artifacts.builds("repo-one", artifactId).map(({ id }) => id)).toEqual([
+				"build-three",
+				"build-two",
+			]);
+			expect(reopened.artifacts.builds("repo-two", secondArtifactId).map(({ id }) => id)).toEqual([
+				"build-second-repo",
+			]);
+			expect(reopened.artifacts.deleteDefinition("repo-one", artifactId)).toBe(true);
+			expect(reopened.artifacts.builds("repo-one", artifactId)).toEqual([]);
+			expect(reopened.artifacts.definitions("repo-two")).toHaveLength(1);
+			expect(reopened.forgetRepository("repo-two")).toBe(true);
+			expect(reopened.artifacts.definitions("repo-two")).toEqual([]);
+			expect(reopened.artifacts.allBuilds()).toEqual([]);
+		} finally {
+			reopened.close();
+		}
+
+		const inspected = new Database(filePath, { readonly: true, strict: true });
+		expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()).toEqual({
+			user_version: 5,
+		});
+		inspected.close();
 	});
 });

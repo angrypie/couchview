@@ -1,10 +1,15 @@
 import {
+	type ArtifactRepositoryResolveRequest,
+	parseArtifactRepositoryResolveRequest,
+} from "../shared/artifacts.ts";
+import {
 	API_ROUTES,
 	type BootstrapResponse,
 	type ClaimRemoteBridgePairingRequest,
 	type CreateSettingsProfileRequest,
 	CSRF_HEADER,
 	type InstanceResponse,
+	REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
 	type RegisterRepositoryRequest,
 	type RegisterRepositoryResponse,
 	type RemoteBridgeLeaseRequest,
@@ -18,6 +23,8 @@ import {
 	normalizeSettingsProfileName,
 	parseSettingsProfileData,
 } from "../shared/settings.ts";
+import type { ArtifactProposalGenerator } from "./artifactProposal.ts";
+import type { ArtifactService } from "./artifactService.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { StateDatabase } from "./database.ts";
@@ -47,6 +54,8 @@ interface SystemRouteContext {
 	accessOrigins: readonly string[];
 	remoteBridgeOriginAccess: string;
 	database: StateDatabase;
+	artifacts: ArtifactService;
+	artifactProposals: ArtifactProposalGenerator;
 	repositories: RepositoryManager;
 	commitMessages: CommitMessageGenerator;
 	codex: CodexAppServerService;
@@ -65,11 +74,27 @@ function isControlRestart(request: Request, url: URL): boolean {
 	return url.pathname === API_ROUTES.controlRestart && request.method === "POST";
 }
 
+function isArtifactCredentialMutation(request: Request, url: URL): boolean {
+	if (request.method !== "POST") return false;
+	return (
+		url.pathname === API_ROUTES.artifactRepositoryResolve ||
+		/^\/api\/repositories\/[^/]+\/artifacts\/[^/]+\/runs(?:\/[^/]+\/stop)?$/.test(url.pathname)
+	);
+}
+
+function isArtifactRequest(url: URL): boolean {
+	return (
+		url.pathname === API_ROUTES.artifactRepositoryResolve ||
+		/^\/api\/repositories\/[^/]+\/artifacts(?:\/.*)?$/.test(url.pathname)
+	);
+}
+
 export function authorizeApiRequest(
 	request: Request,
 	url: URL,
 	controlToken: string,
 	csrfToken: string,
+	remoteBridge: RemoteBridgeService,
 ): void {
 	const controlRequest = isControlRegistration(request, url) || isControlRestart(request, url);
 	const remoteBridgeClaim =
@@ -79,10 +104,18 @@ export function authorizeApiRequest(
 		(url.pathname === API_ROUTES.remoteBridgeHostTickets ||
 			url.pathname === API_ROUTES.remoteBridgeHostLease ||
 			/^\/api\/repositories\/[^/]+\/remote-bridge\/(?:tickets|lease)$/.test(url.pathname));
+	if (isArtifactRequest(url) && request.headers.has(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER)) {
+		remoteBridge.authenticateDevice(request.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER));
+	}
 	if (controlRequest) {
 		if (!tokenMatches(bearerToken(request), controlToken)) {
 			throw new HttpError(403, "control_token_failed", "CLI control request is not authorized");
 		}
+		return;
+	}
+	if (isArtifactCredentialMutation(request, url) && !request.headers.get("origin")) {
+		if (tokenMatches(bearerToken(request), controlToken)) return;
+		remoteBridge.authenticateDevice(remoteBridgeDeviceToken(request));
 		return;
 	}
 	if (isMutation(request.method) && !remoteBridgeClaim && !remoteBridgeCredentialMutation) {
@@ -100,6 +133,20 @@ export async function handleSystemApi(
 	request: Request,
 	url: URL,
 ): Promise<Response | null> {
+	if (url.pathname === API_ROUTES.artifactRepositoryResolve && request.method === "POST") {
+		const value = await readJsonObject<ArtifactRepositoryResolveRequest>(request);
+		let input: ArtifactRepositoryResolveRequest;
+		try {
+			input = parseArtifactRepositoryResolveRequest(value);
+		} catch (error) {
+			throw new HttpError(
+				400,
+				"artifact_repository_selection_invalid",
+				error instanceof Error ? error.message : "Repository selection is invalid",
+			);
+		}
+		return json(await context.artifacts.resolveRepository(input));
+	}
 	if (url.pathname === API_ROUTES.accessRefresh && request.method === "GET") {
 		const repositoryId = url.searchParams.get("repo");
 		const location = new URL("/", url);
@@ -177,6 +224,7 @@ export async function handleSystemApi(
 				reason: context.restart.reason,
 			},
 			commitMessage: context.commitMessages.capability,
+			artifactProposal: context.artifactProposals.capability,
 			codex: context.codex.capabilityFor(),
 			terminal: context.terminalSessions.capability,
 			remoteBridge: context.remoteBridge.capability,

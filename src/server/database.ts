@@ -14,6 +14,7 @@ import {
 	type SettingsProfile,
 	type SettingsProfileData,
 } from "../shared/settings.ts";
+import { ArtifactDatabase } from "./artifactDatabase.ts";
 import {
 	type CommentRow,
 	commentFromRow,
@@ -29,7 +30,7 @@ import {
 	settingsProfileFromRow,
 } from "./databaseRows.ts";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export interface StoredRepository {
 	id: string;
@@ -84,11 +85,13 @@ export function resolveStateDatabasePath(
 
 export class StateDatabase {
 	readonly filePath: string;
+	readonly artifacts: ArtifactDatabase;
 	private readonly database: Database;
 
 	private constructor(filePath: string, database: Database, requireWal: boolean) {
 		this.filePath = filePath;
 		this.database = database;
+		this.artifacts = new ArtifactDatabase(database);
 		this.database.run("PRAGMA foreign_keys = ON;");
 		this.database.run("PRAGMA busy_timeout = 5000;");
 		if (requireWal) {
@@ -145,7 +148,13 @@ export class StateDatabase {
 				"INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0)",
 			);
 			this.createSettingsProfilesTable();
+			this.createArtifactTables();
 			this.ensureDefaultSettingsProfile();
+			return;
+		}
+
+		if (version === 4) {
+			this.migrateVersionFourToFive();
 			return;
 		}
 
@@ -285,9 +294,37 @@ export class StateDatabase {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 4);
+		CREATE TABLE IF NOT EXISTS artifact_definitions (
+		  id TEXT PRIMARY KEY,
+		  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+		  name TEXT NOT NULL COLLATE NOCASE,
+		  argv_json TEXT NOT NULL,
+		  working_directory TEXT NOT NULL,
+		  output_path TEXT NOT NULL,
+		  output_kind TEXT NOT NULL CHECK (output_kind IN ('file', 'directory')),
+		  revision INTEGER NOT NULL CHECK (revision >= 1),
+		  created_at TEXT NOT NULL,
+		  updated_at TEXT NOT NULL,
+		  UNIQUE(repository_id, name)
+		);
+		CREATE INDEX IF NOT EXISTS artifact_definitions_repository
+		  ON artifact_definitions(repository_id, name);
+		CREATE TABLE IF NOT EXISTS artifact_builds (
+		  id TEXT PRIMARY KEY,
+		  repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+		  artifact_id TEXT NOT NULL REFERENCES artifact_definitions(id) ON DELETE CASCADE,
+		  definition_revision INTEGER NOT NULL,
+		  download_name TEXT NOT NULL,
+		  media_type TEXT NOT NULL,
+		  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+		  sha256 TEXT NOT NULL,
+		  created_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS artifact_builds_artifact_created
+		  ON artifact_builds(artifact_id, created_at DESC);
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 5);
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 4;
+        PRAGMA user_version = 5;
       `);
 			this.ensureDefaultSettingsProfile();
 		})();
@@ -303,6 +340,39 @@ export class StateDatabase {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
+    `);
+	}
+
+	private createArtifactTables(): void {
+		this.database.run(`
+      CREATE TABLE IF NOT EXISTS artifact_definitions (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        argv_json TEXT NOT NULL,
+        working_directory TEXT NOT NULL,
+        output_path TEXT NOT NULL,
+        output_kind TEXT NOT NULL CHECK (output_kind IN ('file', 'directory')),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(repository_id, name)
+      );
+      CREATE INDEX IF NOT EXISTS artifact_definitions_repository
+        ON artifact_definitions(repository_id, name);
+      CREATE TABLE IF NOT EXISTS artifact_builds (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        artifact_id TEXT NOT NULL REFERENCES artifact_definitions(id) ON DELETE CASCADE,
+        definition_revision INTEGER NOT NULL,
+        download_name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS artifact_builds_artifact_created
+        ON artifact_builds(artifact_id, created_at DESC)
     `);
 	}
 
@@ -338,6 +408,18 @@ export class StateDatabase {
         UPDATE metadata SET value = 4 WHERE key = 'schema_version';
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 4);
         PRAGMA user_version = 4;
+      `);
+		})();
+		this.migrateVersionFourToFive();
+	}
+
+	private migrateVersionFourToFive(): void {
+		this.database.transaction(() => {
+			this.createArtifactTables();
+			this.database.run(`
+        UPDATE metadata SET value = 5 WHERE key = 'schema_version';
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 5);
+        PRAGMA user_version = 5;
       `);
 		})();
 	}
@@ -863,6 +945,36 @@ export class StateDatabase {
 			accessOrigins,
 			startedAt: row.started_at,
 		};
+	}
+
+	serverInstances(): StoredServerInstance[] {
+		return this.database
+			.query<InstanceRow, []>(`
+        SELECT instance_id, bind_host, port, pid, version, protocol_version,
+          control_token, access_origins_json, started_at
+        FROM server_instances ORDER BY started_at DESC, instance_id
+      `)
+			.all()
+			.map((row) => {
+				const accessOrigins: unknown = JSON.parse(row.access_origins_json);
+				if (
+					!Array.isArray(accessOrigins) ||
+					!accessOrigins.every((item) => typeof item === "string")
+				) {
+					throw new Error(`Server instance ${row.instance_id} has invalid origin data`);
+				}
+				return {
+					instanceId: row.instance_id,
+					bindHost: row.bind_host,
+					port: row.port,
+					pid: row.pid,
+					version: row.version,
+					protocolVersion: row.protocol_version,
+					controlToken: row.control_token,
+					accessOrigins,
+					startedAt: row.started_at,
+				};
+			});
 	}
 
 	removeServerInstance(instanceId: string): void {

@@ -2,6 +2,12 @@ import {
 	API_ROUTES,
 	type ApiErrorBody,
 	type ApiErrorDiagnostic,
+	type ArtifactCatalogResponse,
+	type ArtifactDefinitionInput,
+	type ArtifactDefinitionResponse,
+	type ArtifactProposalRequest,
+	type ArtifactProposalResponse,
+	type ArtifactRunResponse,
 	type BootstrapResponse,
 	type ChangesResponse,
 	// Contracts for the "Send comments to Codex" thread and approval flow.
@@ -50,6 +56,7 @@ import {
 	type TerminalLeaseRequest,
 	type TerminalLeaseResponse,
 	type TerminalSessionStatus,
+	type UpdateArtifactDefinitionRequest,
 	type UpdateCommentRequest,
 	type UpdateSettingsProfileRequest,
 } from "../shared/contracts.ts";
@@ -243,6 +250,90 @@ export const api = {
 
 	packageScripts(repositoryId: string, signal?: AbortSignal) {
 		return request<PackageScriptsResponse>(API_ROUTES.packageScripts(repositoryId), { signal });
+	},
+
+	artifacts(repositoryId: string, signal?: AbortSignal) {
+		return request<ArtifactCatalogResponse>(API_ROUTES.artifacts(repositoryId), { signal });
+	},
+
+	proposeArtifact(
+		repositoryId: string,
+		body: ArtifactProposalRequest,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<ArtifactProposalResponse>(
+			API_ROUTES.artifactProposal(repositoryId),
+			{ method: "POST", body: JSON.stringify(body), signal },
+			csrfToken,
+		);
+	},
+
+	createArtifact(
+		repositoryId: string,
+		body: ArtifactDefinitionInput,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<ArtifactDefinitionResponse>(
+			API_ROUTES.artifacts(repositoryId),
+			{ method: "POST", body: JSON.stringify(body), signal },
+			csrfToken,
+		);
+	},
+
+	updateArtifact(
+		repositoryId: string,
+		artifactId: string,
+		body: UpdateArtifactDefinitionRequest,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<ArtifactDefinitionResponse>(
+			API_ROUTES.artifact(repositoryId, artifactId),
+			{ method: "PUT", body: JSON.stringify(body), signal },
+			csrfToken,
+		);
+	},
+
+	deleteArtifact(
+		repositoryId: string,
+		artifactId: string,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<void>(
+			API_ROUTES.artifact(repositoryId, artifactId),
+			{ method: "DELETE", signal },
+			csrfToken,
+		);
+	},
+
+	startArtifactRun(
+		repositoryId: string,
+		artifactId: string,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<ArtifactRunResponse>(
+			API_ROUTES.artifactRuns(repositoryId, artifactId),
+			{ method: "POST", body: JSON.stringify({}), signal },
+			csrfToken,
+		);
+	},
+
+	stopArtifactRun(
+		repositoryId: string,
+		artifactId: string,
+		runId: string,
+		csrfToken: string,
+		signal?: AbortSignal,
+	) {
+		return request<ArtifactRunResponse>(
+			API_ROUTES.artifactRunStop(repositoryId, artifactId, runId),
+			{ method: "POST", body: JSON.stringify({}), signal },
+			csrfToken,
+		);
 	},
 
 	terminalStatus(repositoryId: string, signal?: AbortSignal) {

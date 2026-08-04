@@ -5,6 +5,7 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
+import { runArtifactCli } from "./artifactCli.ts";
 import {
 	CLI_VERSION,
 	CliPromptInterrupted,
@@ -78,6 +79,9 @@ interface RunCliRuntime {
 		repositoryRoot: string | null;
 		claudeArgs: string[];
 	}): Promise<number>;
+	artifacts(
+		options: Extract<ReturnType<typeof parseCliInvocation>, { kind: "artifacts" }>["parsed"],
+	): Promise<number>;
 	installCompletion(shell: CompletionShell): Promise<string>;
 	createPrompter(): InteractivePrompter;
 	stdout(message: string): void;
@@ -144,6 +148,7 @@ export async function runCli(
 		codexBridge: runtimeOverrides.codexBridge ?? ((options) => runRemoteCodex(options)),
 		terminalBridge: runtimeOverrides.terminalBridge ?? ((options) => runRemoteTerminal(options)),
 		claudeBridge: runtimeOverrides.claudeBridge ?? ((options) => runRemoteClaude(options)),
+		artifacts: runtimeOverrides.artifacts ?? runArtifactCli,
 		installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
 		createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
 		stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
@@ -152,7 +157,13 @@ export async function runCli(
 			runtimeOverrides.supervisedWorker ?? Bun.env[supervisedWorkerEnvironment] === "1",
 	};
 	let action =
-		argv[0] === "restart" ? "restart" : argv[0] === "bridge" ? "run the native bridge" : "start";
+		argv[0] === "restart"
+			? "restart"
+			: argv[0] === "bridge"
+				? "run the native bridge"
+				: argv[0] === "artifacts"
+					? "work with artifacts"
+					: "start";
 	try {
 		const invocation = parseCliInvocation(argv);
 		if (invocation.kind === "help") {
@@ -213,6 +224,10 @@ export async function runCli(
 				repositoryRoot: invocation.repositoryRoot,
 				claudeArgs: invocation.claudeArgs,
 			});
+		}
+		if (invocation.kind === "artifacts") {
+			action = `${invocation.parsed.action} artifacts`;
+			return await runtime.artifacts(invocation.parsed);
 		}
 		if (invocation.kind === "restart") {
 			action = "restart";

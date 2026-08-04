@@ -40,7 +40,10 @@ describe("Couchview app review and delivery workflows", () => {
 			fixture.requests.find((request) => request.path === "/api/repositories/repo/commit-message"),
 		).toMatchObject({
 			method: "POST",
-			body: { operationRevision: "operation-2" },
+			body: {
+				operationRevision: "operation-2",
+				codex: { model: "gpt-5.6-luna", reasoning: "low" },
+			},
 		});
 		fireEvent.change(generated, {
 			target: { value: "fix(review): edit the generated commit message" },

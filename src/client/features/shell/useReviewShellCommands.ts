@@ -127,6 +127,7 @@ export function useReviewShellCommands({
 		onDismissOverlays: dismissAll,
 		onNavigateFile: diff.navigateFile,
 		onNavigateHunk: diff.navigateHunk,
+		onOpenArtifacts: navigation.openArtifacts,
 		onOpenCommit: commit.openComposer,
 		onOpenFiles: openFiles,
 		onOpenPackageCommands: openPackageCommands,

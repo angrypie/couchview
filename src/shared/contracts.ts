@@ -1,4 +1,8 @@
+import type { CodexGenerationPreferences } from "./codexGeneration.ts";
 import type { SettingsProfile } from "./settings.ts";
+
+export * from "./artifacts.ts";
+export * from "./codexGeneration.ts";
 
 export type {
 	CommandId,
@@ -31,7 +35,21 @@ export const API_ROUTES = {
 	settingsProfile: (profileId: string) => `/api/settings/profiles/${encodeURIComponent(profileId)}`,
 	controlRepositories: "/api/control/repositories",
 	controlRestart: "/api/control/restart",
+	artifactRepositoryResolve: "/api/artifacts/repositories/resolve",
 	repository: repositoryApiPath,
+	artifacts: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/artifacts`,
+	artifact: (repositoryId: string, artifactId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}`,
+	artifactProposal: (repositoryId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/proposal`,
+	artifactRuns: (repositoryId: string, artifactId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}/runs`,
+	artifactRunStop: (repositoryId: string, artifactId: string, runId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}/runs/${encodeURIComponent(runId)}/stop`,
+	artifactRunEvents: (repositoryId: string, artifactId: string, runId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}/runs/${encodeURIComponent(runId)}/events`,
+	artifactDownload: (repositoryId: string, artifactId: string, buildId: string) =>
+		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}/builds/${encodeURIComponent(buildId)}/download`,
 	files: repositoryFilesApiPath,
 	fileDiff: (repositoryId: string, fileId: string) =>
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/diff`,
@@ -174,6 +192,7 @@ export interface BootstrapResponse {
 	settingsProfiles: SettingsProfile[];
 	restart: RestartCapability;
 	commitMessage: CommitMessageCapability;
+	artifactProposal: CodexCapability;
 	codex: CodexCapability;
 	terminal: TerminalCapability;
 	remoteBridge: RemoteBridgeCapability;
@@ -636,6 +655,7 @@ export interface CommitResponse {
 
 export interface GenerateCommitMessageRequest {
 	operationRevision: string;
+	codex?: CodexGenerationPreferences;
 }
 
 export interface GenerateCommitMessageResponse {

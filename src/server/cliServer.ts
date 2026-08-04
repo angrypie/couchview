@@ -7,6 +7,8 @@ import { replaceStaticBuild, restartCapability } from "./cliBuild.ts";
 import { type RunningRegistration, registerWithRunningServer } from "./cliRunningServer.ts";
 import { type CliOptions, parseCliState } from "./cliServeOptions.ts";
 import {
+	cliProcessCommand,
+	isCompiledExecutable,
 	restartDelayMs,
 	SUPERVISOR_RESTART_EXIT_CODE,
 	supervisedWorkerEnvironment,
@@ -97,10 +99,11 @@ export async function startServer(
 		}
 	}
 
-	const defaultStaticDirectory = fileURLToPath(new URL("../../dist/", import.meta.url));
+	const compiledExecutable = isCompiledExecutable();
+	const sourceAppRoot = fileURLToPath(new URL("../../", import.meta.url));
+	const appRoot = compiledExecutable ? path.dirname(process.execPath) : sourceAppRoot;
+	const defaultStaticDirectory = compiledExecutable ? appRoot : path.join(sourceAppRoot, "dist");
 	const staticDirectory = path.resolve(Bun.env.STATIC_DIR ?? defaultStaticDirectory);
-	const appRoot = fileURLToPath(new URL("../../", import.meta.url));
-	const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 	const allowedOrigins = [Bun.env.COUCHVIEW_ALLOWED_ORIGINS, Bun.env.ALLOWED_ORIGINS]
 		.filter((value): value is string => Boolean(value))
 		.join(",")
@@ -134,7 +137,12 @@ export async function startServer(
 		options.remoteBridgeMode === "disabled"
 			? "Native remote development was disabled by configuration."
 			: "Native remote development requires --enable-remote-bridge or COUCHVIEW_REMOTE_BRIDGE=1.";
-	const capability = restartCapability();
+	const capability = compiledExecutable
+		? {
+				available: false,
+				reason: "Rebuild and restart requires a Couchview source checkout.",
+			}
+		: restartCapability();
 	let restartInProgress = false;
 	let relaunch: () => void = () => undefined;
 	const app = await createCouchviewApp({
@@ -305,10 +313,7 @@ export async function startServer(
 		}
 		try {
 			const replacement = Bun.spawn(
-				[
-					process.execPath,
-					"run",
-					cliPath,
+				cliProcessCommand([
 					"--repo",
 					repositoryRoot,
 					"--host",
@@ -335,7 +340,7 @@ export async function startServer(
 						: options.remoteBridgeP2pMode === "disabled"
 							? ["--disable-remote-bridge-p2p"]
 							: []),
-				],
+				]),
 				{
 					cwd: appRoot,
 					env: {

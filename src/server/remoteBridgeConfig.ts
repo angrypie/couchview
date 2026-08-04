@@ -16,6 +16,7 @@ import {
 	remoteBridgeTerminalCommand as buildRemoteBridgeTerminalCommand,
 	remoteBridgeZedUrl as buildRemoteBridgeZedUrl,
 } from "../shared/remoteBridgeCommands.ts";
+import { isCompiledExecutable } from "./cliSupervisor.ts";
 import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const CONFIG_VERSION = 2;
@@ -306,9 +307,14 @@ export function remoteBridgeClaudeCommand(
 	return buildRemoteBridgeClaudeCommand(profile.sshAlias, repositoryRoot);
 }
 
-export function defaultRemoteBridgeExecutableCommand(): string {
-	const executable = Bun.which("couchview");
+export function defaultRemoteBridgeExecutableCommand(
+	compiledExecutable = isCompiledExecutable(),
+	executablePath = process.execPath,
+	findExecutable: (name: string) => string | null = Bun.which,
+): string {
+	const executable = findExecutable("couchview");
 	if (executable) return shellQuote(executable);
+	if (compiledExecutable) return shellQuote(executablePath);
 	const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 	return `${shellQuote(process.execPath)} run ${shellQuote(cliPath)}`;
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { type DrawerView } from "./components/ChangedFilesDrawer.tsx";
 import { CouchviewApplicationView } from "./components/CouchviewApplicationView.tsx";
+import { useArtifacts } from "./features/artifacts/index.ts";
 import { useFailureReporting } from "./features/errors/useFailureReporting.ts";
 import { useGitWorkspace } from "./features/git/index.ts";
 import { useToastNotifications } from "./features/notifications/useToastNotifications.ts";
@@ -79,6 +80,18 @@ export function App() {
 		setBootstrap,
 		showToast,
 	});
+	const artifactWorkflow = useArtifacts({
+		active: navigation.mode === "artifacts",
+		bootstrap,
+		codexPreferences: settings.activeProfile.data.codex,
+		proposalCapability: bootstrap?.artifactProposal ?? {
+			available: false,
+			reason: "Artifact suggestions are unavailable from this Couchview server.",
+		},
+		remoteBridgeAvailable: remoteBridgeCapability.available,
+		repositoryId,
+		showToast,
+	});
 	const failureReporting = useFailureReporting({ showToast });
 	const gitWorkspace = useGitWorkspace({
 		active: navigation.mode === "history",
@@ -116,6 +129,7 @@ export function App() {
 	const workflow = useReviewWorkflow({
 		closeDrawer,
 		commitMessageCapability,
+		codexPreferences: settings.activeProfile.data.codex,
 		dismissToast,
 		refreshPackageScripts: packageWorkflow.refreshScripts,
 		reportFailure: failureReporting.reportFailure,
@@ -146,6 +160,8 @@ export function App() {
 		!commit.busy &&
 		!commit.messageBusy &&
 		packageWorkflow.runBusy === null &&
+		artifactWorkflow.busyCount === 0 &&
+		!artifactWorkflow.hasActiveRuns &&
 		repositoryManagement.forgetBusy === null &&
 		repositoryManagement.restartPhase === null &&
 		!comments.copyFallbackText;
@@ -171,6 +187,7 @@ export function App() {
 	});
 	return (
 		<CouchviewApplicationView
+			artifacts={artifactWorkflow}
 			codexCapability={codexCapability}
 			commitMessageCapability={commitMessageCapability}
 			compactLandscape={compactLandscape}

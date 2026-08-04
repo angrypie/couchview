@@ -14,6 +14,7 @@ import type {
 } from "../../../shared/contracts.ts";
 import {
 	DEFAULT_SETTINGS_PROFILE_ID,
+	parseSettingsProfileData,
 	SETTINGS_PROFILE_SELECTION_KEY,
 } from "../../../shared/settings.ts";
 import { ApiError, api } from "../../api.ts";
@@ -54,8 +55,15 @@ export function useSettingsProfiles({
 
 	const applyProfiles = useCallback(
 		(nextProfiles?: SettingsProfile[]) => {
-			const next =
+			const available =
 				nextProfiles && nextProfiles.length > 0 ? nextProfiles : [fallbackSettingsProfile()];
+			const needsCodexDefaults = available.some((profile) => !profile.data.codex);
+			const next = needsCodexDefaults
+				? available.map((profile) => ({
+						...profile,
+						data: parseSettingsProfileData(profile.data),
+					}))
+				: available;
 			profilesRef.current = next;
 			setProfiles(next);
 			setBootstrap((current) => (current ? { ...current, settingsProfiles: next } : current));

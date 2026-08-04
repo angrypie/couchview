@@ -1,7 +1,20 @@
-import type { PackageRunSummary, SettingsProfile } from "../src/shared/contracts.ts";
+import type {
+	ArtifactBuild,
+	ArtifactDefinition,
+	ArtifactRun,
+	ArtifactRunOutputChunk,
+	PackageRunSummary,
+	SettingsProfile,
+} from "../src/shared/contracts.ts";
 import type { FixtureTerminal } from "./e2eFixtureTerminal.ts";
 
 export interface FixtureMutableState {
+	artifactBuilds: ArtifactBuild[];
+	artifactDefinitions: ArtifactDefinition[];
+	artifactPayloads: Map<string, Uint8Array>;
+	artifactRunOutputs: Map<string, ArtifactRunOutputChunk[]>;
+	artifactRuns: ArtifactRun[];
+	artifactTimers: Set<ReturnType<typeof setTimeout>>;
 	gitDetached: boolean;
 	gitHead: string;
 	gitStashCount: number;
@@ -29,4 +42,7 @@ export interface FixtureRequestContext {
 	fileRoute: RegExpExecArray | null;
 	commentRoute: RegExpExecArray | null;
 	packageRunRoute: RegExpExecArray | null;
+	artifactRoute: RegExpExecArray | null;
+	artifactRunRoute: RegExpExecArray | null;
+	artifactDownloadRoute: RegExpExecArray | null;
 }

@@ -25,6 +25,17 @@ bun run build
 bun link
 ```
 
+To build a compiled production distribution instead, run:
+
+```sh
+bun run build:binary
+./dist/couchview --repo /absolute/path/to/project
+```
+
+This runs the Vite production build and then uses Bun's `--compile` flag to bundle the
+server, its packages, and the Bun runtime into `dist/couchview`. Keep the executable in
+the generated `dist/` directory so it can serve the companion web assets beside it.
+
 Then launch it from any directory inside the Git repository to review:
 
 ```sh
@@ -631,6 +642,53 @@ firewalls. The configured origin and optional access provider continue to protec
 signaling, lease renewal, and WebSocket fallback; SSH provides end-to-end host
 authentication and encryption on both transports.
 
+### Ephemeral repository artifacts
+
+Open **Artifacts** for a repository to type one familiar build command, a repository-relative
+working directory, and one exact file or directory output. Couchview parses quotes and escapes
+into exact argv, rejects shell operators and expansion, and invokes the result without a shell.
+It snapshots the output only after a zero exit code and retains the latest two successful
+snapshots. A directory is downloaded as a `.tar.gz`; installation, signing, and moving the
+downloaded result remain the user's responsibility. Normal attachment links stream directly to
+desktop and mobile browsers, including Safari on iPhone and iPad.
+
+**Suggest with Codex** optionally accepts a short intent such as “static build” or “compile with
+Bun”; leaving it empty asks for the project's most useful configured build. Couchview supplies
+only recognized, shallow build configuration files under strict count and byte limits. Codex
+cannot inspect source or the repository and returns one editable form draft—it never saves or
+builds the suggestion automatically. The **Codex generation** settings select the model and
+reasoning effort shared with commit-message generation.
+
+The same catalog is available from a terminal. Local commands require an already-running
+Couchview server and never start one implicitly:
+
+```sh
+couchview artifacts list --repo /absolute/path/to/project
+couchview artifacts build couchview-cli --repo /absolute/path/to/project
+couchview artifacts download couchview-cli --repo /absolute/path/to/project
+couchview artifacts pull couchview-cli --repo /absolute/path/to/project
+```
+
+`pull` starts a build, streams its logs, and downloads that exact successful snapshot.
+`download` selects the latest success by default; `--build <id>` selects the older retained
+snapshot. Downloads use the artifact basename in the current directory, verify size and
+SHA-256, and refuse to overwrite unless `--force` is supplied. Use `--output <file>` for a
+different destination and `--json` for machine-readable stdout.
+
+After pairing a client, the Artifacts page can copy an unambiguous host-wide command with
+the managed SSH alias and stable server repository ID:
+
+```sh
+couchview artifacts pull couchview-cli \
+  --profile couchview-project-name-12345678 \
+  --repository 8f14e45fceea167a5a36dedd
+```
+
+Without an explicit repository, paired clients match credential-free hashes of normalized
+Git remote host/path identities and require `--repository` if the result is not unique.
+Paired clients can list, build, and download artifacts in any registered repository, but
+only the browser can create, edit, or delete definitions.
+
 To run without linking the command:
 
 ```sh
@@ -689,17 +747,28 @@ Review flags, comments, and the saved-project catalog are stored in a user-only 
 ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 ```
 
-Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits.
+Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits. Artifact definitions and build metadata live in SQLite; private payload snapshots live beside it under `couchview/artifacts/`. Each artifact retains two successful snapshots across restarts, while failed runs retain no payload and never evict a success.
 
 `COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `COUCHVIEW_REMOTE_BRIDGE`, `COUCHVIEW_REMOTE_BRIDGE_P2P`, `COUCHVIEW_REMOTE_BRIDGE_STUN`, `COUCHVIEW_REMOTE_BRIDGE_PORT`, `COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line repository, port, terminal, and remote-bridge options take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 
-Commit-message generation requires `codex` on the server `PATH` and an existing
-`codex login`. Couchview sends Codex only a bounded staged patch, staged path metadata,
-and up to ten recent commit subjects. The ephemeral Codex process runs from a temporary
-non-repository directory in a read-only sandbox using `gpt-5.6-luna`; it cannot inspect
-unstaged files through the supplied workspace.
+Artifact commands also execute with the Couchview host user's permissions and inherited
+environment. The single command field stores exact argv, ignores stdin, and cannot add custom
+environment variables or shell syntax. Browser writes use origin and CSRF protection;
+local CLI writes use the running instance's private control token, and paired CLI writes
+use the revocable device credential. Treat every repository and paired device as trusted.
+Inputs and stored payloads are limited to 2 GiB, directory snapshots reject Git metadata,
+symlinks, and special files, and deleting a definition or forgetting its repository removes
+only Couchview's private snapshots—not the original build output in the checkout.
+
+Codex generation requires `codex` on the server `PATH` and an existing `codex login`.
+Commit messages receive only a bounded staged patch, staged path metadata, and up to ten recent
+commit subjects. Artifact suggestions receive only allowlisted build configuration collected to
+a bounded depth and size; source files, dependencies, outputs, hidden directories, binary files,
+and symlinks are excluded. Both use the model and reasoning effort saved in the active Settings
+profile (Luna/low by default). Each ephemeral Codex process runs from a temporary non-repository
+directory in a read-only sandbox and cannot inspect the supplied repository.
 
 The rebuild-and-restart action runs only Couchview's fixed `bun run build` command and
 relaunches the same CLI path, repository, bind host, and port. It accepts no command or path

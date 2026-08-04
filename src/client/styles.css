@@ -1,6 +1,7 @@
 @import "./styles/foundation.css";
 @import "./styles/shell-terminal.css";
 @import "./styles/settings.css";
+@import "./styles/artifacts.css";
 @import "./styles/review.css";
 @import "./styles/sheets.css";
 @import "./styles/feedback.css";

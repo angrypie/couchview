@@ -1,10 +1,14 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import type { CommitMessageCapability } from "../../../shared/contracts.ts";
+import type {
+	CodexGenerationPreferences,
+	CommitMessageCapability,
+} from "../../../shared/contracts.ts";
 import { ApiError, api } from "../../api.ts";
 import type { FailureState } from "../../lib/failures.ts";
 
 interface UseCommitWorkflowOptions {
 	capability: CommitMessageCapability;
+	codexPreferences: CodexGenerationPreferences;
 	csrfToken?: string;
 	onCommittedStateRefresh: () => Promise<unknown>;
 	onOpen: () => void;
@@ -23,6 +27,7 @@ function isAbortError(error: unknown) {
 
 export function useCommitWorkflow({
 	capability,
+	codexPreferences,
 	csrfToken,
 	onCommittedStateRefresh,
 	onOpen,
@@ -88,7 +93,7 @@ export function useCommitWorkflow({
 		try {
 			const response = await api.generateCommitMessage(
 				activeRepositoryId,
-				{ operationRevision: requestedRevision },
+				{ operationRevision: requestedRevision, codex: codexPreferences },
 				csrfToken,
 				controller.signal,
 			);
@@ -113,6 +118,7 @@ export function useCommitWorkflow({
 		}
 	}, [
 		capability.available,
+		codexPreferences,
 		csrfToken,
 		messageBusy,
 		operationRevision,

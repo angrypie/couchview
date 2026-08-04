@@ -37,6 +37,12 @@ function defaultSettingsProfile(): SettingsProfile {
 }
 
 const state: FixtureMutableState = {
+	artifactBuilds: [],
+	artifactDefinitions: [],
+	artifactPayloads: new Map(),
+	artifactRunOutputs: new Map(),
+	artifactRuns: [],
+	artifactTimers: new Set(),
 	gitDetached: false,
 	gitHead: repository.head,
 	gitStashCount: 0,
@@ -46,6 +52,13 @@ const state: FixtureMutableState = {
 	settingsProfiles: [defaultSettingsProfile()],
 	terminal: new FixtureTerminal(),
 	reset() {
+		for (const timer of this.artifactTimers) clearTimeout(timer);
+		this.artifactBuilds = [];
+		this.artifactDefinitions = [];
+		this.artifactPayloads.clear();
+		this.artifactRunOutputs.clear();
+		this.artifactRuns = [];
+		this.artifactTimers.clear();
 		files.splice(0, files.length, ...structuredClone(initialFiles));
 		reviews.splice(0);
 		comments.splice(0);
@@ -115,6 +128,9 @@ function requestContext(request: Request): FixtureRequestContext {
 		fileRoute: /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath),
 		commentRoute: /^comments\/([^/]+)$/.exec(nestedPath),
 		packageRunRoute: /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath),
+		artifactRoute: /^artifacts\/([^/]+)$/.exec(nestedPath),
+		artifactRunRoute: /^artifacts\/([^/]+)\/runs(?:\/([^/]+)\/(stop|events))?$/.exec(nestedPath),
+		artifactDownloadRoute: /^artifacts\/([^/]+)\/builds\/([^/]+)\/download$/.exec(nestedPath),
 	};
 }
 

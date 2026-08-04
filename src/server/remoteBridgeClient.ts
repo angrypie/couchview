@@ -53,6 +53,54 @@ export interface PairRemoteBridgeOptions {
 	originAccess: string;
 }
 
+export interface AuthenticatedRemoteBridgeRuntime {
+	fetch: typeof globalThis.fetch;
+	originAccessProviders: readonly RemoteBridgeOriginAccessProvider[];
+}
+
+export async function authenticatedRemoteBridgeFetch(
+	profile: RemoteBridgeProfile,
+	pathname: string,
+	init: RequestInit = {},
+	runtimeOverrides: Partial<AuthenticatedRemoteBridgeRuntime> = {},
+): Promise<Response> {
+	const runtime: AuthenticatedRemoteBridgeRuntime = {
+		fetch: runtimeOverrides.fetch ?? globalThis.fetch,
+		originAccessProviders: runtimeOverrides.originAccessProviders ?? [
+			cloudflareOriginAccessProvider(),
+		],
+	};
+	const originAccess = remoteBridgeOriginAccessSession(
+		profile.originAccess,
+		profile.origin,
+		runtime.originAccessProviders,
+	);
+	const perform = async (refresh: boolean): Promise<Response> => {
+		const headers = new Headers(init.headers);
+		for (const [name, value] of Object.entries(
+			await originAccess.requestHeaders({ interactive: true, refresh }),
+		)) {
+			headers.set(name, value);
+		}
+		if (!headers.has("authorization")) {
+			headers.set("authorization", `Bearer ${profile.deviceToken}`);
+		}
+		headers.set(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER, profile.deviceToken);
+		return fetchWithTimeout(runtime.fetch, `${profile.origin}${pathname}`, {
+			...init,
+			headers,
+		});
+	};
+	let response = await perform(false);
+	if (
+		profile.originAccess !== REMOTE_BRIDGE_NO_ORIGIN_ACCESS &&
+		(response.status === 401 || response.status === 403)
+	) {
+		response = await perform(true);
+	}
+	return response;
+}
+
 export interface RemoteBridgeClientRuntime {
 	/** HTTP control-plane connector; replaceable by a compatible relay adapter. */
 	fetch: typeof globalThis.fetch;

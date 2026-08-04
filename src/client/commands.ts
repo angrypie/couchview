@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+	Archive,
 	CheckCircle2,
 	ChevronDown,
 	ChevronLeft,
@@ -55,6 +56,15 @@ export const COMMAND_DEFINITIONS: Record<CommandId, CommandMetadata> = {
 		category: "Go to",
 		keywords: ["review", "diff", "changes"],
 		icon: FileCode2,
+		repeatable: false,
+		paletteVisible: true,
+	},
+	"navigate.artifacts": {
+		id: "navigate.artifacts",
+		title: "Go to artifacts",
+		category: "Go to",
+		keywords: ["artifact", "build", "download", "binary", "application"],
+		icon: Archive,
 		repeatable: false,
 		paletteVisible: true,
 	},

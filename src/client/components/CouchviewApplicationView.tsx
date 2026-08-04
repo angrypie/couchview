@@ -4,6 +4,7 @@ import type {
 	RemoteBridgeCapability,
 	TerminalCapability,
 } from "../../shared/contracts.ts";
+import type { ArtifactsController } from "../features/artifacts/index.ts";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
 import type { GitWorkspaceController } from "../features/git/index.ts";
 import type { useToastNotifications } from "../features/notifications/useToastNotifications.ts";
@@ -21,6 +22,7 @@ import type { useChangedFileFilters } from "../features/staging/useChangedFileFi
 import { formatShortcut } from "../shortcutEngine.ts";
 import { ApplicationStateView } from "./ApplicationStateView.tsx";
 import { AppToastStack } from "./AppToastStack.tsx";
+import { ArtifactsPage } from "./artifacts/index.ts";
 import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
 import { GlobalCommandUi } from "./GlobalCommandUi.tsx";
 import { GitHistoryPage } from "./git/index.ts";
@@ -32,6 +34,7 @@ import { ReviewWorkspaceOverlays } from "./ReviewWorkspaceOverlays.tsx";
 import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
 
 interface CouchviewApplicationViewProps {
+	artifacts: ArtifactsController;
 	codexCapability: CodexCapability;
 	commitMessageCapability: CommitMessageCapability;
 	compactLandscape: boolean;
@@ -61,6 +64,7 @@ interface CouchviewApplicationViewProps {
 }
 
 export function CouchviewApplicationView({
+	artifacts,
 	codexCapability,
 	commitMessageCapability,
 	compactLandscape,
@@ -204,6 +208,41 @@ export function CouchviewApplicationView({
 		);
 	}
 
+	if (navigation.mode === "artifacts") {
+		return (
+			<>
+				{terminal}
+				{commandUi}
+				<ArtifactsPage
+					commandPaletteShortcut={commandPaletteShortcut}
+					controller={artifacts}
+					onBack={navigation.closeArtifacts}
+					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
+					onOpenPairing={() => onRemoteBridgeOpenChange(true)}
+					repository={workspace.repository}
+					repositoryId={workspace.repositoryId}
+				/>
+				<ReviewWorkspaceOverlays
+					codexCapability={codexCapability}
+					commitMessageCapability={commitMessageCapability}
+					failureReporting={failure}
+					management={management}
+					onRemoteBridgeOpenChange={(open) => {
+						onRemoteBridgeOpenChange(open);
+						if (!open) void artifacts.refreshDevices();
+					}}
+					packages={packages}
+					remoteBridgeCapability={remoteBridgeCapability}
+					remoteBridgeOpen={remoteBridgeOpen}
+					showToast={showToast}
+					workflow={workflow}
+					workspace={workspace}
+				/>
+				{toastUi}
+			</>
+		);
+	}
+
 	return (
 		<>
 			{terminal}
@@ -226,6 +265,7 @@ export function CouchviewApplicationView({
 					onOpenComments={shellCommands.openComments}
 					onOpenFailure={() => failure.setDetailsOpen(true)}
 					onOpenGitHistory={navigation.openGitHistory}
+					onOpenArtifacts={navigation.openArtifacts}
 					onOpenRemoteBridge={() => onRemoteBridgeOpenChange(true)}
 					onOpenSettings={navigation.openSettings}
 					onOpenTerminal={navigation.openTerminal}

@@ -6,6 +6,7 @@ import {
 	REMOTE_BRIDGE_LEASE_EXPIRED_CLOSE_CODE,
 	REMOTE_BRIDGE_P2P_FAILED_CLOSE_CODE,
 	type RemoteBridgeCapability,
+	type RemoteBridgeDevice,
 	type RemoteBridgeDevicesResponse,
 	type RemoteBridgeLeaseRequest,
 	type RemoteBridgeLeaseResponse,
@@ -17,6 +18,7 @@ import {
 import { HttpError } from "./errors.ts";
 import { RemoteBridgeAccess, type RemoteBridgeSocketData } from "./remoteBridgeAccess.ts";
 import {
+	BRIDGE_LIMITS,
 	type RemoteBridgeServiceOptions,
 	resolveRemoteBridgeServiceConfig,
 } from "./remoteBridgeServiceConfig.ts";
@@ -37,11 +39,6 @@ export type { RemoteBridgeServiceOptions } from "./remoteBridgeServiceConfig.ts"
 export type { RemoteBridgeTcpSocket } from "./remoteBridgeTransport.ts";
 
 import { RTCPeerConnection } from "werift";
-
-const NEGOTIATION_TIMEOUT_MS = 10_000;
-const LEASE_TTL_MS = 120_000;
-const MAX_BUFFERED_BYTES = 1024 * 1024;
-const MAX_STREAM_FRAME_BYTES = 32 * 1024;
 
 export class RemoteBridgeService {
 	readonly enabled: boolean;
@@ -98,7 +95,7 @@ export class RemoteBridgeService {
 		this.websocket = {
 			data: {} as RemoteBridgeSocketData,
 			maxPayloadLength: 64 * 1024,
-			backpressureLimit: MAX_BUFFERED_BYTES,
+			backpressureLimit: BRIDGE_LIMITS.bufferedBytes,
 			closeOnBackpressureLimit: true,
 			idleTimeout: 120,
 			sendPings: true,
@@ -124,6 +121,11 @@ export class RemoteBridgeService {
 	listDevices(): RemoteBridgeDevicesResponse {
 		this.assertAvailable();
 		return this.access.listDevices();
+	}
+
+	authenticateDevice(token: string | null): RemoteBridgeDevice {
+		this.assertAvailable();
+		return this.access.authenticateDevice(token).device;
 	}
 
 	createPairing(
@@ -179,7 +181,7 @@ export class RemoteBridgeService {
 				"The bridge lease does not match this connection",
 			);
 		}
-		attachment.leaseExpiresAt = this.now() + LEASE_TTL_MS;
+		attachment.leaseExpiresAt = this.now() + BRIDGE_LIMITS.leaseMs;
 		this.scheduleLeaseExpiry(input.connectionId, attachment);
 		this.access.touchDevice(device.id);
 		return { expiresAt: new Date(attachment.leaseExpiresAt).toISOString() };
@@ -191,10 +193,10 @@ export class RemoteBridgeService {
 	}
 
 	private sendWebSocketBytes(attachment: BridgeAttachment, bytes: Buffer<ArrayBuffer>): void {
-		for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
+		for (let offset = 0; offset < bytes.byteLength; offset += BRIDGE_LIMITS.frameBytes) {
 			const frame = bytes.subarray(
 				offset,
-				Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES),
+				Math.min(bytes.byteLength, offset + BRIDGE_LIMITS.frameBytes),
 			);
 			if (attachment.socket.sendBinary(frame, false) === 0) {
 				attachment.socket.close(1013, "remote_bridge_backpressure");
@@ -213,12 +215,12 @@ export class RemoteBridgeService {
 			this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_state_lost");
 			return;
 		}
-		for (let offset = 0; offset < bytes.byteLength; offset += MAX_STREAM_FRAME_BYTES) {
+		for (let offset = 0; offset < bytes.byteLength; offset += BRIDGE_LIMITS.frameBytes) {
 			const frame = bytes.subarray(
 				offset,
-				Math.min(bytes.byteLength, offset + MAX_STREAM_FRAME_BYTES),
+				Math.min(bytes.byteLength, offset + BRIDGE_LIMITS.frameBytes),
 			);
-			if (channel.bufferedAmount + frame.byteLength > MAX_BUFFERED_BYTES) {
+			if (channel.bufferedAmount + frame.byteLength > BRIDGE_LIMITS.bufferedBytes) {
 				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_backpressure");
 				return;
 			}
@@ -248,7 +250,7 @@ export class RemoteBridgeService {
 			return;
 		}
 		if (attachment.transport === "switching") {
-			if (state.outputBufferBytes + bytes.byteLength > MAX_BUFFERED_BYTES) {
+			if (state.outputBufferBytes + bytes.byteLength > BRIDGE_LIMITS.bufferedBytes) {
 				this.fallbackNegotiation(
 					connectionId,
 					attachment,
@@ -270,7 +272,7 @@ export class RemoteBridgeService {
 	): void {
 		if (
 			!attachment.ready ||
-			attachment.tcp.writableLength + bytes.byteLength > MAX_BUFFERED_BYTES
+			attachment.tcp.writableLength + bytes.byteLength > BRIDGE_LIMITS.bufferedBytes
 		) {
 			this.destroyAttachment(connectionId, attachment, {
 				code: 1013,
@@ -456,7 +458,7 @@ export class RemoteBridgeService {
 				}
 				return;
 			}
-			if (message.byteLength > MAX_BUFFERED_BYTES) {
+			if (message.byteLength > BRIDGE_LIMITS.bufferedBytes) {
 				this.failActiveP2p(connectionId, attachment, "remote_bridge_p2p_message_too_large");
 				return;
 			}
@@ -549,7 +551,7 @@ export class RemoteBridgeService {
 					"No direct bridge path was found within 10 seconds.",
 				);
 			}
-		}, NEGOTIATION_TIMEOUT_MS);
+		}, BRIDGE_LIMITS.negotiationMs);
 		peer.onDataChannel.subscribe((channel) =>
 			this.acceptDataChannel(connectionId, attachment, state, channel),
 		);
@@ -613,7 +615,7 @@ export class RemoteBridgeService {
 			host: data.host,
 			transport: "websocket",
 			webRtc: null,
-			leaseExpiresAt: this.now() + LEASE_TTL_MS,
+			leaseExpiresAt: this.now() + BRIDGE_LIMITS.leaseMs,
 			leaseTimer: null,
 			ready: false,
 		};
@@ -675,7 +677,7 @@ export class RemoteBridgeService {
 		const attachment = this.attachments.get(connectionId);
 		if (!attachment || attachment.socket !== socket) return;
 		if (typeof message !== "string") {
-			if (message.byteLength > MAX_BUFFERED_BYTES || attachment.transport === "webrtc") {
+			if (message.byteLength > BRIDGE_LIMITS.bufferedBytes || attachment.transport === "webrtc") {
 				socket.close(1009, "remote_bridge_message_invalid");
 				return;
 			}

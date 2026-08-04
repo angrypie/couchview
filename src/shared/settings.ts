@@ -1,3 +1,9 @@
+import {
+	type CodexGenerationPreferences,
+	DEFAULT_CODEX_GENERATION_PREFERENCES,
+	parseCodexGenerationPreferences,
+} from "./codexGeneration.ts";
+
 export const SETTINGS_PROFILE_DATA_VERSION = 1 as const;
 export const DEFAULT_SETTINGS_PROFILE_ID = "default";
 export const DEFAULT_SETTINGS_PROFILE_NAME = "Default";
@@ -6,6 +12,7 @@ export const SETTINGS_PROFILE_SELECTION_KEY = "couchview:settings-profile-id:v1"
 export const COMMAND_IDS = [
 	"palette.open",
 	"navigate.review",
+	"navigate.artifacts",
 	"navigate.terminal",
 	"navigate.remote",
 	"navigate.settings",
@@ -67,6 +74,7 @@ export interface KeyboardPreferences {
 
 export interface SettingsProfileData {
 	version: typeof SETTINGS_PROFILE_DATA_VERSION;
+	codex: CodexGenerationPreferences;
 	typography: TypographyPreferences;
 	display: DisplayPreferences;
 	keyboard: KeyboardPreferences;
@@ -145,6 +153,7 @@ const sequence = (...strokes: ShortcutStroke[]): ShortcutSequence => strokes;
 const COMMON_DEFAULT_KEYBINDINGS: Record<CommandId, ShortcutSequence | null> = {
 	"palette.open": sequence(stroke("k", ["mod"])),
 	"navigate.review": sequence(stroke("g"), stroke("d")),
+	"navigate.artifacts": null,
 	"navigate.terminal": sequence(stroke("g"), stroke("t")),
 	"navigate.remote": sequence(stroke("g"), stroke("r")),
 	"navigate.settings": sequence(stroke("g"), stroke("s")),
@@ -185,6 +194,7 @@ export const DEFAULT_KEYBINDINGS: Record<
 export function createDefaultSettingsProfileData(): SettingsProfileData {
 	return {
 		version: SETTINGS_PROFILE_DATA_VERSION,
+		codex: { ...DEFAULT_CODEX_GENERATION_PREFERENCES },
 		typography: {
 			diff: { ...DEFAULT_TYPOGRAPHY_PREFERENCES.diff },
 			terminal: { ...DEFAULT_TYPOGRAPHY_PREFERENCES.terminal },
@@ -441,6 +451,10 @@ export function parseSettingsProfileData(value: unknown): SettingsProfileData {
 		throw new Error("Unsupported settings profile data version");
 	}
 	validateProfileTypography(candidate.typography);
+	const codex =
+		candidate.codex === undefined
+			? { ...DEFAULT_CODEX_GENERATION_PREFERENCES }
+			: parseCodexGenerationPreferences(candidate.codex);
 	const display = candidate.display;
 	if (
 		!display ||
@@ -470,6 +484,7 @@ export function parseSettingsProfileData(value: unknown): SettingsProfileData {
 	}
 	const result: SettingsProfileData = {
 		version: SETTINGS_PROFILE_DATA_VERSION,
+		codex,
 		typography: normalizeTypographyPreferences(candidate.typography),
 		display: {
 			lineNumbersVisible: display.lineNumbersVisible,

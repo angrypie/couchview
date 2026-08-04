@@ -11,6 +11,7 @@ import {
 	startServer,
 	superviseServer,
 } from "./cli.ts";
+import { cliProcessCommand } from "./cliSupervisor.ts";
 import { type CouchviewApp, createCouchviewApp } from "./server.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
@@ -106,6 +107,22 @@ describe("restartCapability", () => {
 });
 
 describe("server supervisor", () => {
+	test("invokes source workers through Bun and compiled workers directly", () => {
+		expect(
+			cliProcessCommand(["--version"], {
+				bunMain: "/workspace/src/server/cli.ts",
+				executable: "/opt/bun",
+				cliPath: "/workspace/src/server/cli.ts",
+			}),
+		).toEqual(["/opt/bun", "run", "/workspace/src/server/cli.ts", "--version"]);
+		expect(
+			cliProcessCommand(["--version"], {
+				bunMain: "/$bunfs/root/couchview",
+				executable: "/opt/couchview",
+			}),
+		).toEqual(["/opt/couchview", "--version"]);
+	});
+
 	test("keeps the foreground owner alive while replacing a restarted worker", async () => {
 		const exitCodes = [SUPERVISOR_RESTART_EXIT_CODE, 0];
 		const commands: string[][] = [];

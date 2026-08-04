@@ -2,8 +2,21 @@ import packageJson from "../../package.json" with { type: "json" };
 
 export const CLI_VERSION = packageJson.version;
 
-export type CliCommandName = "serve" | "restart" | "completion" | "bridge";
+export type CliCommandName = "serve" | "restart" | "completion" | "bridge" | "artifacts";
 export type CompletionShell = "zsh" | "bash" | "fish";
+export type ArtifactCliAction = "list" | "build" | "download" | "pull";
+
+export interface ParsedArtifactArguments {
+	action: ArtifactCliAction;
+	name: string | null;
+	profile: string | null;
+	repository: string | null;
+	repo: string | null;
+	build: string | null;
+	output: string | null;
+	force: boolean;
+	json: boolean;
+}
 
 export interface ParsedServeArguments {
 	repo: string | undefined;
@@ -75,6 +88,10 @@ export type CliInvocation =
 			profileSelector: string | null;
 			repositoryRoot: string | null;
 			claudeArgs: string[];
+	  }
+	| {
+			kind: "artifacts";
+			parsed: ParsedArtifactArguments;
 	  }
 	| {
 			kind: "help";

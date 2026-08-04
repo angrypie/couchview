@@ -27,6 +27,7 @@ Usage:
   couchview serve [repository] [options]
   couchview restart [options]
   couchview bridge <pair|proxy|codex|terminal|claude> [options]
+  couchview artifacts <list|build|download|pull> [name] [options]
   couchview completion <shell> [--install]
   couchview help [command]
 
@@ -34,6 +35,7 @@ Commands:
   serve       Start Couchview or add a repository to the running server.
   restart     Rebuild and restart the running production server.
   bridge      Pair a native client or connect development tools through SSH.
+  artifacts   Build and download ephemeral repository artifacts.
   completion  Print a zsh, bash, or fish completion script.
   help        Show general or command-specific help.
 
@@ -97,6 +99,25 @@ the remote account's login shell. The claude command starts Claude Code Remote
 Control in that repository. The codex command keeps the Codex terminal UI on
 this computer while Codex executes remotely. Verify the managed host with plain
 ssh first; normal SSH host-key and login checks apply.`;
+	}
+
+	if (command === "artifacts") {
+		return `Build and download ephemeral artifacts from a running Couchview server.
+
+Usage:
+  couchview artifacts list [options]
+  couchview artifacts build <name> [options]
+  couchview artifacts download <name> [--build <id>] [options]
+  couchview artifacts pull <name> [options]
+
+Options:
+${renderOptionList(optionsFor("artifacts"))}
+
+Without --profile, Couchview uses an already-running local server and matches
+the Git checkout containing the current directory or --repo. It never starts a
+server implicitly. With --profile, it uses the paired host selected by profile
+ID or SSH alias. pull streams one build and downloads that exact successful
+snapshot. Downloads are verified and never overwrite unless --force is set.`;
 	}
 
 	return `Start Couchview or add a repository to the running server.
@@ -180,12 +201,12 @@ _couchview() {
   local explicit_command=0
 
   if (( CURRENT == 2 )) && [[ $PREFIX != -* ]]; then
-    _describe 'command' '(serve restart bridge completion help)'
+    _describe 'command' '(serve restart bridge artifacts completion help)'
     return
   fi
 
   case $words[2] in
-    serve|restart|bridge|completion|help)
+    serve|restart|bridge|artifacts|completion|help)
       command=$words[2]
       explicit_command=1
       words=($words[1] $words[3,-1])
@@ -205,8 +226,13 @@ _couchview() {
       _arguments ${specs("bridge")} \
         '1:action:(pair proxy codex terminal claude)'
       ;;
+    artifacts)
+      _arguments ${specs("artifacts")} \
+        '1:action:(list build download pull)' \
+        '2:artifact name:'
+      ;;
     help)
-      _arguments '1:command:(serve restart bridge completion)'
+      _arguments '1:command:(serve restart bridge artifacts completion)'
       ;;
     serve)
       if (( explicit_command )); then
@@ -233,17 +259,17 @@ _couchview() {
 
   if (( COMP_CWORD > 1 )); then
     case "\${COMP_WORDS[1]}" in
-      serve|restart|bridge|completion|help) command="\${COMP_WORDS[1]}" ;;
+      serve|restart|bridge|artifacts|completion|help) command="\${COMP_WORDS[1]}" ;;
     esac
   fi
 
-  if [[ "$command" == "serve" && ( "$prev" == "--repo" || "$prev" == "-r" ) ]]; then
+  if [[ ( "$command" == "serve" || "$command" == "artifacts" ) && ( "$prev" == "--repo" || "$prev" == "-r" ) ]]; then
     COMPREPLY=( $(compgen -d -- "$cur") )
     compopt -o filenames 2>/dev/null || true
     return
   fi
 
-  if [[ "$command" == "serve" && "$cur" == --repo=* ]]; then
+  if [[ ( "$command" == "serve" || "$command" == "artifacts" ) && "$cur" == --repo=* ]]; then
     value="\${cur#--repo=}"
     COMPREPLY=( $(compgen -d -- "$value") )
     for index in "\${!COMPREPLY[@]}"; do
@@ -258,6 +284,7 @@ _couchview() {
       restart) COMPREPLY=( $(compgen -W '${optionWords("restart")}' -- "$cur") ) ;;
       completion) COMPREPLY=( $(compgen -W '${optionWords("completion")}' -- "$cur") ) ;;
       bridge) COMPREPLY=( $(compgen -W '${optionWords("bridge")}' -- "$cur") ) ;;
+      artifacts) COMPREPLY=( $(compgen -W '${optionWords("artifacts")}' -- "$cur") ) ;;
       help) COMPREPLY=() ;;
       serve) COMPREPLY=( $(compgen -W '${optionWords("serve")}' -- "$cur") ) ;;
     esac
@@ -271,12 +298,15 @@ _couchview() {
     bridge)
       COMPREPLY=( $(compgen -W 'pair proxy codex terminal claude' -- "$cur") )
       ;;
+    artifacts)
+      COMPREPLY=( $(compgen -W 'list build download pull' -- "$cur") )
+      ;;
     help)
-      COMPREPLY=( $(compgen -W 'serve restart bridge completion' -- "$cur") )
+      COMPREPLY=( $(compgen -W 'serve restart bridge artifacts completion' -- "$cur") )
       ;;
     serve)
       if (( COMP_CWORD == 1 )); then
-        COMPREPLY=( $(compgen -W 'serve restart bridge completion help ${optionWords("serve")}' -- "$cur") )
+        COMPREPLY=( $(compgen -W 'serve restart bridge artifacts completion help ${optionWords("serve")}' -- "$cur") )
       elif [[ "\${COMP_WORDS[1]}" == "serve" ]]; then
         COMPREPLY=( $(compgen -d -- "$cur") )
         compopt -o filenames 2>/dev/null || true
@@ -309,7 +339,7 @@ function __fish_couchview_command
   set -l words (commandline -opc)
   if test (count $words) -ge 2
     switch $words[2]
-      case serve restart bridge completion help
+      case serve restart bridge artifacts completion help
         echo $words[2]
         return
     end
@@ -329,6 +359,7 @@ end
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a serve -d 'Start Couchview'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a restart -d 'Restart the running server'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a bridge -d 'Connect native tools through SSH'
+complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a artifacts -d 'Build and download artifacts'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a completion -d 'Print shell completion'
 complete -c couchview -n 'test (count (commandline -opc)) -le 1' -a help -d 'Show command help'
 
@@ -340,10 +371,13 @@ ${fishOptionLines("restart")}
 ${fishOptionLines("bridge")}
 complete -c couchview -n '__fish_couchview_using_command bridge' -f -a 'pair proxy codex terminal claude' -d 'Bridge action'
 
+${fishOptionLines("artifacts")}
+complete -c couchview -n '__fish_couchview_using_command artifacts' -f -a 'list build download pull' -d 'Artifact action'
+
 ${fishOptionLines("completion")}
 complete -c couchview -n '__fish_couchview_using_command completion' -f -a 'zsh bash fish' -d 'Shell'
 
-complete -c couchview -n '__fish_couchview_using_command help' -f -a 'serve restart bridge completion' -d 'Command'`;
+complete -c couchview -n '__fish_couchview_using_command help' -f -a 'serve restart bridge artifacts completion' -d 'Command'`;
 }
 
 export function renderCompletion(shell: CompletionShell): string {

@@ -266,6 +266,56 @@ describe("CLI command parsing", () => {
 	});
 });
 
+describe("artifact CLI parsing", () => {
+	test("parses selection, download, JSON, and overwrite options", () => {
+		expect(
+			parseCliInvocation([
+				"artifacts",
+				"download",
+				"couchview-cli",
+				"--profile",
+				"couchview-air",
+				"--repository",
+				"server-repo",
+				"--build",
+				"build-one",
+				"--output",
+				"./bin/couchview",
+				"--force",
+				"--json",
+			]),
+		).toEqual({
+			kind: "artifacts",
+			parsed: {
+				action: "download",
+				name: "couchview-cli",
+				profile: "couchview-air",
+				repository: "server-repo",
+				repo: null,
+				build: "build-one",
+				output: "./bin/couchview",
+				force: true,
+				json: true,
+			},
+		});
+		expect(parseCliInvocation(["artifacts", "list", "--repo", "../checkout"])).toMatchObject({
+			kind: "artifacts",
+			parsed: { action: "list", repo: "../checkout" },
+		});
+	});
+
+	test("validates actions, names, and action-specific options with suggestions", () => {
+		expect(() => parseCliInvocation(["artifacts", "pul", "app"])).toThrow("Did you mean 'pull'");
+		expect(() => parseCliInvocation(["artifacts", "list", "extra"])).toThrow("does not accept");
+		expect(() => parseCliInvocation(["artifacts", "build", "app", "--force"])).toThrow(
+			"only valid for artifacts download or pull",
+		);
+		expect(() => parseCliInvocation(["artifacts", "pull", "bad name"])).toThrow(
+			"Artifact name is invalid",
+		);
+	});
+});
+
 describe("CLI help and completion", () => {
 	test("renders general and command-specific help from the shared option schema", () => {
 		expect(renderCliHelp(null)).toContain(`Couchview ${CLI_VERSION}`);
@@ -305,6 +355,9 @@ describe("CLI help and completion", () => {
 				expect(completion).not.toContain("'directories:repository directory:_directories'");
 			}
 			if (shell === "bash") {
+				expect(completion).toContain(
+					'[[ ( "$command" == "serve" || "$command" == "artifacts" ) && "$cur" == --repo=* ]]',
+				);
 				expect(completion).not.toMatch(
 					/COMP_CWORD == 1[\s\S]*?COMPREPLY=.*compgen -W[^\n]+compgen -d/,
 				);

@@ -99,6 +99,22 @@ describe("CodexCommitMessageService", () => {
 		expect(await stat(cwd).catch(() => null)).toBeNull();
 	});
 
+	test("uses the caller-selected model and reasoning level", async () => {
+		let command: readonly string[] = [];
+		const service = new CodexCommitMessageService({
+			executable: "codex",
+			spawn: (nextCommand) => {
+				command = nextCommand;
+				return completedProcess(JSON.stringify({ message: "build: compile a desktop app" }));
+			},
+		});
+
+		await service.generate("context", { model: "gpt-5.6-terra", reasoning: "medium" });
+
+		expect(command[command.indexOf("--model") + 1]).toBe("gpt-5.6-terra");
+		expect(command).toContain('model_reasoning_effort="medium"');
+	});
+
 	test("rejects unavailable, malformed, and non-conventional output", async () => {
 		const unavailable = new CodexCommitMessageService({ executable: null });
 		expect(unavailable.capability.available).toBe(false);
@@ -205,7 +221,7 @@ describe("CodexCommitMessageService", () => {
 			},
 		});
 		const controller = new AbortController();
-		const first = service.generate("first context", controller.signal);
+		const first = service.generate("first context", undefined, controller.signal);
 
 		await expect(service.generate("second context")).rejects.toMatchObject({
 			status: 429,

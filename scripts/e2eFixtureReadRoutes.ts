@@ -1,4 +1,5 @@
 import type {
+	ArtifactRunEvent,
 	BootstrapResponse,
 	ChangesResponse,
 	PackageRunEvent,
@@ -25,6 +26,61 @@ function eventStream(value: unknown): Response {
 	const body = new ReadableStream({
 		start(controller) {
 			controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(value)}\n\n`));
+		},
+	});
+	return new Response(body, {
+		headers: {
+			...fixtureSecurityHeaders,
+			"Cache-Control": "no-cache, no-store, no-transform",
+			"Content-Type": "text/event-stream",
+			"X-Accel-Buffering": "no",
+		},
+	});
+}
+
+function artifactEventStream(state: FixtureMutableState, runId: string): Response {
+	const run = state.artifactRuns.find((candidate) => candidate.id === runId);
+	if (!run) {
+		return fixtureJson(
+			{ error: { code: "artifact_run_not_found", message: "Fixture artifact run not found" } },
+			404,
+		);
+	}
+	const encoder = new TextEncoder();
+	let interval: ReturnType<typeof setInterval> | null = null;
+	let sentSequence = 0;
+	let sentStatus = run.status;
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			const send = (event: ArtifactRunEvent) => {
+				controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+			};
+			const output = state.artifactRunOutputs.get(run.id) ?? [];
+			sentSequence = output.at(-1)?.sequence ?? 0;
+			send({ type: "snapshot", snapshot: { run: { ...run }, output: [...output] } });
+			if (["succeeded", "failed", "stopped"].includes(run.status)) {
+				controller.close();
+				return;
+			}
+			interval = setInterval(() => {
+				const currentOutput = state.artifactRunOutputs.get(run.id) ?? [];
+				for (const chunk of currentOutput) {
+					if (chunk.sequence <= sentSequence) continue;
+					sentSequence = chunk.sequence;
+					send({ type: "output", chunk });
+				}
+				if (run.status === sentStatus) return;
+				sentStatus = run.status;
+				send({ type: "status", run: { ...run } });
+				if (["succeeded", "failed", "stopped"].includes(run.status)) {
+					if (interval) clearInterval(interval);
+					interval = null;
+					controller.close();
+				}
+			}, 40);
+		},
+		cancel() {
+			if (interval) clearInterval(interval);
 		},
 	});
 	return new Response(body, {
@@ -75,6 +131,7 @@ export function handleFixtureReadRoute(
 				reason: "Restart is unavailable in the browser test fixture.",
 			},
 			commitMessage: { available: true, reason: null },
+			artifactProposal: { available: true, reason: null },
 			codex: {
 				available: false,
 				reason: "Codex is not available in the browser test fixture.",
@@ -86,9 +143,9 @@ export function handleFixtureReadRoute(
 				profiles: [{ id: "tmux", label: "tmux", available: true, reason: null }],
 			},
 			remoteBridge: {
-				available: false,
-				reason: "Native remote development is unavailable in the browser test fixture.",
-				p2pEnabled: false,
+				available: true,
+				reason: null,
+				p2pEnabled: true,
 			},
 			settingsProfiles: state.settingsProfiles,
 		} satisfies BootstrapResponse);
@@ -168,6 +225,70 @@ export function handleFixtureReadRoute(
 	if (nestedPath === "package-scripts") return fixtureJson(packageScripts);
 	if (nestedPath === "package-runs") {
 		return fixtureJson({ runs: state.packageRuns });
+	}
+	if (nestedPath === "remote-bridge/pairings") {
+		return fixtureJson({
+			devices: [
+				{
+					id: "fixture-artifact-device",
+					repositoryId: repository.id,
+					label: "Fixture Mac",
+					sshAlias: "couchview-fixture-device",
+					createdAt: "2026-08-04T10:00:00.000Z",
+					lastUsedAt: null,
+				},
+			],
+		});
+	}
+	if (nestedPath === "artifacts") {
+		return fixtureJson({
+			artifacts: state.artifactDefinitions
+				.filter((definition) => definition.repositoryId === repositoryId)
+				.map((definition) => ({
+					definition,
+					builds: state.artifactBuilds
+						.filter((build) => build.artifactId === definition.id)
+						.sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+						.slice(0, 2),
+					activeRun:
+						state.artifactRuns.find(
+							(run) =>
+								run.artifactId === definition.id &&
+								["running", "stopping", "capturing"].includes(run.status),
+						) ?? null,
+					recentRun: state.artifactRuns.find((run) => run.artifactId === definition.id) ?? null,
+				})),
+		});
+	}
+	if (context.artifactRunRoute?.[3] === "events") {
+		return artifactEventStream(state, decodeURIComponent(context.artifactRunRoute[2] ?? ""));
+	}
+	if (context.artifactDownloadRoute) {
+		const artifactId = decodeURIComponent(context.artifactDownloadRoute[1] ?? "");
+		const buildId = decodeURIComponent(context.artifactDownloadRoute[2] ?? "");
+		const build = state.artifactBuilds.find(
+			(candidate) =>
+				candidate.repositoryId === repositoryId &&
+				candidate.artifactId === artifactId &&
+				candidate.id === buildId,
+		);
+		const payload = build ? state.artifactPayloads.get(build.id) : null;
+		if (!build || !payload) {
+			return fixtureJson(
+				{ error: { code: "artifact_build_not_found", message: "Fixture build not found" } },
+				404,
+			);
+		}
+		return new Response(Uint8Array.from(payload).buffer, {
+			headers: {
+				...fixtureSecurityHeaders,
+				"Accept-Ranges": "bytes",
+				"Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(build.downloadName)}`,
+				"Content-Length": String(payload.byteLength),
+				"Content-Type": build.mediaType,
+				ETag: `"${build.sha256}"`,
+			},
+		});
 	}
 	if (nestedPath === "search") {
 		const query = url.searchParams.get("q") || "";
