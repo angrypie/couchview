@@ -31,6 +31,7 @@ interface ArtifactBuildRow {
 	media_type: string;
 	size_bytes: number;
 	sha256: string;
+	executable: number;
 	created_at: string;
 }
 
@@ -60,6 +61,7 @@ interface ArtifactBuildBindings {
 	mediaType: string;
 	sizeBytes: number;
 	sha256: string;
+	executable: number;
 	createdAt: string;
 }
 
@@ -102,6 +104,7 @@ function buildFromRow(row: ArtifactBuildRow): ArtifactBuild {
 		mediaType: row.media_type,
 		sizeBytes: row.size_bytes,
 		sha256: row.sha256,
+		executable: row.executable === 1,
 		createdAt: row.created_at,
 	};
 }
@@ -214,7 +217,7 @@ export class ArtifactDatabase {
 			? this.database
 					.query<ArtifactBuildRow, { repositoryId: string; artifactId: string }>(`
               SELECT id, repository_id, artifact_id, definition_revision, download_name,
-                media_type, size_bytes, sha256, created_at
+                media_type, size_bytes, sha256, executable, created_at
               FROM artifact_builds
               WHERE repository_id = $repositoryId AND artifact_id = $artifactId
               ORDER BY created_at DESC, rowid DESC
@@ -223,7 +226,7 @@ export class ArtifactDatabase {
 			: this.database
 					.query<ArtifactBuildRow, { repositoryId: string }>(`
               SELECT id, repository_id, artifact_id, definition_revision, download_name,
-                media_type, size_bytes, sha256, created_at
+                media_type, size_bytes, sha256, executable, created_at
               FROM artifact_builds
               WHERE repository_id = $repositoryId
               ORDER BY created_at DESC, rowid DESC
@@ -236,7 +239,7 @@ export class ArtifactDatabase {
 		return this.database
 			.query<ArtifactBuildRow, []>(`
         SELECT id, repository_id, artifact_id, definition_revision, download_name,
-          media_type, size_bytes, sha256, created_at
+          media_type, size_bytes, sha256, executable, created_at
         FROM artifact_builds ORDER BY created_at DESC, rowid DESC
       `)
 			.all()
@@ -250,10 +253,10 @@ export class ArtifactDatabase {
 					.query<unknown, ArtifactBuildBindings>(`
               INSERT INTO artifact_builds(
                 id, repository_id, artifact_id, definition_revision, download_name,
-                media_type, size_bytes, sha256, created_at
+                media_type, size_bytes, sha256, executable, created_at
               ) VALUES (
                 $id, $repositoryId, $artifactId, $definitionRevision, $downloadName,
-                $mediaType, $sizeBytes, $sha256, $createdAt
+                $mediaType, $sizeBytes, $sha256, $executable, $createdAt
               )
             `)
 					.run({
@@ -265,6 +268,7 @@ export class ArtifactDatabase {
 						mediaType: build.mediaType,
 						sizeBytes: build.sizeBytes,
 						sha256: build.sha256,
+						executable: build.executable ? 1 : 0,
 						createdAt: build.createdAt,
 					});
 				const obsolete = this.builds(build.repositoryId, build.artifactId).slice(

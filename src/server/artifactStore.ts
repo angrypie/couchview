@@ -34,6 +34,7 @@ interface CaptureResult {
 	mediaType: string;
 	sizeBytes: number;
 	sha256: string;
+	executable: boolean;
 }
 
 interface DirectoryEntry {
@@ -54,6 +55,7 @@ interface FileIdentity {
 	size: bigint;
 	mtimeNs: bigint;
 	ctimeNs: bigint;
+	mode: bigint;
 }
 
 function inside(root: string, candidate: string): boolean {
@@ -94,6 +96,7 @@ async function fileIdentity(filePath: string): Promise<FileIdentity> {
 		size: metadata.size,
 		mtimeNs: metadata.mtimeNs,
 		ctimeNs: metadata.ctimeNs,
+		mode: metadata.mode,
 	};
 }
 
@@ -103,7 +106,8 @@ function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
 		left.ino === right.ino &&
 		left.size === right.size &&
 		left.mtimeNs === right.mtimeNs &&
-		left.ctimeNs === right.ctimeNs
+		left.ctimeNs === right.ctimeNs &&
+		left.mode === right.mode
 	);
 }
 
@@ -277,6 +281,7 @@ export class ArtifactStore {
 			mediaType: Bun.file(source).type || "application/octet-stream",
 			sizeBytes,
 			sha256: hash.digest("hex"),
+			executable: (Number(sourceIdentity.mode) & 0o111) !== 0,
 		};
 	}
 
@@ -333,6 +338,7 @@ export class ArtifactStore {
 			mediaType: "application/gzip",
 			sizeBytes: archiveMetadata.size,
 			sha256,
+			executable: false,
 		};
 	}
 

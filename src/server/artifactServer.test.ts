@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
 	API_ROUTES,
+	ARTIFACT_EXECUTABLE_HEADER,
 	type ArtifactCatalogResponse,
 	type ArtifactDefinitionResponse,
 	type ArtifactRepositoryResolveResponse,
@@ -188,7 +189,11 @@ describe("artifact HTTP routes", () => {
 		};
 		const definitionInput = {
 			name: "couchview-cli",
-			argv: [process.execPath, "-e", 'await Bun.write("couchview.bin", "artifact bytes")'],
+			argv: [
+				process.execPath,
+				"-e",
+				`const { chmod } = await import("node:fs/promises"); await Bun.write("couchview.bin", ${JSON.stringify("artifact bytes".repeat(32))}); await chmod("couchview.bin", 0o755)`,
+			],
 			workingDirectory: ".",
 			outputPath: "couchview.bin",
 			outputKind: "file" as const,
@@ -234,6 +239,7 @@ describe("artifact HTTP routes", () => {
 		await eventReader.cancel();
 
 		const build = await waitForBuild(baseUrl, app.repository.id, created.definition.id);
+		expect(build.executable).toBe(true);
 		const downloadUrl = `${baseUrl}${API_ROUTES.artifactDownload(
 			app.repository.id,
 			created.definition.id,
@@ -245,14 +251,23 @@ describe("artifact HTTP routes", () => {
 		expect(head.headers.get("etag")).toBe(`"${build.sha256}"`);
 		expect(head.headers.get("accept-ranges")).toBe("bytes");
 		expect(head.headers.get("content-disposition")).toContain("attachment");
+		expect(head.headers.get(ARTIFACT_EXECUTABLE_HEADER)).toBe("1");
 		expect((await head.arrayBuffer()).byteLength).toBe(0);
+		const full = await fetch(downloadUrl);
+		expect(full.status).toBe(200);
+		expect(full.headers.get("content-length")).toBe(String(build.sizeBytes));
+		expect(full.headers.get("etag")).toBe(`"${build.sha256}"`);
+		expect(full.headers.get(ARTIFACT_EXECUTABLE_HEADER)).toBe("1");
+		expect(await full.text()).toBe("artifact bytes".repeat(32));
 		const range = await fetch(downloadUrl, { headers: { range: "bytes=2-7" } });
 		expect(range.status).toBe(206);
 		expect(range.headers.get("content-range")).toBe(`bytes 2-7/${build.sizeBytes}`);
+		expect(range.headers.get(ARTIFACT_EXECUTABLE_HEADER)).toBe("1");
 		expect(await range.text()).toBe("tifact");
 		const invalidRange = await fetch(downloadUrl, { headers: { range: "bytes=999-1000" } });
 		expect(invalidRange.status).toBe(416);
 		expect(invalidRange.headers.get("content-range")).toBe(`bytes */${build.sizeBytes}`);
+		expect(invalidRange.headers.get(ARTIFACT_EXECUTABLE_HEADER)).toBe("1");
 
 		const pairing = await json<{ command: string }>(
 			await fetch(`${baseUrl}${API_ROUTES.remoteBridgePairings(app.repository.id)}`, {

@@ -1,5 +1,6 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -182,6 +183,90 @@ describe("ArtifactService", () => {
 			resources.runner.close();
 			resources.repositories.close();
 			resources.database.close();
+		}
+	});
+
+	test("keeps v5 definitions but removes their obsolete payloads during startup", async () => {
+		const root = await mkdtemp(path.join(tmpdir(), "couchview-artifact-v5-restart-"));
+		fixtures.push(root);
+		expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+		const statePath = path.join(root, "state", "state.sqlite");
+		const seededDatabase = await StateDatabase.open(statePath);
+		const seededRepositories = new RepositoryManager(seededDatabase);
+		const registered = await seededRepositories.register(root);
+		const definition = seededDatabase.artifacts.createDefinition(registered.repository.id, {
+			name: "legacy-cli",
+			argv: ["bun", "run", "build"],
+			workingDirectory: ".",
+			outputPath: "dist/legacy-cli",
+			outputKind: "file",
+		});
+		seededRepositories.close();
+		seededDatabase.close();
+
+		const raw = new Database(statePath, { strict: true });
+		raw.run(`
+      DROP TABLE artifact_builds;
+      CREATE TABLE artifact_builds (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        artifact_id TEXT NOT NULL REFERENCES artifact_definitions(id) ON DELETE CASCADE,
+        definition_revision INTEGER NOT NULL,
+        download_name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX artifact_builds_artifact_created
+        ON artifact_builds(artifact_id, created_at DESC);
+      UPDATE metadata SET value = 5 WHERE key = 'schema_version';
+      PRAGMA user_version = 5;
+    `);
+		raw
+			.query<unknown, { repositoryId: string; artifactId: string }>(`
+        INSERT INTO artifact_builds(
+          id, repository_id, artifact_id, definition_revision, download_name, media_type,
+          size_bytes, sha256, created_at
+        ) VALUES (
+          'legacy-build', $repositoryId, $artifactId, 1, 'legacy-cli',
+          'application/octet-stream', 14,
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          '2026-08-04T10:02:00.000Z'
+        )
+      `)
+			.run({ repositoryId: registered.repository.id, artifactId: definition.id });
+		raw.close();
+
+		const payload = path.join(
+			path.dirname(statePath),
+			"artifacts",
+			registered.repository.id,
+			definition.id,
+			"legacy-build",
+			"legacy-cli",
+		);
+		await mkdir(path.dirname(payload), { recursive: true });
+		await writeFile(payload, "legacy payload");
+
+		const database = await StateDatabase.open(statePath);
+		const repositories = new RepositoryManager(database);
+		const runner = new RepositoryCommandRunner();
+		const store = ArtifactStore.besideDatabase(statePath);
+		const service = await ArtifactService.create({ database, repositories, runner, store });
+		try {
+			expect(service.catalog(registered.repository.id).artifacts).toEqual([
+				expect.objectContaining({
+					definition: expect.objectContaining({ id: definition.id, name: "legacy-cli" }),
+					builds: [],
+				}),
+			]);
+			expect(await Bun.file(path.dirname(payload)).exists()).toBe(false);
+		} finally {
+			service.close();
+			runner.close();
+			repositories.close();
+			database.close();
 		}
 	});
 });

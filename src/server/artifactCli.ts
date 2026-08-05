@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { link, lstat, realpath, rename, rm } from "node:fs/promises";
+import { chmod, link, lstat, realpath, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import {
 	API_ROUTES,
 	type ApiErrorBody,
+	ARTIFACT_EXECUTABLE_HEADER,
 	type ArtifactBuild,
 	type ArtifactCatalogItem,
 	type ArtifactCatalogResponse,
@@ -395,9 +396,23 @@ async function downloadArtifact(
 			API_ROUTES.artifactDownload(connection.repository.id, item.definition.id, build.id),
 		),
 	);
-	const declaredSize = Number(response.headers.get("content-length"));
+	const contentLength = response.headers.get("content-length");
+	const declaredSize = contentLength === null ? null : Number(contentLength);
 	const etag = response.headers.get("etag")?.replace(/^"|"$/g, "");
-	if (declaredSize !== build.sizeBytes || etag !== build.sha256 || !response.body) {
+	const executableHeader = response.headers.get(ARTIFACT_EXECUTABLE_HEADER);
+	if (executableHeader === null) {
+		throw new Error(
+			"This Couchview server does not provide executable artifact metadata; update Couchview on the server.",
+		);
+	}
+	const executable = executableHeader === "1";
+	if (
+		(declaredSize !== null && declaredSize !== build.sizeBytes) ||
+		(etag !== undefined && etag !== build.sha256) ||
+		(executableHeader !== "0" && executableHeader !== "1") ||
+		executable !== build.executable ||
+		!response.body
+	) {
 		throw new Error("The Couchview server returned inconsistent artifact metadata.");
 	}
 	const temporary = path.join(
@@ -426,6 +441,11 @@ async function downloadArtifact(
 		const digest = hash.digest("hex");
 		if (sizeBytes !== build.sizeBytes || digest !== build.sha256) {
 			throw new Error("Artifact download failed size or SHA-256 verification.");
+		}
+		if (process.platform !== "win32") {
+			const umask = process.umask();
+			const mode = (executable ? 0o777 : 0o666) & ~umask;
+			await chmod(temporary, executable ? mode | 0o100 : mode);
 		}
 		if (!options.force) {
 			try {

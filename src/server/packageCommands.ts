@@ -11,6 +11,7 @@ import type {
 	PackageScriptWarning,
 	StartPackageRunRequest,
 } from "../shared/contracts.ts";
+import { isCompiledExecutable } from "./cliSupervisor.ts";
 import { HttpError } from "./errors.ts";
 import { decodeGitOutput, runGit, sha256 } from "./git/index.ts";
 import {
@@ -32,6 +33,7 @@ interface PackageCommandServiceOptions {
 	maxOutputBytes?: number;
 	completedRunsPerRepository?: number;
 	resolveExecutable?: (runner: PackageRunner) => string | null;
+	compiledExecutable?: boolean;
 	spawn?: SpawnRepositoryCommand;
 	commandRunner?: RepositoryCommandRunner;
 }
@@ -71,6 +73,7 @@ function invocationArgument(value: string): string {
 
 export class PackageCommandService {
 	private readonly resolveExecutable: (runner: PackageRunner) => string | null;
+	private readonly compiledExecutable: boolean;
 	private readonly commandRunner: RepositoryCommandRunner;
 	private readonly ownsCommandRunner: boolean;
 	private readonly runMetadata = new Map<string, PackageRunMetadata>();
@@ -79,6 +82,7 @@ export class PackageCommandService {
 		this.resolveExecutable =
 			options.resolveExecutable ??
 			((runner) => (runner === "bun" ? process.execPath : Bun.which(runner)));
+		this.compiledExecutable = options.compiledExecutable ?? isCompiledExecutable();
 		this.ownsCommandRunner = !options.commandRunner;
 		this.commandRunner =
 			options.commandRunner ??
@@ -188,6 +192,9 @@ export class PackageCommandService {
 				key: `${selectedPackage.packagePath}\0${script.name}`,
 				argv: [executable ?? selectedPackage.runner, "run", script.name],
 				cwd: workingDirectory,
+				...(selectedPackage.runner === "bun" && this.compiledExecutable
+					? { env: { BUN_BE_BUN: "1" } }
+					: {}),
 				...(executable
 					? {}
 					: {

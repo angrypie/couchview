@@ -25,6 +25,8 @@ When adding a task:
       forcing users to switch back to ChatGPT for every question.
 - [ ] Evaluate whether the new custom import-direction check is needed and decide whether to keep,
       revise, or remove it.
+- [ ] Once stable Bun supports [`--asset`](https://bun.com/docs/bundler/executables#embed-directories),
+      embed the Vite output for a true single-file distribution without an adjacent `dist` directory.
 
 ## Sprint
 

@@ -1,17 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import {
 	API_ROUTES,
+	ARTIFACT_EXECUTABLE_HEADER,
 	type ArtifactCatalogResponse,
 	type ArtifactDefinitionResponse,
 	type BootstrapResponse,
 	CSRF_HEADER,
 	type RemoteBridgeProfile,
 } from "../shared/contracts.ts";
+import { runArtifactCli } from "./artifactCli.ts";
+import type { ParsedArtifactArguments } from "./cliCommandTypes.ts";
 import { type CouchviewApp, type CouchviewSocketData, createCouchviewApp } from "./server.ts";
 
 const CLI_PATH = path.resolve(import.meta.dir, "cli.ts");
@@ -126,7 +129,13 @@ async function createDefinition(
 	repositoryId: string,
 	name: string,
 	headers: Record<string, string>,
+	executable = true,
 ) {
+	const payload = `${name} bytes`.repeat(32);
+	const outputPath = `${name}.bin`;
+	const makeExecutable = executable
+		? `; await (await import("node:fs/promises")).chmod(${JSON.stringify(outputPath)}, 0o755)`
+		: "";
 	const response = await fetch(`${baseUrl}${API_ROUTES.artifacts(repositoryId)}`, {
 		method: "POST",
 		headers,
@@ -135,15 +144,20 @@ async function createDefinition(
 			argv: [
 				process.execPath,
 				"-e",
-				`console.log("building ${name}"); await Bun.write("${name}.bin", "${name} bytes")`,
+				`console.log("building ${name}"); await Bun.write(${JSON.stringify(outputPath)}, ${JSON.stringify(payload)})${makeExecutable}`,
 			],
 			workingDirectory: ".",
-			outputPath: `${name}.bin`,
+			outputPath,
 			outputKind: "file",
 		}),
 	});
 	expect(response.status).toBe(201);
 	return ((await response.json()) as ArtifactDefinitionResponse).definition;
+}
+
+function expectedDownloadMode(executable: boolean): number {
+	const base = (executable ? 0o777 : 0o666) & ~process.umask();
+	return executable ? base | 0o100 : base;
 }
 
 async function pair(baseUrl: string, repositoryId: string, headers: Record<string, string>) {
@@ -191,11 +205,18 @@ describe("artifact CLI against a real server", () => {
 		);
 		expect(pulled.exitCode, pulled.stderr).toBe(0);
 		expect(pulled.stderr).toContain("building couchview-cli");
-		const pulledJson = JSON.parse(pulled.stdout) as { output: string; build: { sha256: string } };
+		const pulledJson = JSON.parse(pulled.stdout) as {
+			output: string;
+			build: { sha256: string; executable: boolean };
+		};
+		expect(pulledJson.build.executable).toBe(true);
 		expect(await realpath(pulledJson.output)).toBe(
 			await realpath(path.join(clientDirectory, "couchview-cli.bin")),
 		);
-		expect(await readFile(pulledJson.output, "utf8")).toBe("couchview-cli bytes");
+		expect(await readFile(pulledJson.output, "utf8")).toBe("couchview-cli bytes".repeat(32));
+		if (process.platform !== "win32") {
+			expect((await stat(pulledJson.output)).mode & 0o777).toBe(expectedDownloadMode(true));
+		}
 		expect(
 			new Bun.CryptoHasher("sha256").update(await readFile(pulledJson.output)).digest("hex"),
 		).toBe(pulledJson.build.sha256);
@@ -211,6 +232,9 @@ describe("artifact CLI against a real server", () => {
 			cliOptions,
 		);
 		expect(secondPull.exitCode, secondPull.stderr).toBe(0);
+		if (process.platform !== "win32") {
+			expect((await stat(pulledJson.output)).mode & 0o777).toBe(expectedDownloadMode(true));
+		}
 		const catalog = (await (
 			await fetch(`${baseUrl}${API_ROUTES.artifacts(app.repository.id)}`)
 		).json()) as ArtifactCatalogResponse;
@@ -232,7 +256,25 @@ describe("artifact CLI against a real server", () => {
 			cliOptions,
 		);
 		expect(olderDownload.exitCode, olderDownload.stderr).toBe(0);
-		expect(await readFile(olderOutput, "utf8")).toBe("couchview-cli bytes");
+		expect(await readFile(olderOutput, "utf8")).toBe("couchview-cli bytes".repeat(32));
+		if (process.platform !== "win32") {
+			expect((await stat(olderOutput)).mode & 0o777).toBe(expectedDownloadMode(true));
+		}
+
+		await createDefinition(baseUrl, app.repository.id, "plain-data", headers, false);
+		const plainPull = await runCli(
+			["artifacts", "pull", "plain-data", "--repo", firstRoot, "--json"],
+			cliOptions,
+		);
+		expect(plainPull.exitCode, plainPull.stderr).toBe(0);
+		const plainJson = JSON.parse(plainPull.stdout) as {
+			output: string;
+			build: { executable: boolean };
+		};
+		expect(plainJson.build.executable).toBe(false);
+		if (process.platform !== "win32") {
+			expect((await stat(plainJson.output)).mode & 0o777).toBe(expectedDownloadMode(false));
+		}
 
 		const secondRoot = await gitRepository(
 			"couchview-artifact-cli-two-",
@@ -336,5 +378,113 @@ describe("artifact CLI against a real server", () => {
 			await Bun.sleep(20);
 		}
 		expect(cancelledStatus).toBe("stopped");
+	});
+
+	test("verifies a real download when an intermediary omits Content-Length", async () => {
+		const { app, firstRoot, baseUrl, clientDirectory, xdgData } = await fixture();
+		const headers = await browserHeaders(baseUrl);
+		await createDefinition(baseUrl, app.repository.id, "proxied-cli", headers);
+		const output = path.join(clientDirectory, "proxied-cli.bin");
+		const options: ParsedArtifactArguments = {
+			action: "pull",
+			name: "proxied-cli",
+			profile: null,
+			repository: null,
+			repo: firstRoot,
+			build: null,
+			output,
+			force: false,
+			json: false,
+		};
+		const intermediaryFetch: typeof fetch = Object.assign(
+			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+				const response = await fetch(input, init);
+				const requestUrl = input instanceof Request ? input.url : String(input);
+				if (!response.ok || !requestUrl.endsWith("/download")) return response;
+				const responseHeaders = new Headers(response.headers);
+				responseHeaders.delete("content-length");
+				return new Response(response.body, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: responseHeaders,
+				});
+			},
+			{ preconnect: fetch.preconnect },
+		);
+		let stderr = "";
+		const exitCode = await runArtifactCli(options, {
+			fetch: intermediaryFetch,
+			cwd: () => clientDirectory,
+			stateDatabasePath: path.join(xdgData, "couchview", "state.sqlite"),
+			onInterrupt: () => () => undefined,
+			stdout: { write: () => undefined },
+			stderr: { write: (text) => (stderr += text) },
+		});
+
+		expect(exitCode, stderr).toBe(0);
+		expect(await readFile(output, "utf8")).toBe("proxied-cli bytes".repeat(32));
+		if (process.platform !== "win32") {
+			expect((await stat(output)).mode & 0o777).toBe(expectedDownloadMode(true));
+		}
+
+		const downloadOptions: ParsedArtifactArguments = {
+			...options,
+			action: "download",
+			output: path.join(clientDirectory, "missing-metadata.bin"),
+		};
+		const withoutExecutableMetadata: typeof fetch = Object.assign(
+			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+				const response = await fetch(input, init);
+				const requestUrl = input instanceof Request ? input.url : String(input);
+				if (!response.ok || !requestUrl.endsWith("/download")) return response;
+				const responseHeaders = new Headers(response.headers);
+				responseHeaders.delete(ARTIFACT_EXECUTABLE_HEADER);
+				return new Response(response.body, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: responseHeaders,
+				});
+			},
+			{ preconnect: fetch.preconnect },
+		);
+		await expect(
+			runArtifactCli(downloadOptions, {
+				fetch: withoutExecutableMetadata,
+				cwd: () => clientDirectory,
+				stateDatabasePath: path.join(xdgData, "couchview", "state.sqlite"),
+				onInterrupt: () => () => undefined,
+				stdout: { write: () => undefined },
+				stderr: { write: () => undefined },
+			}),
+		).rejects.toThrow("does not provide executable artifact metadata");
+
+		const mismatchedExecutableMetadata: typeof fetch = Object.assign(
+			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+				const response = await fetch(input, init);
+				const requestUrl = input instanceof Request ? input.url : String(input);
+				if (!response.ok || !requestUrl.endsWith("/download")) return response;
+				const responseHeaders = new Headers(response.headers);
+				responseHeaders.set(ARTIFACT_EXECUTABLE_HEADER, "0");
+				return new Response(response.body, {
+					status: response.status,
+					statusText: response.statusText,
+					headers: responseHeaders,
+				});
+			},
+			{ preconnect: fetch.preconnect },
+		);
+		await expect(
+			runArtifactCli(
+				{ ...downloadOptions, output: path.join(clientDirectory, "mismatched-metadata.bin") },
+				{
+					fetch: mismatchedExecutableMetadata,
+					cwd: () => clientDirectory,
+					stateDatabasePath: path.join(xdgData, "couchview", "state.sqlite"),
+					onInterrupt: () => () => undefined,
+					stdout: { write: () => undefined },
+					stderr: { write: () => undefined },
+				},
+			),
+		).rejects.toThrow("inconsistent artifact metadata");
 	});
 });

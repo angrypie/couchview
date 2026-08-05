@@ -77,6 +77,7 @@ export interface StartRepositoryCommand {
 	key: string;
 	argv: readonly string[];
 	cwd: string;
+	env?: Record<string, string | undefined>;
 	startError?: string;
 	finalize?(signal: AbortSignal): Promise<void>;
 }
@@ -210,7 +211,7 @@ export class RepositoryCommandRunner {
 		try {
 			command.process = this.spawnProcess(input.argv, {
 				cwd: input.cwd,
-				env: { ...process.env },
+				env: { ...process.env, ...input.env },
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

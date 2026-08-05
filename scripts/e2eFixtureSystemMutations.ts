@@ -50,6 +50,7 @@ function completeArtifactBuild(
 			definition.outputKind === "directory" ? "application/gzip" : "application/octet-stream",
 		sizeBytes: payload.byteLength,
 		sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+		executable: false,
 		createdAt: new Date().toISOString(),
 	};
 	state.artifactPayloads.set(build.id, payload);

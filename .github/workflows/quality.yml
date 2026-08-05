@@ -37,7 +37,7 @@ jobs:
         run: bun run typecheck
       - name: Test
         run: bun test src scripts
-      - name: Test compiled binary
+      - name: Build compiled production distribution
+        run: bun run build:binary
+      - name: Smoke test compiled binary
         run: bun run test:binary
-      - name: Build
-        run: bun run build

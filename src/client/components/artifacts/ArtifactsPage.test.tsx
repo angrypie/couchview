@@ -45,6 +45,7 @@ function build(): ArtifactBuild {
 		mediaType: "application/octet-stream",
 		sizeBytes: 12,
 		sha256: "a".repeat(64),
+		executable: false,
 		createdAt: "2026-08-04T10:01:00.000Z",
 	};
 }

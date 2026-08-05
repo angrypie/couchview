@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -53,6 +53,7 @@ describe("ArtifactStore", () => {
 	test("stream-copies files with spaces into a private atomic snapshot", async () => {
 		const { root, store } = await fixture();
 		await writeFile(path.join(root, "Couchview CLI"), "binary bytes");
+		await chmod(path.join(root, "Couchview CLI"), 0o755);
 		const captured = await store.capture(
 			root,
 			definition("Couchview CLI", "file"),
@@ -63,8 +64,11 @@ describe("ArtifactStore", () => {
 			downloadName: "Couchview CLI",
 			sizeBytes: 12,
 			sha256: "4f463802bc436efdd9a0c4e8c999ec3d37450657bd50b579d796b58bc9d3f1ef",
+			executable: true,
 		});
-		expect(await readFile(store.payloadPath(build(captured)), "utf8")).toBe("binary bytes");
+		const payload = store.payloadPath(build(captured));
+		expect(await readFile(payload, "utf8")).toBe("binary bytes");
+		expect((await stat(payload)).mode & 0o777).toBe(0o600);
 	});
 
 	test("archives safe directories as tar.gz and preserves extracted bytes", async () => {
@@ -78,6 +82,7 @@ describe("ArtifactStore", () => {
 			new AbortController().signal,
 		);
 		expect(captured.downloadName).toBe("release app.tar.gz");
+		expect(captured.executable).toBe(false);
 		const extraction = path.join(root, "extracted");
 		await mkdir(extraction);
 		const result = Bun.spawnSync(

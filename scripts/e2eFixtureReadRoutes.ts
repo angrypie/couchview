@@ -5,7 +5,7 @@ import type {
 	PackageRunEvent,
 	ReviewStateResponse,
 } from "../src/shared/contracts.ts";
-import { API_ROUTES } from "../src/shared/contracts.ts";
+import { API_ROUTES, ARTIFACT_EXECUTABLE_HEADER } from "../src/shared/contracts.ts";
 import type { GitCommitChangesResponse, GitHistoryResponse } from "../src/shared/git/index.ts";
 import {
 	comments,
@@ -287,6 +287,7 @@ export function handleFixtureReadRoute(
 				"Content-Length": String(payload.byteLength),
 				"Content-Type": build.mediaType,
 				ETag: `"${build.sha256}"`,
+				[ARTIFACT_EXECUTABLE_HEADER]: build.executable ? "1" : "0",
 			},
 		});
 	}

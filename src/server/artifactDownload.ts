@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 
-import type { ArtifactBuild } from "../shared/artifacts.ts";
+import { ARTIFACT_EXECUTABLE_HEADER, type ArtifactBuild } from "../shared/artifacts.ts";
 import { HttpError } from "./errors.ts";
 
 interface ByteRange {
@@ -60,6 +60,7 @@ export function artifactDownloadResponse(
 		"Cache-Control": "private, no-store",
 		"Content-Disposition": contentDisposition(build.downloadName),
 		"Content-Type": build.mediaType,
+		[ARTIFACT_EXECUTABLE_HEADER]: build.executable ? "1" : "0",
 		ETag: etag,
 	});
 	let range: ByteRange | null;

@@ -97,13 +97,13 @@ describe("global SQLite state", () => {
 			"wal",
 		);
 		expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-			5,
+			6,
 		);
 		expect(
 			raw
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(5);
+		).toBe(6);
 		raw.close();
 
 		const reopened = await StateDatabase.open(filePath);
@@ -167,12 +167,12 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(5);
+		).toBe(6);
 		expect(
 			inspected
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(5);
+		).toBe(6);
 		inspected.close();
 	});
 
@@ -238,7 +238,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(5);
+		).toBe(6);
 		expect(
 			inspected
 				.query<{ table: string }, []>("PRAGMA foreign_key_list(remote_bridge_devices)")
@@ -310,7 +310,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(5);
+		).toBe(6);
 		inspected.close();
 	});
 
@@ -514,7 +514,7 @@ describe("global SQLite state", () => {
 		}
 	});
 
-	test("migrates v4 metadata and retains exactly two successful artifact builds", async () => {
+	test("migrates v4 metadata to v6 and retains exactly two new artifact builds", async () => {
 		const filePath = await databasePath();
 		await mkdir(path.dirname(filePath), { recursive: true });
 		const raw = new Database(filePath, { create: true, strict: true });
@@ -597,6 +597,7 @@ describe("global SQLite state", () => {
 				mediaType: "application/octet-stream",
 				sizeBytes: 10,
 				sha256: id.padEnd(64, "0"),
+				executable: id === "build-three",
 				createdAt: "2026-08-01T10:01:00.000Z",
 			});
 			expect(database.artifacts.insertBuild(build("build-one"))).toEqual([]);
@@ -620,9 +621,13 @@ describe("global SQLite state", () => {
 		const reopened = await StateDatabase.open(filePath);
 		try {
 			expect(reopened.artifacts.definition("repo-one", artifactId)).toMatchObject({ revision: 2 });
-			expect(reopened.artifacts.builds("repo-one", artifactId).map(({ id }) => id)).toEqual([
-				"build-three",
-				"build-two",
+			expect(
+				reopened.artifacts
+					.builds("repo-one", artifactId)
+					.map(({ id, executable }) => ({ id, executable })),
+			).toEqual([
+				{ id: "build-three", executable: true },
+				{ id: "build-two", executable: false },
 			]);
 			expect(reopened.artifacts.builds("repo-two", secondArtifactId).map(({ id }) => id)).toEqual([
 				"build-second-repo",
@@ -639,7 +644,100 @@ describe("global SQLite state", () => {
 
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()).toEqual({
-			user_version: 5,
+			user_version: 6,
+		});
+		inspected.close();
+	});
+
+	test("migrates v5 definitions while discarding builds without executable metadata", async () => {
+		const filePath = await databasePath();
+		await mkdir(path.dirname(filePath), { recursive: true });
+		const raw = new Database(filePath, { create: true, strict: true });
+		raw.run(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+      CREATE TABLE repositories (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL UNIQUE,
+        git_directory TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        state_revision INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE artifact_definitions (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        argv_json TEXT NOT NULL,
+        working_directory TEXT NOT NULL,
+        output_path TEXT NOT NULL,
+        output_kind TEXT NOT NULL CHECK (output_kind IN ('file', 'directory')),
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(repository_id, name)
+      );
+      CREATE TABLE artifact_builds (
+        id TEXT PRIMARY KEY,
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        artifact_id TEXT NOT NULL REFERENCES artifact_definitions(id) ON DELETE CASCADE,
+        definition_revision INTEGER NOT NULL,
+        download_name TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+        sha256 TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX artifact_builds_artifact_created
+        ON artifact_builds(artifact_id, created_at DESC);
+      INSERT INTO metadata(key, value) VALUES ('schema_version', 5), ('catalog_revision', 1);
+      INSERT INTO repositories(
+        id, name, root, git_directory, added_at, updated_at, state_revision
+      ) VALUES (
+        'repo-one', 'one', '/projects/one', '/projects/one/.git',
+        '2026-08-04T10:00:00.000Z', '2026-08-04T10:00:00.000Z', 0
+      );
+      INSERT INTO artifact_definitions(
+        id, repository_id, name, argv_json, working_directory, output_path, output_kind,
+        revision, created_at, updated_at
+      ) VALUES (
+        'artifact-one', 'repo-one', 'couchview-cli', '["bun","run","build"]', '.',
+        'dist/couchview', 'file', 1,
+        '2026-08-04T10:01:00.000Z', '2026-08-04T10:01:00.000Z'
+      );
+      INSERT INTO artifact_builds(
+        id, repository_id, artifact_id, definition_revision, download_name, media_type,
+        size_bytes, sha256, created_at
+      ) VALUES (
+        'legacy-build', 'repo-one', 'artifact-one', 1, 'couchview',
+        'application/octet-stream', 12,
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '2026-08-04T10:02:00.000Z'
+      );
+      PRAGMA user_version = 5;
+    `);
+		raw.close();
+
+		const migrated = await StateDatabase.open(filePath);
+		try {
+			expect(migrated.artifacts.definition("repo-one", "artifact-one")).toMatchObject({
+				name: "couchview-cli",
+				outputPath: "dist/couchview",
+			});
+			expect(migrated.artifacts.builds("repo-one", "artifact-one")).toEqual([]);
+		} finally {
+			migrated.close();
+		}
+
+		const inspected = new Database(filePath, { readonly: true, strict: true });
+		expect(
+			inspected
+				.query<{ name: string }, []>("PRAGMA table_info(artifact_builds)")
+				.all()
+				.map(({ name }) => name),
+		).toContain("executable");
+		expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()).toEqual({
+			user_version: 6,
 		});
 		inspected.close();
 	});

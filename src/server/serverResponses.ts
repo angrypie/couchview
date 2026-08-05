@@ -98,7 +98,7 @@ function cleanDiagnosticText(value: string): string {
 }
 
 export function addSecurityHeaders(response: Response): Response {
-	const headers = new Headers(response.headers);
+	const headers = response.headers;
 	headers.set("X-Content-Type-Options", "nosniff");
 	headers.set("X-Frame-Options", "DENY");
 	headers.set("Referrer-Policy", "no-referrer");
@@ -109,9 +109,5 @@ export function addSecurityHeaders(response: Response): Response {
 		"Content-Security-Policy",
 		"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",
 	);
-	return new Response(response.body, {
-		status: response.status,
-		statusText: response.statusText,
-		headers,
-	});
+	return response;
 }

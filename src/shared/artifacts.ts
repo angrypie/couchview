@@ -7,6 +7,7 @@ import {
 export const ARTIFACT_MAX_PAYLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 export const ARTIFACT_RETAINED_BUILDS = 2;
 export const ARTIFACT_MAX_LOG_BYTES = 2 * 1024 * 1024;
+export const ARTIFACT_EXECUTABLE_HEADER = "X-Couchview-Executable";
 
 export type ArtifactOutputKind = "file" | "directory";
 
@@ -45,6 +46,7 @@ export interface ArtifactBuild {
 	mediaType: string;
 	sizeBytes: number;
 	sha256: string;
+	executable: boolean;
 	createdAt: string;
 }
 
@@ -126,6 +128,7 @@ export interface ArtifactDownloadMetadata {
 	sizeBytes: number;
 	sha256: string;
 	mediaType: string;
+	executable: boolean;
 }
 
 export interface ArtifactProposalRequest {

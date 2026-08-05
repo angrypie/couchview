@@ -137,6 +137,44 @@ describe("PackageCommandService", () => {
 		expect(result.packages.find((item) => item.directory === "apps/api")?.runner).toBe("npm");
 	});
 
+	test("runs Bun scripts through the embedded Bun CLI in compiled mode", async () => {
+		const root = await repositoryFixture();
+		await put(root, "package.json", JSON.stringify({ scripts: { test: "echo compiled" } }));
+		git(root, "add", "package.json");
+		const spawns: Array<{
+			argv: readonly string[];
+			env: Record<string, string | undefined>;
+		}> = [];
+		const service = new PackageCommandService({
+			compiledExecutable: true,
+			resolveExecutable: () => "/opt/couchview",
+			spawn: (argv, options) => {
+				spawns.push({ argv, env: options.env });
+				return {
+					pid: 123,
+					stdout: null,
+					stderr: null,
+					exited: Promise.resolve(0),
+					kill: () => undefined,
+				};
+			},
+		});
+		const packageEntry = (await service.discover(root)).packages[0]!;
+		const started = await service.start("repository", root, {
+			packagePath: packageEntry.packagePath,
+			scriptName: "test",
+			manifestRevision: packageEntry.manifestRevision,
+		});
+
+		expect(await terminalRun(service, "repository", started.id)).toMatchObject({
+			status: "succeeded",
+		});
+		expect(spawns).toHaveLength(1);
+		expect(spawns[0]?.argv).toEqual(["/opt/couchview", "run", "test"]);
+		expect(spawns[0]?.env.BUN_BE_BUN).toBe("1");
+		service.close();
+	});
+
 	test("runs exact scripts, streams output, records failure, and rejects stale revisions", async () => {
 		const root = await repositoryFixture();
 		await put(

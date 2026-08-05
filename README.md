@@ -35,6 +35,8 @@ bun run build:binary
 This runs the Vite production build and then uses Bun's `--compile` flag to bundle the
 server, its packages, and the Bun runtime into `dist/couchview`. Keep the executable in
 the generated `dist/` directory so it can serve the companion web assets beside it.
+`bun run test:binary` smoke-tests that existing executable without rebuilding it; CI runs
+the build and smoke check in that order, outside the regular unit-test path.
 
 Then launch it from any directory inside the Git repository to review:
 

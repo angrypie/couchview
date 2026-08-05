@@ -30,7 +30,7 @@ import {
 	settingsProfileFromRow,
 } from "./databaseRows.ts";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 export interface StoredRepository {
 	id: string;
@@ -150,6 +150,10 @@ export class StateDatabase {
 			this.createSettingsProfilesTable();
 			this.createArtifactTables();
 			this.ensureDefaultSettingsProfile();
+			return;
+		}
+		if (version === 5) {
+			this.migrateVersionFiveToSix();
 			return;
 		}
 
@@ -318,13 +322,14 @@ export class StateDatabase {
 		  media_type TEXT NOT NULL,
 		  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
 		  sha256 TEXT NOT NULL,
+		  executable INTEGER NOT NULL CHECK (executable IN (0, 1)),
 		  created_at TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS artifact_builds_artifact_created
 		  ON artifact_builds(artifact_id, created_at DESC);
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 5);
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 6);
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
       `);
 			this.ensureDefaultSettingsProfile();
 		})();
@@ -369,6 +374,7 @@ export class StateDatabase {
         media_type TEXT NOT NULL,
         size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
         sha256 TEXT NOT NULL,
+		executable INTEGER NOT NULL CHECK (executable IN (0, 1)),
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS artifact_builds_artifact_created
@@ -420,6 +426,32 @@ export class StateDatabase {
         UPDATE metadata SET value = 5 WHERE key = 'schema_version';
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 5);
         PRAGMA user_version = 5;
+      `);
+		})();
+		this.migrateVersionFiveToSix();
+	}
+
+	private migrateVersionFiveToSix(): void {
+		this.database.transaction(() => {
+			this.database.run(`
+        DROP TABLE artifact_builds;
+        CREATE TABLE artifact_builds (
+          id TEXT PRIMARY KEY,
+          repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+          artifact_id TEXT NOT NULL REFERENCES artifact_definitions(id) ON DELETE CASCADE,
+          definition_revision INTEGER NOT NULL,
+          download_name TEXT NOT NULL,
+          media_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+          sha256 TEXT NOT NULL,
+          executable INTEGER NOT NULL CHECK (executable IN (0, 1)),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX artifact_builds_artifact_created
+          ON artifact_builds(artifact_id, created_at DESC);
+        UPDATE metadata SET value = 6 WHERE key = 'schema_version';
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 6);
+        PRAGMA user_version = 6;
       `);
 		})();
 	}
