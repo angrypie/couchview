@@ -32,6 +32,8 @@ import {
 	type PackageRunResponse,
 	type PackageRunsResponse,
 	type PackageScriptsResponse,
+	type RegisterRepositoryRequest,
+	type RegisterRepositoryResponse,
 	type RemoteBridgeDevicesResponse,
 	type RemoteBridgePairingResponse,
 	type RepositoryCatalogResponse,
@@ -60,6 +62,7 @@ import {
 	type UpdateCommentRequest,
 	type UpdateSettingsProfileRequest,
 } from "../shared/contracts.ts";
+import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
 
 export class ApiError extends Error {
 	readonly status: number;
@@ -165,6 +168,21 @@ export const api = {
 
 	repositories(signal?: AbortSignal) {
 		return request<RepositoryCatalogResponse>(API_ROUTES.repositories, { signal });
+	},
+
+	repositoryDirectories(path?: string, signal?: AbortSignal) {
+		return request<RepositoryDirectoryListing>(
+			withQuery(API_ROUTES.repositoryDirectories, { path }),
+			{ signal },
+		);
+	},
+
+	registerRepository(body: RegisterRepositoryRequest, csrfToken: string, signal?: AbortSignal) {
+		return request<RegisterRepositoryResponse>(
+			API_ROUTES.repositories,
+			{ method: "POST", body: JSON.stringify(body), signal },
+			csrfToken,
+		);
 	},
 
 	settingsProfiles(signal?: AbortSignal) {

@@ -50,9 +50,15 @@ export function ReviewWorkspaceOverlays({
 	return (
 		<>
 			<RepositoryPickerSheet
+				addBusy={management.addBusy}
+				addRoot={management.addRoot}
 				currentRepositoryId={workspace.repositoryId}
+				directoryBrowser={management.directoryBrowser}
 				forgetBusy={management.forgetBusy}
 				nativeSetupAvailable={Boolean(workspace.repositoryId && workspace.repository)}
+				onAdd={() => void management.addRepository()}
+				onAddDirectory={(path) => void management.addRepository(path)}
+				onAddRootChange={management.setAddRoot}
 				onClose={() => management.setPickerOpen(false)}
 				onForget={(entry) => void management.forgetRepository(entry)}
 				onOpenNativeSetup={() => {

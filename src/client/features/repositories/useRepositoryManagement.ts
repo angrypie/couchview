@@ -5,6 +5,7 @@ import { messageOf } from "../../lib/failures.ts";
 import { waitForDelay } from "../../lib/waitForDelay.ts";
 import { clearPwaStorage } from "../../offlineApp.ts";
 import type { RestartPhase } from "./types.ts";
+import { useRepositoryDirectoryBrowser } from "./useRepositoryDirectoryBrowser.ts";
 import type { RepositoryHistoryMode } from "./useRepositoryWorkspace.ts";
 
 interface UseRepositoryManagementOptions {
@@ -31,13 +32,19 @@ export function useRepositoryManagement({
 	showToast,
 }: UseRepositoryManagementOptions) {
 	const [pickerOpen, setPickerOpen] = useState(false);
+	const [addBusy, setAddBusy] = useState(false);
+	const [addRoot, setAddRoot] = useState("");
 	const [forgetBusy, setForgetBusy] = useState<string | null>(null);
 	const [restartPhase, setRestartPhase] = useState<RestartPhase>(null);
 	const restartRequestRef = useRef<AbortController | null>(null);
+	const addRequestRef = useRef<AbortController | null>(null);
 	const forgetRequestRef = useRef<AbortController | null>(null);
+	const directoryBrowser = useRepositoryDirectoryBrowser({ showToast });
+	const closeDirectoryBrowser = directoryBrowser.close;
 
 	useEffect(
 		() => () => {
+			addRequestRef.current?.abort();
 			restartRequestRef.current?.abort();
 			forgetRequestRef.current?.abort();
 		},
@@ -45,9 +52,10 @@ export function useRepositoryManagement({
 	);
 
 	const openPicker = useCallback(() => {
+		closeDirectoryBrowser();
 		setPickerOpen(true);
 		void refreshRepositories().catch((error) => showToast(messageOf(error)));
-	}, [refreshRepositories, showToast]);
+	}, [closeDirectoryBrowser, refreshRepositories, showToast]);
 
 	const rebuildAndRestart = useCallback(async () => {
 		if (!bootstrap?.restart.available || restartPhase) return;
@@ -108,6 +116,60 @@ export function useRepositoryManagement({
 		[getRepositoryId, loadRepository],
 	);
 
+	const addRepository = useCallback(
+		async (selectedRoot?: string) => {
+			if (!bootstrap || addBusy) return;
+			const root = (selectedRoot ?? addRoot).trim();
+			if (!root) {
+				showToast("Enter a project path on the Couchview server.");
+				return;
+			}
+			const controller = new AbortController();
+			addRequestRef.current?.abort();
+			addRequestRef.current = controller;
+			setAddBusy(true);
+			try {
+				const result = await api.registerRepository(
+					{ root },
+					bootstrap.csrfToken,
+					controller.signal,
+				);
+				if (controller.signal.aborted) return;
+				await refreshRepositories();
+				if (controller.signal.aborted) return;
+				setAddRoot("");
+				closeDirectoryBrowser();
+				setPickerOpen(false);
+				if (result.repository.id !== getRepositoryId()) {
+					await loadRepository(result.repository.id, "push");
+				}
+				showToast(
+					result.added
+						? `Added ${result.repository.name}`
+						: `${result.repository.name} is already added`,
+				);
+			} catch (error) {
+				if (controller.signal.aborted || isAbortError(error)) return;
+				showToast(messageOf(error));
+			} finally {
+				if (addRequestRef.current === controller) {
+					addRequestRef.current = null;
+					setAddBusy(false);
+				}
+			}
+		},
+		[
+			addBusy,
+			addRoot,
+			bootstrap,
+			closeDirectoryBrowser,
+			getRepositoryId,
+			loadRepository,
+			refreshRepositories,
+			showToast,
+		],
+	);
+
 	const forgetRepository = useCallback(
 		async (entry: RepositoryCatalogEntry) => {
 			if (
@@ -153,6 +215,10 @@ export function useRepositoryManagement({
 	);
 
 	return {
+		addBusy,
+		addRepository,
+		addRoot,
+		directoryBrowser,
 		forgetBusy,
 		forgetRepository,
 		openPicker,
@@ -160,6 +226,7 @@ export function useRepositoryManagement({
 		rebuildAndRestart,
 		restartPhase,
 		selectRepository,
+		setAddRoot,
 		setPickerOpen,
 	};
 }

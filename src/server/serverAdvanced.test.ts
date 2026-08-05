@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ import {
 	type SetReviewsResponse,
 	type StageFilesResponse,
 } from "../shared/contracts.ts";
+import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import { GitCommandError } from "./git/index.ts";
@@ -781,6 +782,55 @@ describe("Couchview HTTP advanced routes", () => {
 		);
 		expect(forgotten.status).toBe(200);
 		expect((await app.repositories.list()).map((item) => item.id)).toEqual([app.repository.id]);
+	});
+
+	test("registers a repository from the browser route with same-origin CSRF", async () => {
+		const app = await fixture();
+		const secondRoot = await repositoryFixture("browser.ts");
+		const body = JSON.stringify({ root: secondRoot });
+		const directoryResponse = await app.fetch(
+			request(`${API_ROUTES.repositoryDirectories}?path=${encodeURIComponent(secondRoot)}`),
+		);
+		expect(directoryResponse.status).toBe(200);
+		const directoryListing = (await directoryResponse.json()) as RepositoryDirectoryListing;
+		expect(directoryListing.path).toBe(await realpath(secondRoot));
+
+		const missingOrigin = await app.fetch(
+			request(API_ROUTES.repositories, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					[CSRF_HEADER]: app.csrfToken,
+				},
+				body,
+			}),
+		);
+		expect(missingOrigin.status).toBe(403);
+
+		const registeredResponse = await app.fetch(
+			request(API_ROUTES.repositories, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					origin: "http://127.0.0.1:3001",
+					[CSRF_HEADER]: app.csrfToken,
+				},
+				body,
+			}),
+		);
+		expect(registeredResponse.status).toBe(201);
+		const registered = (await registeredResponse.json()) as RegisterRepositoryResponse;
+		expect(registered).toMatchObject({
+			added: true,
+			repository: {
+				name: path.basename(secondRoot),
+				available: true,
+			},
+		});
+		expect(registered.repository.root).toBe(await realpath(secondRoot));
+		expect((await app.repositories.list()).map((entry) => entry.id)).toContain(
+			registered.repository.id,
+		);
 	});
 
 	test("polls shared SQLite revisions into repository-aware SSE events", async () => {

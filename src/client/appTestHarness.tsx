@@ -70,6 +70,7 @@ export function createAppTestHarness() {
 		packageRuns: [] as PackageRunSummary[],
 		requests: [] as Array<{ path: string; method: string; body: unknown }>,
 		catalog: structuredClone(repositoryCatalog),
+		repositoryRegistrationFailure: false,
 		servedFirstDiff: structuredClone(firstDiff) as FileDiff,
 		currentOperationRevision: "operation-1",
 		diffFailure: false,
@@ -129,6 +130,7 @@ export function createAppTestHarness() {
 		fixture.packageRuns = [];
 		fixture.requests = [];
 		fixture.catalog = structuredClone(repositoryCatalog);
+		fixture.repositoryRegistrationFailure = false;
 		fixture.servedFirstDiff = structuredClone(firstDiff);
 		fixture.currentOperationRevision = "operation-1";
 		fixture.diffFailure = false;
@@ -240,7 +242,16 @@ export function createAppTestHarness() {
 				: null;
 			const nestedPath = repositoryRoute?.[2] ?? "";
 			const requestedRepository =
-				requestedRepositoryId === alternateRepository.id ? alternateRepository : repository;
+				requestedRepositoryId === alternateRepository.id
+					? alternateRepository
+					: requestedRepositoryId === "repo-added"
+						? {
+								...repository,
+								id: "repo-added",
+								name: "added-project",
+								root: "/projects/added-project",
+							}
+						: repository;
 
 			if (url.pathname === "/api/bootstrap") {
 				if (fixture.bootstrapFailureStatus !== null) {
@@ -400,7 +411,52 @@ export function createAppTestHarness() {
 					remoteBridgeOriginAccess: "auto",
 				});
 			}
-			if (url.pathname === "/api/repositories") {
+			if (url.pathname === "/api/repository-directories" && method === "GET") {
+				const requestedPath = url.searchParams.get("path");
+				return Response.json(
+					requestedPath === "/projects/added-project"
+						? {
+								directories: [],
+								parent: "/projects",
+								path: requestedPath,
+								truncated: false,
+							}
+						: {
+								directories: [
+									{
+										name: "added-project",
+										path: "/projects/added-project",
+									},
+								],
+								parent: "/",
+								path: "/projects",
+								truncated: false,
+							},
+				);
+			}
+			if (url.pathname === "/api/repositories" && method === "POST") {
+				if (fixture.repositoryRegistrationFailure) {
+					return Response.json(
+						{
+							error: {
+								code: "repository_not_found",
+								message: "The repository directory does not exist",
+							},
+						},
+						{ status: 400 },
+					);
+				}
+				const added = {
+					id: "repo-added",
+					name: "added-project",
+					root: "/projects/added-project",
+					available: true,
+					addedAt: "2026-08-05T12:00:00.000Z",
+				};
+				fixture.catalog = [...fixture.catalog.filter((entry) => entry.id !== added.id), added];
+				return Response.json({ repository: added, added: true }, { status: 201 });
+			}
+			if (url.pathname === "/api/repositories" && method === "GET") {
 				return Response.json({ repositories: fixture.catalog, catalogRevision: 1 });
 			}
 			if (repositoryRoute && !nestedPath && method === "DELETE") {

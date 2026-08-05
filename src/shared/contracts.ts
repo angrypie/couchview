@@ -31,6 +31,7 @@ export const API_ROUTES = {
 	instance: "/api/instance",
 	restart: "/api/restart",
 	repositories: "/api/repositories",
+	repositoryDirectories: "/api/repository-directories",
 	settingsProfiles: "/api/settings/profiles",
 	settingsProfile: (profileId: string) => `/api/settings/profiles/${encodeURIComponent(profileId)}`,
 	controlRepositories: "/api/control/repositories",

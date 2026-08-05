@@ -162,6 +162,7 @@ export function App() {
 		packageWorkflow.runBusy === null &&
 		artifactWorkflow.busyCount === 0 &&
 		!artifactWorkflow.hasActiveRuns &&
+		!repositoryManagement.addBusy &&
 		repositoryManagement.forgetBusy === null &&
 		repositoryManagement.restartPhase === null &&
 		!comments.copyFallbackText;

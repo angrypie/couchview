@@ -27,6 +27,7 @@ When adding a task:
       revise, or remove it.
 - [ ] Once stable Bun supports [`--asset`](https://bun.com/docs/bundler/executables#embed-directories),
       embed the Vite output for a true single-file distribution without an adjacent `dist` directory.
+- [ ] Integrate [`@pierre/trees`](https://trees.software/) as the repository file tree.
 
 ## Sprint
 

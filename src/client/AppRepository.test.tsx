@@ -544,6 +544,56 @@ describe("Couchview app repository workflows", () => {
 		});
 	});
 
+	test("adds and opens the first project from an empty repository catalog", async () => {
+		fixture.catalog = [];
+		render(<App />);
+
+		fireEvent.click(await screen.findByRole("button", { name: "Select repository" }));
+		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		expect(within(picker).getByText("No saved repositories.")).toBeTruthy();
+		fireEvent.click(within(picker).getByRole("button", { name: "Browse server folders" }));
+		const directoryPicker = await screen.findByRole("dialog", { name: "Choose project folder" });
+		await within(directoryPicker).findByText("/projects");
+		fireEvent.click(within(directoryPicker).getByRole("button", { name: "added-project" }));
+		await within(directoryPicker).findByText("/projects/added-project");
+		fireEvent.click(within(directoryPicker).getByRole("button", { name: "Add this project" }));
+
+		await waitFor(() =>
+			expect(fixture.requests).toContainEqual({
+				path: "/api/repositories",
+				method: "POST",
+				body: { root: "/projects/added-project" },
+			}),
+		);
+		await screen.findByText("added-project");
+		expect(screen.queryByRole("dialog", { name: "Repositories" })).toBeNull();
+		expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
+			"added-project",
+		);
+		expect(new URL(window.location.href).searchParams.get("repo")).toBe("repo-added");
+	});
+
+	test("keeps the project path available when registration fails", async () => {
+		fixture.repositoryRegistrationFailure = true;
+		render(<App />);
+
+		await screen.findByText("src/first.ts");
+		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
+		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const pathInput = within(picker).getByRole("textbox", {
+			name: "Project path on this server",
+		});
+		fireEvent.change(pathInput, { target: { value: "/projects/missing" } });
+		fireEvent.click(within(picker).getByRole("button", { name: "Add project" }));
+
+		await screen.findByText("The repository directory does not exist");
+		expect(screen.getByRole("dialog", { name: "Repositories" })).toBeTruthy();
+		expect((pathInput as HTMLInputElement).value).toBe("/projects/missing");
+		expect(
+			(within(picker).getByRole("button", { name: "Add project" }) as HTMLButtonElement).disabled,
+		).toBe(false);
+	});
+
 	test("starts a rebuild and waits for the replacement server", async () => {
 		render(<App />);
 

@@ -31,6 +31,7 @@ import type { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
 import type { RemoteBridgeService } from "./remoteBridgeService.ts";
 import type { RepositoryManager } from "./repositories.ts";
+import { listRepositoryDirectories } from "./repositoryDirectories.ts";
 import {
 	bearerToken,
 	decodeSegment,
@@ -133,6 +134,9 @@ export async function handleSystemApi(
 	request: Request,
 	url: URL,
 ): Promise<Response | null> {
+	if (url.pathname === API_ROUTES.repositoryDirectories && request.method === "GET") {
+		return json(await listRepositoryDirectories(url.searchParams.get("path")));
+	}
 	if (url.pathname === API_ROUTES.artifactRepositoryResolve && request.method === "POST") {
 		const value = await readJsonObject<ArtifactRepositoryResolveRequest>(request);
 		let input: ArtifactRepositoryResolveRequest;
@@ -342,7 +346,10 @@ export async function handleSystemApi(
 			return new Response(null, { status: 204 });
 		}
 	}
-	if (isControlRegistration(request, url)) {
+	if (
+		(request.method === "POST" && url.pathname === API_ROUTES.repositories) ||
+		isControlRegistration(request, url)
+	) {
 		const input = await readJsonObject<RegisterRepositoryRequest>(request);
 		const result = await context.registerRepository(input.root);
 		return json(result, { status: result.added ? 201 : 200 });
