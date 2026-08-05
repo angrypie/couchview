@@ -8,8 +8,13 @@ export interface TerminalSocketData {
 	rows: number;
 	takeover: boolean;
 	host: string;
-	origin: string;
+	origin: string | null;
+	nativeClientId?: string | null;
 }
+
+export type TerminalRequestBinding =
+	| { host: string; origin: string; nativeClientId?: never }
+	| { host: string; nativeClientId: string; origin?: never };
 
 export interface TerminalDependencies {
 	terminalAvailable: boolean;
@@ -99,7 +104,8 @@ export interface TerminalAttachment {
 	process: ReturnType<typeof Bun.spawn>;
 	clientId: string;
 	host: string;
-	origin: string;
+	origin: string | null;
+	nativeClientId: string | null;
 	transport: "websocket" | "switching" | "webrtc";
 	webRtc: TerminalWebRtcState | null;
 	leaseExpiresAt: number | null;

@@ -14,5 +14,11 @@
 		"skipLibCheck": true,
 		"types": ["bun-types", "vite/client", "vite-plugin-pwa/client"]
 	},
-	"include": ["src", "scripts", "tests", ".codex/hooks", "vite.config.ts", "playwright.config.ts"]
+	"include": ["src", "scripts", "tests", ".codex/hooks", "vite.config.ts", "playwright.config.ts"],
+	"exclude": [
+		"src/client/components/native",
+		"src/client/expo",
+		"src/client/features/nativePreferences",
+		"src/client/features/nativeServers"
+	]
 }

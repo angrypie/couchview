@@ -3,6 +3,8 @@ import { RTCPeerConnection } from "werift";
 
 import {
 	TERMINAL_ENDED_CLOSE_CODE,
+	TERMINAL_PROTOCOL,
+	TERMINAL_TICKET_PREFIX,
 	type TerminalAttachmentRequest,
 	type TerminalAttachmentResponse,
 	type TerminalCapability,
@@ -19,12 +21,14 @@ import {
 } from "./terminalAttachmentManager.ts";
 import type {
 	TerminalPeerConnection,
+	TerminalRequestBinding,
 	TerminalSessionServiceOptions,
 	TerminalSocketData,
 } from "./terminalSessionTypes.ts";
 import { TerminalTmuxSession } from "./terminalTmuxSession.ts";
 import { validTerminalDimensions } from "./terminalTransport.ts";
 
+export { TERMINAL_PROTOCOL, TERMINAL_TICKET_PREFIX } from "../shared/contracts.ts";
 export {
 	TERMINAL_P2P_LEASE_RENEW_INTERVAL_MS,
 	TERMINAL_P2P_LEASE_TTL_MS,
@@ -40,9 +44,6 @@ export type {
 	TerminalSocketData,
 } from "./terminalSessionTypes.ts";
 export { resolveUserTmuxConfigPath } from "./terminalTmuxSession.ts";
-
-export const TERMINAL_PROTOCOL = "couchview-terminal-v1";
-export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
 
 const TICKET_LIFETIME_MS = 30_000;
 const MAX_TICKETS = 256;
@@ -174,11 +175,17 @@ export class TerminalSessionService {
 		}
 	}
 
+	private clearNativeClientTickets(nativeClientId: string): void {
+		for (const [ticketHash, ticket] of this.tickets) {
+			if (ticket.nativeClientId === nativeClientId) this.tickets.delete(ticketHash);
+		}
+	}
+
 	async issueAttachment(
 		repositoryId: string,
 		repositoryRoot: string,
 		request: TerminalAttachmentRequest,
-		binding: { host: string; origin: string },
+		binding: TerminalRequestBinding,
 	): Promise<TerminalAttachmentResponse> {
 		this.assertAvailable();
 		if (request.profileId !== "tmux") {
@@ -222,7 +229,8 @@ export class TerminalSessionService {
 			takeover: request.takeover,
 			expiresAt,
 			host: binding.host,
-			origin: binding.origin,
+			origin: "origin" in binding ? (binding.origin ?? null) : null,
+			nativeClientId: "nativeClientId" in binding ? (binding.nativeClientId ?? null) : null,
 		});
 		return {
 			ticket,
@@ -244,7 +252,7 @@ export class TerminalSessionService {
 	consumeUpgrade(
 		repositoryId: string,
 		request: Request,
-		binding: { host: string; origin: string },
+		binding: { host: string; origin: string | null },
 	): TerminalSocketData {
 		this.assertAvailable();
 		const protocols = (request.headers.get("sec-websocket-protocol") ?? "")
@@ -268,7 +276,7 @@ export class TerminalSessionService {
 			ticket.expiresAt <= this.now() ||
 			ticket.repositoryId !== repositoryId ||
 			ticket.host !== binding.host ||
-			ticket.origin !== binding.origin
+			(ticket.nativeClientId === null && ticket.origin !== binding.origin)
 		) {
 			throw new HttpError(
 				403,
@@ -283,7 +291,7 @@ export class TerminalSessionService {
 	renewLease(
 		repositoryId: string,
 		request: TerminalLeaseRequest,
-		binding: { host: string; origin: string },
+		binding: TerminalRequestBinding,
 	): TerminalLeaseResponse {
 		return this.attachments.renewLease(repositoryId, request, binding);
 	}
@@ -296,6 +304,11 @@ export class TerminalSessionService {
 		await this.tmux.end(repositoryId);
 		this.attachments.closeRepository(repositoryId, TERMINAL_ENDED_CLOSE_CODE, "terminal_ended");
 		return { status: "ended" };
+	}
+
+	revokeNativeClient(nativeClientId: string): void {
+		this.clearNativeClientTickets(nativeClientId);
+		this.attachments.closeNativeClient(nativeClientId);
 	}
 
 	close(): void {

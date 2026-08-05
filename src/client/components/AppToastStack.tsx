@@ -1,18 +1,14 @@
 import type { ToastState } from "../features/notifications/useToastNotifications.ts";
 import type { UndoReview } from "../features/review/useReviewStatus.ts";
-import { PwaRefreshToast } from "./PwaRefreshToast.tsx";
 
 interface AppToastStackProps {
 	canInstall: boolean;
 	failureAvailable: boolean;
 	iosInstallHint: boolean;
 	onDismissInstall: () => void;
-	onDismissRefresh: () => void;
 	onOpenFailure: () => void;
 	onUndo: (undo: UndoReview) => void;
-	onUpdate: () => void;
 	onInstall: () => void;
-	refreshAvailable: boolean;
 	toast: ToastState | null;
 }
 
@@ -21,12 +17,9 @@ export function AppToastStack({
 	failureAvailable,
 	iosInstallHint,
 	onDismissInstall,
-	onDismissRefresh,
 	onInstall,
 	onOpenFailure,
 	onUndo,
-	onUpdate,
-	refreshAvailable,
 	toast,
 }: AppToastStackProps) {
 	const undo = toast?.undo;
@@ -47,11 +40,6 @@ export function AppToastStack({
 					)}
 				</div>
 			)}
-			<PwaRefreshToast
-				onDismiss={onDismissRefresh}
-				onUpdate={onUpdate}
-				visible={refreshAvailable}
-			/>
 			{canInstall && (
 				<div className="toast">
 					<span>Install Couchview for full-screen access.</span>

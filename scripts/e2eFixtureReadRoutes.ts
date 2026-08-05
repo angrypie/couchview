@@ -153,6 +153,9 @@ export function handleFixtureReadRoute(
 	if (url.pathname === API_ROUTES.settingsProfiles) {
 		return fixtureJson({ profiles: state.settingsProfiles });
 	}
+	if (url.pathname === API_ROUTES.nativeClients) {
+		return fixtureJson({ devices: state.nativeClients });
+	}
 	if (url.pathname === API_ROUTES.repositories) {
 		return fixtureJson({ repositories: repositoryCatalog, catalogRevision: 1 });
 	}

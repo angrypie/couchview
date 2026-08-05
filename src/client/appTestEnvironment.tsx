@@ -4,20 +4,6 @@ import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
 import { terminalPreviewRendererFactory, terminalRendererFactory } from "./terminalTestFakes.ts";
 import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 
-export const pwaState = {
-	needRefresh: false,
-	updateCalls: 0,
-};
-
-mock.module("virtual:pwa-register/react", () => ({
-	useRegisterSW: () => ({
-		needRefresh: [pwaState.needRefresh, () => undefined],
-		updateServiceWorker: async () => {
-			pwaState.updateCalls += 1;
-		},
-	}),
-}));
-
 mock.module("./ghosttyTerminal.ts", () => ({
 	createBrowserTerminal: terminalRendererFactory,
 	createBrowserTerminalPreview: terminalPreviewRendererFactory,

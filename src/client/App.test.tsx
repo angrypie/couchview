@@ -18,28 +18,6 @@ import {
 
 describe("Couchview app lifecycle and settings", () => {
 	const fixture = createAppTestHarness();
-	test("applies a safe launch update silently", async () => {
-		fixture.pwaNeedRefresh = true;
-		render(<App />);
-
-		await waitFor(() => expect(fixture.pwaUpdateCalls).toBe(1));
-		expect(screen.queryByText("An app update is ready.")).toBeNull();
-	});
-
-	test("keeps the update prompt when Settings may contain unapplied changes", async () => {
-		window.history.replaceState(null, "", "/settings");
-		const view = render(<App />);
-
-		await screen.findByRole("region", { name: "Settings" });
-		fireEvent.change(screen.getAllByLabelText("Font size")[0]!, {
-			target: { value: "14" },
-		});
-		fixture.pwaNeedRefresh = true;
-		view.rerender(<App />);
-		expect(screen.getByText("An app update is ready.")).toBeTruthy();
-		expect(fixture.pwaUpdateCalls).toBe(0);
-	});
-
 	test("resizes, reviews and advances, then navigates back", async () => {
 		render(<App />);
 

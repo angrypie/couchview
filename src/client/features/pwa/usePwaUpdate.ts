@@ -1,8 +1,6 @@
-/// <reference types="vite-plugin-pwa/react" />
-
-import { useRegisterSW } from "virtual:pwa-register/react";
 import { useEffect, useRef, useState } from "react";
-import { shouldApplyPwaUpdate, shouldShowPwaUpdatePrompt } from "../../pwaUpdatePolicy.ts";
+import { shouldApplyPwaUpdate } from "../../pwaUpdatePolicy.ts";
+import { useServiceWorkerRegistration } from "./useServiceWorkerRegistration.ts";
 
 interface InstallPromptEvent extends Event {
 	prompt(): Promise<void>;
@@ -24,14 +22,7 @@ export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
 			return false;
 		}
 	});
-	const {
-		needRefresh: [needRefresh, setNeedRefresh],
-		updateServiceWorker,
-	} = useRegisterSW({
-		onRegisterError(error) {
-			console.warn("Service worker registration failed", error);
-		},
-	});
+	const { needRefresh, updateServiceWorker } = useServiceWorkerRegistration();
 	const launchedAtRef = useRef(window.performance.now());
 	const updateRequestedRef = useRef(false);
 
@@ -85,7 +76,6 @@ export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
 	return {
 		canInstall: Boolean(installPrompt) && !standalone && !installDismissed,
 		dismissInstall,
-		dismissRefresh: () => setNeedRefresh(false),
 		install: async () => {
 			if (!installPrompt) return;
 			await installPrompt.prompt();
@@ -94,7 +84,5 @@ export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
 			setInstallPrompt(null);
 		},
 		iosInstallHint: ios && !standalone && !installDismissed,
-		needRefresh: shouldShowPwaUpdatePrompt(needRefresh, updateSafe),
-		update: () => void updateServiceWorker(true),
 	};
 }

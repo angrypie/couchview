@@ -24,6 +24,7 @@ import {
 	remoteBridgeZedUrl,
 } from "../shared/remoteBridgeCommands.ts";
 import { api } from "./api.ts";
+import { NativeAppPairingPanel } from "./components/NativeAppPairingPanel.tsx";
 
 interface RemoteBridgeSheetProps {
 	capability: RemoteBridgeCapability;
@@ -204,6 +205,7 @@ export function RemoteBridgeSheet({
 				</header>
 
 				<div className="remote-bridge-scroll">
+					<NativeAppPairingPanel csrfToken={csrfToken} onNotice={onNotice} open={open} />
 					<div className="remote-bridge-status">
 						<ShieldCheck size={18} />
 						<div>

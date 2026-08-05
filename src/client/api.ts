@@ -29,6 +29,8 @@ import {
 	type GenerateCommitMessageRequest,
 	type GenerateCommitMessageResponse,
 	type InstanceResponse,
+	type NativeClientPairingResponse,
+	type NativeClientsResponse,
 	type PackageRunResponse,
 	type PackageRunsResponse,
 	type PackageScriptsResponse,
@@ -153,6 +155,26 @@ export const api = {
 
 	instance(signal?: AbortSignal) {
 		return request<InstanceResponse>(API_ROUTES.instance, { signal });
+	},
+
+	nativeClients(signal?: AbortSignal) {
+		return request<NativeClientsResponse>(API_ROUTES.nativeClients, { signal });
+	},
+
+	createNativeClientPairing(csrfToken: string, signal?: AbortSignal) {
+		return request<NativeClientPairingResponse>(
+			API_ROUTES.nativeClientPairings,
+			{ method: "POST", signal },
+			csrfToken,
+		);
+	},
+
+	revokeNativeClient(clientId: string, csrfToken: string, signal?: AbortSignal) {
+		return request<void>(
+			API_ROUTES.nativeClient(clientId),
+			{ method: "DELETE", signal },
+			csrfToken,
+		);
 	},
 
 	restart(csrfToken: string, signal?: AbortSignal) {

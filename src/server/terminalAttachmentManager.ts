@@ -9,6 +9,7 @@ import type {
 	TerminalAttachment,
 	TerminalDataChannel,
 	TerminalPeerConnection,
+	TerminalRequestBinding,
 	TerminalSessionServiceOptions,
 	TerminalSocketData,
 	TerminalWebRtcState,
@@ -556,6 +557,7 @@ export class TerminalAttachmentManager {
 				clientId: data.clientId,
 				host: data.host,
 				origin: data.origin,
+				nativeClientId: data.nativeClientId ?? null,
 				transport: "websocket",
 				webRtc: null,
 				leaseExpiresAt: null,
@@ -656,7 +658,7 @@ export class TerminalAttachmentManager {
 	renewLease(
 		repositoryId: string,
 		request: TerminalLeaseRequest,
-		binding: { host: string; origin: string },
+		binding: TerminalRequestBinding,
 	): TerminalLeaseResponse {
 		if (!/^[A-Za-z0-9_-]{8,128}$/.test(request.clientId)) {
 			throw new HttpError(400, "terminal_client_invalid", "Terminal client ID is invalid");
@@ -665,10 +667,13 @@ export class TerminalAttachmentManager {
 		if (!attachment || attachment.transport !== "webrtc") {
 			throw new HttpError(409, "terminal_p2p_inactive", "No direct terminal attachment is active");
 		}
+		const bindingOrigin = "origin" in binding ? binding.origin : null;
+		const bindingNativeClientId = "nativeClientId" in binding ? binding.nativeClientId : null;
 		if (
 			attachment.clientId !== request.clientId ||
 			attachment.host !== binding.host ||
-			attachment.origin !== binding.origin
+			attachment.origin !== bindingOrigin ||
+			attachment.nativeClientId !== bindingNativeClientId
 		) {
 			throw new HttpError(
 				403,
@@ -691,6 +696,17 @@ export class TerminalAttachmentManager {
 		const attachment = this.attachments.get(repositoryId);
 		if (!attachment) return;
 		this.destroyAttachment(repositoryId, attachment, { code, reason });
+	}
+
+	closeNativeClient(nativeClientId: string): void {
+		for (const [repositoryId, attachment] of this.attachments) {
+			if (attachment.nativeClientId === nativeClientId) {
+				this.destroyAttachment(repositoryId, attachment, {
+					code: 4006,
+					reason: "native_client_revoked",
+				});
+			}
+		}
 	}
 
 	close(): void {

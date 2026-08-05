@@ -19,6 +19,7 @@ import { CodexAppServerService } from "./codexAppServer.ts";
 import { CodexCommitMessageService, type CommitMessageGenerator } from "./commitMessage.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
+import { NativeClientService } from "./nativeClientService.ts";
 import { PackageCommandService } from "./packageCommands.ts";
 import { RemoteBridgeService, type RemoteBridgeSocketData } from "./remoteBridgeService.ts";
 import { RepositoryManager } from "./repositories.ts";
@@ -74,6 +75,7 @@ export interface CouchviewAppOptions {
 		originAccess?: string;
 	};
 	remoteBridgeService?: RemoteBridgeService;
+	nativeClientService?: NativeClientService;
 	artifactStore?: ArtifactStore;
 }
 
@@ -89,6 +91,7 @@ export interface CouchviewApp {
 	codex: CodexAppServerService;
 	terminalSessions: TerminalSessionService;
 	remoteBridge: RemoteBridgeService;
+	nativeClients: NativeClientService;
 	remoteBridgeOriginAccess: string;
 	websocket: Bun.WebSocketHandler<CouchviewSocketData>;
 	database: StateDatabase;
@@ -233,6 +236,8 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 			stunUrls: options.remoteBridge?.stunUrls,
 			targetPort: options.remoteBridge?.targetPort,
 		});
+	const nativeClients =
+		options.nativeClientService ?? new NativeClientService({ database: database.nativeClients });
 	const remoteBridgeOriginAccess = options.remoteBridge?.originAccess ?? "auto";
 	if (
 		remoteBridgeOriginAccess !== "auto" &&
@@ -272,7 +277,14 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	};
 
 	const handleApi = async (request: Request, url: URL): Promise<Response> => {
-		authorizeApiRequest(request, url, controlToken, csrfToken, remoteBridge);
+		const nativeClient = authorizeApiRequest(
+			request,
+			url,
+			controlToken,
+			csrfToken,
+			remoteBridge,
+			nativeClients,
+		);
 		const systemResponse = await handleSystemApi(
 			{
 				controlToken,
@@ -284,6 +296,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				port,
 				accessOrigins,
 				remoteBridgeOriginAccess,
+				nativeClients,
 				database,
 				artifacts,
 				artifactProposals,
@@ -295,6 +308,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				restart,
 				defaultRepositoryId: () => defaultRepositoryId,
 				registerRepository,
+				onNativeClientRevoked: (clientId) => terminalSessions.revokeNativeClient(clientId),
 			},
 			request,
 			url,
@@ -302,6 +316,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		if (systemResponse) return systemResponse;
 		return handleRepositoryApi(
 			{
+				nativeClient,
 				database,
 				artifacts,
 				artifactProposals,
@@ -391,6 +406,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		codex,
 		terminalSessions,
 		remoteBridge,
+		nativeClients,
 		remoteBridgeOriginAccess,
 		websocket,
 		database,

@@ -520,27 +520,32 @@ describe("GitRepository advanced behavior", () => {
 	test("does not let inherited Git repository variables redirect commands", async () => {
 		const directory = await committedRepository({ "target.txt": "target\n" });
 		const other = await committedRepository({ "other.txt": "other\n" });
-		const previousGitDirectory = process.env.GIT_DIR;
-		const previousWorkTree = process.env.GIT_WORK_TREE;
-		const previousSshCommand = process.env.GIT_SSH_COMMAND;
-		const previousEditor = process.env.EDITOR;
-		try {
-			process.env.GIT_DIR = path.join(other, ".git");
-			process.env.GIT_WORK_TREE = other;
-			process.env.GIT_SSH_COMMAND = "false";
-			process.env.EDITOR = "false";
-			const result = await runGit(directory, ["rev-parse", "--show-toplevel"]);
-			expect(decoder.decode(result.stdout).trim()).toBe(await realpath(directory));
-		} finally {
-			if (previousGitDirectory === undefined) delete process.env.GIT_DIR;
-			else process.env.GIT_DIR = previousGitDirectory;
-			if (previousWorkTree === undefined) delete process.env.GIT_WORK_TREE;
-			else process.env.GIT_WORK_TREE = previousWorkTree;
-			if (previousSshCommand === undefined) delete process.env.GIT_SSH_COMMAND;
-			else process.env.GIT_SSH_COMMAND = previousSshCommand;
-			if (previousEditor === undefined) delete process.env.EDITOR;
-			else process.env.EDITOR = previousEditor;
-		}
+		const commandModule = new URL("./git/command.ts", import.meta.url).href;
+		const script = `
+			const { runGit } = await import(${JSON.stringify(commandModule)});
+			const result = await runGit(${JSON.stringify(directory)}, ["rev-parse", "--show-toplevel"]);
+			process.stdout.write(new TextDecoder().decode(result.stdout));
+		`;
+		const child = Bun.spawn([process.execPath, "--eval", script], {
+			env: {
+				...process.env,
+				GIT_DIR: path.join(other, ".git"),
+				GIT_WORK_TREE: other,
+				GIT_SSH_COMMAND: "false",
+				EDITOR: "false",
+			},
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const [stdout, stderr, exitCode] = await Promise.all([
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
+		]);
+
+		expect(stderr).toBe("");
+		expect(exitCode).toBe(0);
+		expect(stdout.trim()).toBe(await realpath(directory));
 	});
 
 	test("changes the operation revision when the branch label changes at the same commit", async () => {

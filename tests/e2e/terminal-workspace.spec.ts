@@ -67,22 +67,30 @@ test.describe("desktop tmux terminal", () => {
 		await expect(page.locator(".terminal-surface")).toHaveCSS("caret-color", "rgba(0, 0, 0, 0)");
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/ghostty-web-[^/]+\.js$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/_expo\/static\/js\/web\/ghostty-web-[^/]+\.js$/.test(pathname),
+				),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/assets\/node_modules\/ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
+				),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/Iosevka-Regular-[^/]+\.woff2$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/_expo\/static\/assets\/fonts\/Iosevka-Regular-[^/]+\.woff2$/.test(pathname),
+				),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/Iosevka-Bold-[^/]+\.woff2$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/_expo\/static\/assets\/fonts\/Iosevka-Bold-[^/]+\.woff2$/.test(pathname),
+				),
 			)
 			.toBe(true);
 		const state = async () =>
@@ -403,17 +411,23 @@ test.describe("desktop tmux terminal", () => {
 		});
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/ghostty-web-[^/]+\.js$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/_expo\/static\/js\/web\/ghostty-web-[^/]+\.js$/.test(pathname),
+				),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) => /\/assets\/ghostty-vt-[^/]+\.wasm$/.test(pathname)),
+				loadedAssets.some((pathname) =>
+					/\/assets\/node_modules\/ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
+				),
 			)
 			.toBe(true);
-		expect(loadedAssets.some((pathname) => /\/assets\/Iosevka-[^/]+\.woff2$/.test(pathname))).toBe(
-			false,
-		);
+		expect(
+			loadedAssets.some((pathname) =>
+				/\/_expo\/static\/assets\/fonts\/Iosevka-[^/]+\.woff2$/.test(pathname),
+			),
+		).toBe(false);
 
 		const state = (await (await request.get("/api/e2e/terminal")).json()) as TerminalFixtureState;
 		expect(state.attachmentCount).toBe(1);

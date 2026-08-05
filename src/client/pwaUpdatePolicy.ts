@@ -10,7 +10,3 @@ export function shouldApplyPwaUpdate(
 		(visibilityState === "hidden" || millisecondsSinceLaunch <= UPDATE_LAUNCH_WINDOW_MS)
 	);
 }
-
-export function shouldShowPwaUpdatePrompt(needRefresh: boolean, updateSafe: boolean): boolean {
-	return needRefresh && !updateSafe;
-}

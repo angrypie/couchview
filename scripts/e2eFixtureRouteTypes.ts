@@ -3,6 +3,7 @@ import type {
 	ArtifactDefinition,
 	ArtifactRun,
 	ArtifactRunOutputChunk,
+	NativeClientDevice,
 	PackageRunSummary,
 	SettingsProfile,
 } from "../src/shared/contracts.ts";
@@ -18,6 +19,8 @@ export interface FixtureMutableState {
 	gitDetached: boolean;
 	gitHead: string;
 	gitStashCount: number;
+	nativeClients: NativeClientDevice[];
+	nativePairingCounter: number;
 	operationRevision: string;
 	packageRuns: PackageRunSummary[];
 	settingsProfileCounter: number;

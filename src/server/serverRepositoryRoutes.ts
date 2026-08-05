@@ -50,6 +50,7 @@ export async function handleRepositoryApi(
 	url: URL,
 ): Promise<Response> {
 	const {
+		nativeClient,
 		database,
 		repositories,
 		packageCommands,
@@ -190,28 +191,47 @@ export async function handleRepositoryApi(
 	if (nestedPath === "terminal/attachments" && request.method === "POST") {
 		const input = await readJsonObject<TerminalAttachmentRequest>(request);
 		const origin = request.headers.get("origin");
-		if (!origin) {
+		if (!origin && !nativeClient) {
 			throw new HttpError(403, "origin_required", "A same-origin browser request is required");
 		}
 		return json(
-			await terminalSessions.issueAttachment(repositoryId, repository.root, input, {
-				host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
-				origin: normalizeOrigin(origin),
-			}),
+			await terminalSessions.issueAttachment(
+				repositoryId,
+				repository.root,
+				input,
+				nativeClient
+					? {
+							host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+							nativeClientId: nativeClient.id,
+						}
+					: {
+							host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+							origin: normalizeOrigin(origin ?? ""),
+						},
+			),
 			{ status: 201 },
 		);
 	}
 	if (nestedPath === "terminal/lease" && request.method === "POST") {
 		const input = await readJsonObject<TerminalLeaseRequest>(request);
 		const origin = request.headers.get("origin");
-		if (!origin) {
+		if (!origin && !nativeClient) {
 			throw new HttpError(403, "origin_required", "A same-origin browser request is required");
 		}
 		return json(
-			await terminalSessions.renewLease(repositoryId, input, {
-				host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
-				origin: normalizeOrigin(origin),
-			}),
+			await terminalSessions.renewLease(
+				repositoryId,
+				input,
+				nativeClient
+					? {
+							host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+							nativeClientId: nativeClient.id,
+						}
+					: {
+							host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
+							origin: normalizeOrigin(origin ?? ""),
+						},
+			),
 		);
 	}
 	if (nestedPath === "terminal/end" && request.method === "POST") {

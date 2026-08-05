@@ -1,3 +1,4 @@
+import type { NativeClientDevice } from "../shared/nativeClients.ts";
 import type { ArtifactProposalGenerator } from "./artifactProposal.ts";
 import type { ArtifactService } from "./artifactService.ts";
 import type { CodexAppServerService } from "./codexAppServer.ts";
@@ -10,6 +11,7 @@ import type { ServerEventStreams } from "./serverEvents.ts";
 import type { TerminalSessionService } from "./terminalSessions.ts";
 
 export interface RepositoryRouteContext {
+	nativeClient: NativeClientDevice | null;
 	database: StateDatabase;
 	artifacts: ArtifactService;
 	artifactProposals: ArtifactProposalGenerator;

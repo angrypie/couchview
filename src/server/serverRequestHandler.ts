@@ -77,7 +77,10 @@ export function createRequestHandler(context: RequestHandlerContext) {
 		if (!target && !path.extname(relative)) target = await resolveStaticFile("index.html");
 		if (!target) throw new HttpError(404, "not_found", "Asset not found");
 		const file = Bun.file(target);
-		const immutable = relative.startsWith("assets/") && /-[A-Za-z0-9_-]{8,}\./.test(relative);
+		const hashedAsset = /(?:-|\.)[a-f0-9]{8,}(?:@\d+x)?\.[^/]+$/i.test(relative);
+		const immutable =
+			((relative.startsWith("assets/") || relative.startsWith("_expo/static/")) && hashedAsset) ||
+			/^workbox-[a-f0-9]{8,}\.js$/i.test(relative);
 		return new Response(file, {
 			headers: {
 				"Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
@@ -92,6 +95,9 @@ export function createRequestHandler(context: RequestHandlerContext) {
 		const url = new URL(request.url);
 		const hostHeader = request.headers.get("host") ?? url.host;
 		const origin = request.headers.get("origin");
+		const terminalSocketRoute = /^\/api\/repositories\/([^/]+)\/terminal\/socket$/.exec(
+			url.pathname,
+		);
 		let response: Response;
 		try {
 			let normalizedHost: string;
@@ -108,20 +114,25 @@ export function createRequestHandler(context: RequestHandlerContext) {
 				try {
 					normalizedOrigin = normalizeOrigin(origin);
 				} catch {
-					throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
+					if (!terminalSocketRoute) {
+						throw new HttpError(
+							403,
+							"origin_rejected",
+							"Origin is not allowed by the local server",
+						);
+					}
 				}
-				if (!allowedOrigins.has(normalizedOrigin)) {
-					throw new HttpError(403, "origin_rejected", "Origin is not allowed by the local server");
+				if (normalizedOrigin && !allowedOrigins.has(normalizedOrigin)) {
+					if (terminalSocketRoute) normalizedOrigin = null;
+					else
+						throw new HttpError(
+							403,
+							"origin_rejected",
+							"Origin is not allowed by the local server",
+						);
 				}
 			}
-
-			const terminalSocketRoute = /^\/api\/repositories\/([^/]+)\/terminal\/socket$/.exec(
-				url.pathname,
-			);
 			if (terminalSocketRoute && request.method === "GET") {
-				if (!normalizedOrigin) {
-					throw new HttpError(403, "origin_required", "A same-origin browser request is required");
-				}
 				if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
 					throw new HttpError(
 						426,
@@ -142,6 +153,9 @@ export function createRequestHandler(context: RequestHandlerContext) {
 					host: normalizedHost,
 					origin: normalizedOrigin,
 				});
+				if (!normalizedOrigin && !data.nativeClientId) {
+					throw new HttpError(403, "origin_required", "A same-origin browser request is required");
+				}
 				const upgraded = server.upgrade(request, {
 					data,
 					headers: { "Sec-WebSocket-Protocol": TERMINAL_PROTOCOL },

@@ -257,6 +257,12 @@
 }
 
 @media (orientation: portrait) and (max-width: 350px) {
+	.top-bar {
+		padding-right: max(2px, env(safe-area-inset-right));
+		padding-left: max(2px, env(safe-area-inset-left));
+		gap: 1px;
+	}
+
 	.top-bar .repo-heading {
 		padding-inline: 0;
 	}
@@ -264,6 +270,20 @@
 	.top-bar .repo-name.repository-trigger > span:not(.connection-dot),
 	.top-bar .repo-meta {
 		display: none;
+	}
+
+	.top-bar .font-controls {
+		padding-inline: 0;
+	}
+
+	.top-bar .number-toggle,
+	.top-bar .wrap-toggle,
+	.top-bar .font-controls .compact-button {
+		width: 28px;
+	}
+
+	.top-bar .font-value {
+		min-width: 20px;
 	}
 }
 

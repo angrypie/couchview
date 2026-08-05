@@ -97,13 +97,13 @@ describe("global SQLite state", () => {
 			"wal",
 		);
 		expect(raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
-			6,
+			7,
 		);
 		expect(
 			raw
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(6);
+		).toBe(7);
 		raw.close();
 
 		const reopened = await StateDatabase.open(filePath);
@@ -167,12 +167,12 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(6);
+		).toBe(7);
 		expect(
 			inspected
 				.query<{ value: number }, []>("SELECT value FROM metadata WHERE key = 'schema_version'")
 				.get()?.value,
-		).toBe(6);
+		).toBe(7);
 		inspected.close();
 	});
 
@@ -238,7 +238,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(6);
+		).toBe(7);
 		expect(
 			inspected
 				.query<{ table: string }, []>("PRAGMA foreign_key_list(remote_bridge_devices)")
@@ -310,7 +310,7 @@ describe("global SQLite state", () => {
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(
 			inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
-		).toBe(6);
+		).toBe(7);
 		inspected.close();
 	});
 
@@ -514,7 +514,7 @@ describe("global SQLite state", () => {
 		}
 	});
 
-	test("migrates v4 metadata to v6 and retains exactly two new artifact builds", async () => {
+	test("migrates v4 metadata to v7 and retains exactly two new artifact builds", async () => {
 		const filePath = await databasePath();
 		await mkdir(path.dirname(filePath), { recursive: true });
 		const raw = new Database(filePath, { create: true, strict: true });
@@ -644,7 +644,7 @@ describe("global SQLite state", () => {
 
 		const inspected = new Database(filePath, { readonly: true, strict: true });
 		expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()).toEqual({
-			user_version: 6,
+			user_version: 7,
 		});
 		inspected.close();
 	});
@@ -737,7 +737,7 @@ describe("global SQLite state", () => {
 				.map(({ name }) => name),
 		).toContain("executable");
 		expect(inspected.query<{ user_version: number }, []>("PRAGMA user_version").get()).toEqual({
-			user_version: 6,
+			user_version: 7,
 		});
 		inspected.close();
 	});

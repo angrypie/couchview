@@ -27,7 +27,6 @@ import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
 import { GlobalCommandUi } from "./GlobalCommandUi.tsx";
 import { GitHistoryPage } from "./git/index.ts";
 import { ProfileSettingsPage } from "./ProfileSettingsPage.tsx";
-import { PwaRefreshToast } from "./PwaRefreshToast.tsx";
 import { RestartOverlay } from "./RestartOverlay.tsx";
 import { ReviewWorkspaceChrome } from "./ReviewWorkspaceChrome.tsx";
 import { ReviewWorkspaceOverlays } from "./ReviewWorkspaceOverlays.tsx";
@@ -126,15 +125,12 @@ export function CouchviewApplicationView({
 			failureAvailable={Boolean(failure.failure)}
 			iosInstallHint={pwa.iosInstallHint}
 			onDismissInstall={pwa.dismissInstall}
-			onDismissRefresh={pwa.dismissRefresh}
 			onInstall={() => void pwa.install()}
 			onOpenFailure={() => {
 				notifications.setToast(null);
 				failure.setDetailsOpen(true);
 			}}
 			onUndo={(undo) => void workflow.review.undoReview(undo)}
-			onUpdate={pwa.update}
-			refreshAvailable={pwa.needRefresh}
 			toast={notifications.toast}
 		/>
 	);
@@ -159,11 +155,6 @@ export function CouchviewApplicationView({
 					profiles={settings.profiles}
 				/>
 				{commandUi}
-				{pwa.needRefresh && (
-					<div className="toast-stack" aria-live="polite">
-						<PwaRefreshToast onDismiss={pwa.dismissRefresh} onUpdate={pwa.update} visible />
-					</div>
-				)}
 			</>
 		);
 	}

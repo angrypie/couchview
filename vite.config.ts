@@ -33,7 +33,7 @@ export default defineConfig(({ mode }) => {
 			react(),
 			VitePWA({
 				registerType: "prompt",
-				// The client uses virtual:pwa-register so it can decide when to reload.
+				// The platform-neutral client registration owns safe activation timing.
 				injectRegister: null,
 				// Manifest icons remain network-loaded metadata assets. The offline
 				// review shell does not need to retain duplicate, unhashed copies.

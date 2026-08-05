@@ -23,7 +23,9 @@ import { FixtureTerminal, type FixtureTerminalSocketData } from "./e2eFixtureTer
 
 const host = process.env.E2E_HOST || "127.0.0.1";
 const port = Number(process.env.E2E_PORT || 4174);
-const distRoot = resolve(import.meta.dir, "..", "dist");
+const distRoot = process.env.E2E_STATIC_DIR
+	? resolve(process.env.E2E_STATIC_DIR)
+	: resolve(import.meta.dir, "..", "dist");
 
 function defaultSettingsProfile(): SettingsProfile {
 	return {
@@ -46,6 +48,16 @@ const state: FixtureMutableState = {
 	gitDetached: false,
 	gitHead: repository.head,
 	gitStashCount: 0,
+	nativeClients: [
+		{
+			id: "fixture-native-app",
+			label: "Fixture iPhone",
+			createdAt: "2026-08-04T10:00:00.000Z",
+			lastUsedAt: null,
+			revokedAt: null,
+		},
+	],
+	nativePairingCounter: 0,
 	operationRevision: "fixture-operation-1",
 	packageRuns: [],
 	settingsProfileCounter: 0,
@@ -69,6 +81,16 @@ const state: FixtureMutableState = {
 		this.gitDetached = false;
 		this.gitHead = repository.head;
 		this.gitStashCount = 0;
+		this.nativeClients = [
+			{
+				id: "fixture-native-app",
+				label: "Fixture iPhone",
+				createdAt: "2026-08-04T10:00:00.000Z",
+				lastUsedAt: null,
+				revokedAt: null,
+			},
+		];
+		this.nativePairingCounter = 0;
 		this.terminal.reset();
 	},
 };

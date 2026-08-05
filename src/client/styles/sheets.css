@@ -712,6 +712,49 @@
 	min-height: 38px;
 }
 
+.native-app-card > .action-button {
+	width: 100%;
+	margin-top: 9px;
+}
+
+.native-app-pairing {
+	margin-top: 9px;
+	display: grid;
+	grid-template-columns: 148px minmax(0, 1fr);
+	align-items: start;
+	gap: 10px;
+}
+
+.native-app-pairing > div {
+	min-width: 0;
+	display: grid;
+	gap: 7px;
+}
+
+.native-app-pairing-qr {
+	width: 148px;
+	height: 148px;
+	border-radius: 8px;
+	background: #ffffff;
+}
+
+.native-app-pairing-actions {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+.native-app-pairing-actions .action-button,
+.native-app-pairing-actions .remote-bridge-open {
+	min-height: 34px;
+}
+
+.native-app-pairing span {
+	color: var(--muted);
+	font-size: 9px;
+	line-height: 1.4;
+}
+
 .remote-bridge-pairing {
 	margin-top: 9px;
 	display: grid;
@@ -751,4 +794,14 @@
 	background: var(--red-bg);
 	font-size: 10px;
 	line-height: 1.4;
+}
+
+@media (max-width: 420px) {
+	.native-app-pairing {
+		grid-template-columns: 1fr;
+	}
+
+	.native-app-pairing-qr {
+		justify-self: center;
+	}
 }

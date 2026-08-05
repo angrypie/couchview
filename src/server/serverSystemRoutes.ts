@@ -9,6 +9,8 @@ import {
 	type CreateSettingsProfileRequest,
 	CSRF_HEADER,
 	type InstanceResponse,
+	NATIVE_CLIENT_TOKEN_HEADER,
+	type NativeClientDevice,
 	REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
 	type RegisterRepositoryRequest,
 	type RegisterRepositoryResponse,
@@ -29,6 +31,7 @@ import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
+import type { NativeClientService } from "./nativeClientService.ts";
 import type { RemoteBridgeService } from "./remoteBridgeService.ts";
 import type { RepositoryManager } from "./repositories.ts";
 import { listRepositoryDirectories } from "./repositoryDirectories.ts";
@@ -42,6 +45,7 @@ import {
 	remoteBridgeDeviceToken,
 	tokenMatches,
 } from "./serverHttp.ts";
+import { handleNativeClientApi } from "./serverNativeClientRoutes.ts";
 import type { TerminalSessionService } from "./terminalSessions.ts";
 
 interface SystemRouteContext {
@@ -54,6 +58,7 @@ interface SystemRouteContext {
 	port: number;
 	accessOrigins: readonly string[];
 	remoteBridgeOriginAccess: string;
+	nativeClients: NativeClientService;
 	database: StateDatabase;
 	artifacts: ArtifactService;
 	artifactProposals: ArtifactProposalGenerator;
@@ -65,6 +70,7 @@ interface SystemRouteContext {
 	restart: RestartCapability & { request?(): Promise<void> };
 	defaultRepositoryId: () => string | null;
 	registerRepository(root: string): Promise<RegisterRepositoryResponse>;
+	onNativeClientRevoked(clientId: string): void;
 }
 
 function isControlRegistration(request: Request, url: URL): boolean {
@@ -96,7 +102,10 @@ export function authorizeApiRequest(
 	controlToken: string,
 	csrfToken: string,
 	remoteBridge: RemoteBridgeService,
-): void {
+	nativeClients: NativeClientService,
+): NativeClientDevice | null {
+	const suppliedNativeToken = request.headers.get(NATIVE_CLIENT_TOKEN_HEADER);
+	if (suppliedNativeToken !== null) return nativeClients.authenticate(suppliedNativeToken);
 	const controlRequest = isControlRegistration(request, url) || isControlRestart(request, url);
 	const remoteBridgeClaim =
 		url.pathname === API_ROUTES.remoteBridgeClaim && request.method === "POST";
@@ -112,14 +121,21 @@ export function authorizeApiRequest(
 		if (!tokenMatches(bearerToken(request), controlToken)) {
 			throw new HttpError(403, "control_token_failed", "CLI control request is not authorized");
 		}
-		return;
+		return null;
 	}
 	if (isArtifactCredentialMutation(request, url) && !request.headers.get("origin")) {
-		if (tokenMatches(bearerToken(request), controlToken)) return;
+		if (tokenMatches(bearerToken(request), controlToken)) return null;
 		remoteBridge.authenticateDevice(remoteBridgeDeviceToken(request));
-		return;
+		return null;
 	}
-	if (isMutation(request.method) && !remoteBridgeClaim && !remoteBridgeCredentialMutation) {
+	const nativeClientClaim =
+		url.pathname === API_ROUTES.nativeClientPairingClaim && request.method === "POST";
+	if (
+		isMutation(request.method) &&
+		!nativeClientClaim &&
+		!remoteBridgeClaim &&
+		!remoteBridgeCredentialMutation
+	) {
 		if (!request.headers.get("origin")) {
 			throw new HttpError(403, "origin_required", "A same-origin browser request is required");
 		}
@@ -127,6 +143,7 @@ export function authorizeApiRequest(
 			throw new HttpError(403, "csrf_failed", "The local session token is missing or invalid");
 		}
 	}
+	return null;
 }
 
 export async function handleSystemApi(
@@ -134,6 +151,15 @@ export async function handleSystemApi(
 	request: Request,
 	url: URL,
 ): Promise<Response | null> {
+	const nativeClientResponse = await handleNativeClientApi(
+		{
+			nativeClients: context.nativeClients,
+			onRevoked: context.onNativeClientRevoked,
+		},
+		request,
+		url,
+	);
+	if (nativeClientResponse) return nativeClientResponse;
 	if (url.pathname === API_ROUTES.repositoryDirectories && request.method === "GET") {
 		return json(await listRepositoryDirectories(url.searchParams.get("path")));
 	}
@@ -201,6 +227,7 @@ export async function handleSystemApi(
 			service: "couchview",
 			protocolVersion: context.protocolVersion,
 			version: context.version,
+			serverId: context.nativeClients.serverId(),
 			instanceId: context.instanceId,
 			bindHost: context.host,
 			port: context.port,

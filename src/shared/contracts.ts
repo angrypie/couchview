@@ -3,6 +3,7 @@ import type { SettingsProfile } from "./settings.ts";
 
 export * from "./artifacts.ts";
 export * from "./codexGeneration.ts";
+export * from "./nativeClients.ts";
 
 export type {
 	CommandId,
@@ -29,6 +30,10 @@ export const API_ROUTES = {
 	accessLogout: "/api/access/logout",
 	accessRefresh: "/api/access/refresh",
 	instance: "/api/instance",
+	nativeClients: "/api/native-clients",
+	nativeClient: (clientId: string) => `/api/native-clients/${encodeURIComponent(clientId)}`,
+	nativeClientPairings: "/api/native-clients/pairings",
+	nativeClientPairingClaim: "/api/native-clients/pairings/claim",
 	restart: "/api/restart",
 	repositories: "/api/repositories",
 	repositoryDirectories: "/api/repository-directories",
@@ -115,6 +120,8 @@ export const API_ROUTES = {
 } as const;
 
 export const CSRF_HEADER = "x-couchview-csrf";
+export const TERMINAL_PROTOCOL = "couchview-terminal-v1";
+export const TERMINAL_TICKET_PREFIX = "couchview-ticket.";
 export const TERMINAL_ENDED_CLOSE_CODE = 4002;
 export const TERMINAL_P2P_FAILED_CLOSE_CODE = 4004;
 export const TERMINAL_LEASE_EXPIRED_CLOSE_CODE = 4005;
@@ -203,6 +210,7 @@ export interface InstanceResponse {
 	service: "couchview";
 	protocolVersion: number;
 	version: string;
+	serverId: string;
 	instanceId: string;
 	bindHost: string;
 	port: number;

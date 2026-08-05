@@ -60,14 +60,46 @@ validation; the structured Codex runner owns the shared ephemeral subprocess,
 model/reasoning selection, schema output, limits, and cancellation used by
 artifact suggestions and commit messages.
 
-## React Native Web direction
+## Expo and React Native Web surfaces
 
-The reusable path to React Native Web is feature logic and shared contracts,
-not a mechanical replacement of DOM tags. Keep `window`, history, service
-workers, clipboard, `EventSource`, and terminal/browser integrations behind
-feature or platform-facing adapters. Native clients should be able to reuse
-contracts and use cases while supplying different navigation, storage,
-transport, and rendering implementations.
+Expo Router owns the cross-platform route entry points in `app/`. Route files
+stay thin: the native layout composes safe-area, server-profile, and stack
+providers, while the web layout removes native navigation chrome. On web,
+`src/client/expo/ProductRoot.web.tsx` delegates to the established browser
+composition root for full behavior parity. On iPhone and iPad,
+`src/client/expo/ProductRoot.tsx` selects native workbench, server, settings,
+terminal, and explicitly deferred history or artifact surfaces.
+
+Native server profiles, secure credentials, pairing-link validation, API
+transport, repository streams, bounded revision-keyed diff caching, prefetch,
+and optimistic workspace mutations belong to
+`src/client/features/nativeServers/`. Platform files separate AsyncStorage
+metadata from SecureStore credentials. Device-local diff and terminal display
+preferences belong to `src/client/features/nativePreferences/` and use their
+own AsyncStorage adapter. Native rendering belongs to
+`src/client/components/native/`; only the Pierre diff and Ghostty terminal
+surfaces use DOM components. A terminal DOM component receives a short-lived
+device-bound ticket and socket URL, never the durable native-client token.
+
+Browser-side Couchview app pairing state and API orchestration belong to
+`src/client/features/nativeClients/`; the pairing panel only renders its
+feature controller. On the server, `NativeClientService` owns five-minute
+one-use pairing codes and token authentication, `NativeClientDatabase` owns the
+stable server identity and hashed client credentials, route handlers own the
+HTTP boundary, and terminal managers own device-bound ticket invalidation and
+socket closure after revocation.
+
+`bun run build` exports Expo web to `dist/`. The postprocessor adds install
+metadata, extracts inline executable bootstrap code for the existing CSP,
+fingerprints bundled terminal fonts, and generates a bounded app-shell service
+worker. Navigation and `/api` requests remain network-only, and repository
+responses are never placed in offline caches. `bun run build:legacy-web`
+retains the former Vite build as a temporary rollback path.
+
+The reusable path across React Native Web is feature logic and shared
+contracts, not a mechanical replacement of DOM tags. Keep `window`, history,
+service workers, clipboard, streams, storage, and terminal/browser integrations
+behind feature or platform-facing adapters.
 
 ## Enforced limits
 

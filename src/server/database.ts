@@ -29,8 +29,9 @@ import {
 	type SettingsProfileRow,
 	settingsProfileFromRow,
 } from "./databaseRows.ts";
+import { NativeClientDatabase } from "./nativeClientDatabase.ts";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export interface StoredRepository {
 	id: string;
@@ -86,12 +87,14 @@ export function resolveStateDatabasePath(
 export class StateDatabase {
 	readonly filePath: string;
 	readonly artifacts: ArtifactDatabase;
+	readonly nativeClients: NativeClientDatabase;
 	private readonly database: Database;
 
 	private constructor(filePath: string, database: Database, requireWal: boolean) {
 		this.filePath = filePath;
 		this.database = database;
 		this.artifacts = new ArtifactDatabase(database);
+		this.nativeClients = new NativeClientDatabase(database);
 		this.database.run("PRAGMA foreign_keys = ON;");
 		this.database.run("PRAGMA busy_timeout = 5000;");
 		if (requireWal) {
@@ -149,7 +152,12 @@ export class StateDatabase {
 			);
 			this.createSettingsProfilesTable();
 			this.createArtifactTables();
+			this.nativeClients.createTables();
 			this.ensureDefaultSettingsProfile();
+			return;
+		}
+		if (version === 6) {
+			this.migrateVersionSixToSeven();
 			return;
 		}
 		if (version === 5) {
@@ -327,10 +335,11 @@ export class StateDatabase {
 		);
 		CREATE INDEX IF NOT EXISTS artifact_builds_artifact_created
 		  ON artifact_builds(artifact_id, created_at DESC);
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 6);
-        INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
-        PRAGMA user_version = 6;
+				INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 7);
+				INSERT OR IGNORE INTO metadata(key, value) VALUES ('catalog_revision', 0);
+				PRAGMA user_version = 7;
       `);
+			this.nativeClients.createTables();
 			this.ensureDefaultSettingsProfile();
 		})();
 	}
@@ -452,6 +461,18 @@ export class StateDatabase {
         UPDATE metadata SET value = 6 WHERE key = 'schema_version';
         INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 6);
         PRAGMA user_version = 6;
+      `);
+		})();
+		this.migrateVersionSixToSeven();
+	}
+
+	private migrateVersionSixToSeven(): void {
+		this.database.transaction(() => {
+			this.nativeClients.createTables();
+			this.database.run(`
+        UPDATE metadata SET value = 7 WHERE key = 'schema_version';
+        INSERT OR IGNORE INTO metadata(key, value) VALUES ('schema_version', 7);
+        PRAGMA user_version = 7;
       `);
 		})();
 	}

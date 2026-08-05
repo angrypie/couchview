@@ -458,6 +458,45 @@ describe("persistent tmux sessions", () => {
 		service.close();
 	});
 
+	test("binds native tickets to a device and closes tickets and sockets on revocation", async () => {
+		const harness = commandHarness();
+		let token = 0;
+		const { service } = await serviceFixture(harness, {
+			tokenFactory: () => `ticket-${++token}`,
+			withPty: true,
+		});
+		const nativeBinding = { host: "127.0.0.1:4173", nativeClientId: "native-device" };
+		const issued = await service.issueAttachment(
+			"repo",
+			"/project",
+			attachmentRequest(),
+			nativeBinding,
+		);
+		const data = service.consumeUpgrade("repo", upgradeRequest(issued.ticket), {
+			host: nativeBinding.host,
+			origin: null,
+		});
+		expect(data).toMatchObject({ nativeClientId: "native-device", origin: null });
+		const socket = fakeSocket(data);
+		service.websocket.open?.(socket as unknown as Bun.ServerWebSocket<TerminalSocketData>);
+
+		const pending = await service.issueAttachment(
+			"other-repo",
+			"/project",
+			attachmentRequest("other_client"),
+			nativeBinding,
+		);
+		service.revokeNativeClient("native-device");
+		expect(socket.closes).toContainEqual({ code: 4006, reason: "native_client_revoked" });
+		expect(() =>
+			service.consumeUpgrade("other-repo", upgradeRequest(pending.ticket), {
+				host: nativeBinding.host,
+				origin: null,
+			}),
+		).toThrow(expect.objectContaining({ code: "terminal_ticket_invalid" }));
+		service.close();
+	});
+
 	test("enforces one controller and explicit takeover while leaving tmux alive", async () => {
 		const harness = commandHarness();
 		let token = 0;

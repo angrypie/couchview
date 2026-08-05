@@ -4,4 +4,4 @@ telemetry = false
 exact = true
 
 [test]
-pathIgnorePatterns = ["tests/e2e/**"]
+pathIgnorePatterns = ["tests/e2e/**", "ios/**", "android/**"]

@@ -125,7 +125,7 @@ test.describe("desktop review layout", () => {
 			.toBeLessThanOrEqual(0);
 	});
 
-	test("pairs and revokes a native IDE without overflowing the desktop sheet", async ({ page }) => {
+	test("pairs apps and native IDEs without overflowing the desktop sheet", async ({ page }) => {
 		const device: RemoteBridgeDevice = {
 			id: "fixture-device-one",
 			repositoryId: "fixture-repository",
@@ -189,8 +189,17 @@ test.describe("desktop review layout", () => {
 		await page.getByRole("button", { name: "Set up native IDE" }).click();
 		const dialog = page.getByRole("dialog", { name: "Native IDE setup" });
 		await expect(dialog).toBeVisible();
+		await expect(dialog.getByRole("heading", { name: "Couchview app" })).toBeVisible();
+		await expect(dialog.getByText("Fixture iPhone", { exact: true })).toBeVisible();
+		await dialog.getByRole("button", { name: "Generate app pairing" }).click();
+		await expect(
+			dialog.getByRole("img", { name: "QR code for Couchview app pairing" }),
+		).toBeVisible();
+		await expect(
+			dialog.getByText(/couchview:\/\/pair\?protocol=couchview-native-v1/),
+		).toBeVisible();
 		await expect(dialog.getByText("Direct WebRTC preferred")).toBeVisible();
-		const zedLink = dialog.getByRole("link", { name: "Open" });
+		const zedLink = dialog.getByRole("link", { name: "Open", exact: true });
 		await expect(zedLink).toHaveAttribute(
 			"href",
 			"zed://ssh/couchview-fixture-device/fixtures/sample-project",
@@ -230,9 +239,13 @@ test.describe("desktop review layout", () => {
 		expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1280);
 
 		await dialog.getByLabel("Device name").fill("Travel Air");
-		await dialog.getByRole("button", { name: "Generate" }).click();
+		await dialog.getByRole("button", { name: "Generate", exact: true }).click();
 		await expect(dialog.getByText(/couchview bridge pair/)).toBeVisible();
 		expect(pairingRequest).toEqual({ csrf: fixtureCsrf, label: "Travel Air" });
+
+		page.once("dialog", (confirmation) => void confirmation.accept());
+		await dialog.getByRole("button", { name: "Revoke app access for Fixture iPhone" }).click();
+		await expect(dialog.getByText("No Couchview apps are paired yet.")).toBeVisible();
 
 		page.once("dialog", (confirmation) => void confirmation.accept());
 		await dialog.getByRole("button", { name: "Revoke MacBook Air" }).click();

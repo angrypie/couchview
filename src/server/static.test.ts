@@ -31,6 +31,12 @@ async function fixture() {
 		"utf8",
 	);
 	await writeFile(path.join(staticRoot, "assets", "app-12345678.js"), "export {};\n", "utf8");
+	await mkdir(path.join(staticRoot, "_expo", "static", "js", "web"), { recursive: true });
+	await writeFile(
+		path.join(staticRoot, "_expo", "static", "js", "web", "entry-1234567890abcdef.js"),
+		"export {};\n",
+		"utf8",
+	);
 	await writeFile(
 		path.join(staticRoot, "assets", "ghostty-vt-12345678.wasm"),
 		new Uint8Array([0x00, 0x61, 0x73, 0x6d]),
@@ -85,6 +91,12 @@ describe("production static serving", () => {
 		const asset = await app.fetch(localRequest("/assets/app-12345678.js"));
 		expect(asset.status).toBe(200);
 		expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+
+		const expoAsset = await app.fetch(
+			localRequest("/_expo/static/js/web/entry-1234567890abcdef.js"),
+		);
+		expect(expoAsset.status).toBe(200);
+		expect(expoAsset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
 
 		const wasm = await app.fetch(localRequest("/assets/ghostty-vt-12345678.wasm"));
 		expect(wasm.status).toBe(200);

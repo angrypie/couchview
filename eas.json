@@ -1,0 +1,21 @@
+{
+	"cli": {
+		"version": ">= 16.0.1",
+		"appVersionSource": "local"
+	},
+	"build": {
+		"development": {
+			"developmentClient": true,
+			"distribution": "internal",
+			"env": {
+				"EXPO_NO_BUNDLE_SPLITTING": "1"
+			}
+		},
+		"production": {
+			"distribution": "internal",
+			"env": {
+				"EXPO_NO_BUNDLE_SPLITTING": "1"
+			}
+		}
+	}
+}

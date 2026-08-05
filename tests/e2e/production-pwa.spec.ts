@@ -93,7 +93,7 @@ test.describe("production PWA", () => {
 		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
 	});
 
-	test("keeps documents and APIs network-only while guarding unsaved work during updates", async ({
+	test("keeps documents and APIs network-only without prompting over unsaved work", async ({
 		context,
 		page,
 	}) => {
@@ -157,23 +157,20 @@ test.describe("production PWA", () => {
 		expect(cacheUrls.some((url) => new URL(url).pathname.startsWith("/api/"))).toBe(false);
 		const cachePaths = cacheUrls.map((url) => new URL(url).pathname);
 		expect(cachePaths).not.toContain("/index.html");
-		expect(cachePaths.some((pathname) => /\/assets\/index-[^/]+\.js$/.test(pathname))).toBe(true);
-		expect(cachePaths.some((pathname) => /\/assets\/index-[^/]+\.css$/.test(pathname))).toBe(true);
-		for (const language of [
-			"javascript",
-			"typescript",
-			"jsx",
-			"tsx",
-			"json",
-			"css",
-			"html",
-			"markdown",
-		]) {
-			expect(
-				cachePaths.some((pathname) => new RegExp(`/assets/${language}-[^/]+\\.js$`).test(pathname)),
-			).toBe(true);
-		}
-		expect(cachePaths.some((pathname) => /\/assets\/cpp-[^/]+\.js$/.test(pathname))).toBe(false);
+		expect(
+			cachePaths.some((pathname) =>
+				/\/_expo\/static\/js\/web\/__expo-metro-runtime-[^/]+\.js$/.test(pathname),
+			),
+		).toBe(true);
+		expect(
+			cachePaths.some((pathname) => /\/_expo\/static\/js\/web\/__common-[^/]+\.js$/.test(pathname)),
+		).toBe(true);
+		expect(
+			cachePaths.some((pathname) => /\/_expo\/static\/js\/web\/entry-[^/]+\.js$/.test(pathname)),
+		).toBe(true);
+		expect(
+			cachePaths.some((pathname) => /\/_expo\/static\/css\/foundation-[^/]+\.css$/.test(pathname)),
+		).toBe(true);
 		expect(
 			cachePaths.some(
 				(pathname) =>
@@ -227,9 +224,19 @@ test.describe("production PWA", () => {
 				});
 			});
 		});
-		await expect(page.getByText("An app update is ready.")).toBeVisible({ timeout: 15_000 });
-		await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
-		await page.getByRole("button", { name: "Later" }).click();
+		await expect
+			.poll(() =>
+				page.evaluate(async () => {
+					const registration = await navigator.serviceWorker.getRegistration("/");
+					return registration?.waiting?.scriptURL ?? null;
+				}),
+			)
+			.toContain("e2e-update=");
+		await expect(page.getByText("An app update is ready.")).toHaveCount(0);
+		await expect(page.getByRole("button", { name: "Reload" })).toHaveCount(0);
+		await expect(
+			page.getByPlaceholder("Describe the issue and the expected correction…"),
+		).toHaveValue("Unsaved update-guard draft");
 
 		await context.setOffline(true);
 		try {

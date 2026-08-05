@@ -1,0 +1,40 @@
+{
+	"expo": {
+		"name": "Couchview",
+		"slug": "couchview",
+		"version": "0.1.0",
+		"scheme": "couchview",
+		"orientation": "default",
+		"userInterfaceStyle": "dark",
+		"plugins": [
+			"expo-router",
+			"expo-secure-store",
+			"expo-dev-client",
+			[
+				"expo-build-properties",
+				{
+					"ios": {
+						"deploymentTarget": "16.4"
+					}
+				}
+			]
+		],
+		"ios": {
+			"bundleIdentifier": "dev.couchview.app",
+			"supportsTablet": true,
+			"infoPlist": {
+				"NSLocalNetworkUsageDescription": "Couchview connects to review servers that you run on your trusted local network.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true
+				}
+			}
+		},
+		"web": {
+			"bundler": "metro",
+			"output": "single"
+		},
+		"experiments": {
+			"typedRoutes": true
+		}
+	}
+}

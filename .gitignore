@@ -1,5 +1,9 @@
 node_modules/
 dist/
+dist-expo*/
+.expo/
+ios/
+android/
 .couchview-build-*/
 dist.previous-*/
 playwright-report/

@@ -15,7 +15,6 @@ import {
 	EventSourceStub,
 	originalFetch,
 	originalWebSocket,
-	pwaState,
 	viewerCommentJumps,
 	viewerHunkJumps,
 	viewerState,
@@ -103,18 +102,6 @@ export function createAppTestHarness() {
 		staleNextSettingsSave: false,
 		bootstrapFailureStatus: null as number | null,
 		instanceOffline: false,
-		get pwaNeedRefresh() {
-			return pwaState.needRefresh;
-		},
-		set pwaNeedRefresh(value: boolean) {
-			pwaState.needRefresh = value;
-		},
-		get pwaUpdateCalls() {
-			return pwaState.updateCalls;
-		},
-		set pwaUpdateCalls(value: number) {
-			pwaState.updateCalls = value;
-		},
 		get viewerVisibleLineChange() {
 			return viewerState.visibleLineChange;
 		},
@@ -172,8 +159,6 @@ export function createAppTestHarness() {
 		fixture.staleNextSettingsSave = false;
 		fixture.bootstrapFailureStatus = null;
 		fixture.instanceOffline = false;
-		pwaState.needRefresh = false;
-		pwaState.updateCalls = 0;
 		resetRendererState();
 		resetFakeTerminalWebSockets();
 		EventSourceStub.instances.length = 0;

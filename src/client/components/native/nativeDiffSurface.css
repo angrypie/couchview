@@ -1,0 +1,151 @@
+:root {
+	color-scheme: dark;
+	--bg: #0d1014;
+	--text: #e7edf5;
+	--muted: #8f9baa;
+	--accent: #7da6ff;
+	--green: #52d091;
+	--green-bg: #112b22;
+	--red: #ff7f85;
+	--red-bg: #321a1e;
+	--selection: #3a4e77;
+	--code-size: 13px;
+	--code-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+	width: 100%;
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	overflow: hidden;
+	background: var(--bg);
+	color: var(--text);
+}
+
+button {
+	font: inherit;
+}
+
+.diff-viewer-shell {
+	position: absolute;
+	inset: 0;
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	background: var(--bg);
+}
+
+.pierre-code-view {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+	--viewer-bg: var(--bg);
+	--viewer-text: var(--text);
+	--viewer-context: #121820;
+	--viewer-separator: #17243a;
+	--viewer-addition: var(--green-bg);
+	--viewer-deletion: var(--red-bg);
+	--viewer-selection: var(--selection);
+	--viewer-number: #718096;
+	--viewer-green: var(--green);
+	--viewer-red: var(--red);
+	--viewer-accent: var(--accent);
+	width: 100%;
+	min-width: 0;
+	min-height: 0;
+	flex: 1 1 auto;
+	overflow: auto;
+	overscroll-behavior: contain;
+	background: var(--bg);
+}
+
+.pierre-code-view > div,
+.pierre-code-view diffs-container {
+	width: 100%;
+	min-width: 0;
+}
+
+.truncated-banner {
+	z-index: 12;
+	width: 100%;
+	min-height: 30px;
+	padding: 7px 8px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: #f8dc9f;
+	background: rgb(82 61 20 / 96%);
+	font-size: 10px;
+	font-weight: 700;
+}
+
+.patch-fallback {
+	position: absolute;
+	inset: 0;
+	overflow: auto;
+	color: #b9c4d1;
+	background: #090d12;
+}
+
+.patch-fallback-message {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	padding: 8px 10px;
+	color: #f8dc9f;
+	background: #493918;
+	font-size: 11px;
+}
+
+.patch-fallback pre {
+	width: max-content;
+	min-width: 100%;
+	margin: 0;
+	padding: 10px;
+	font: 400 var(--code-size) / 1.55 var(--code-font-family);
+	white-space: pre;
+}
+
+.patch-fallback.wrap-lines pre {
+	width: 100%;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.diff-comment-chip {
+	max-width: min(540px, calc(100vw - 24px));
+	min-height: 26px;
+	margin: 3px 6px;
+	padding: 3px 7px;
+	border: 1px solid #6f5922;
+	border-radius: 999px;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: #f1d594;
+	background: #2d2617;
+	cursor: pointer;
+}
+
+.diff-comment-reference {
+	flex: 0 0 auto;
+	color: #f3dca7;
+	font-family: var(--code-font-family);
+}
+
+.diff-comment-preview {
+	min-width: 0;
+	overflow: hidden;
+	color: #d5c7a8;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

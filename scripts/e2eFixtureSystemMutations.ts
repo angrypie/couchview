@@ -9,6 +9,7 @@ import type {
 } from "../src/shared/contracts.ts";
 import {
 	API_ROUTES,
+	NATIVE_CLIENT_PROTOCOL,
 	parseArtifactDefinitionInput,
 	quoteArtifactInvocation,
 } from "../src/shared/contracts.ts";
@@ -67,6 +68,43 @@ function completeArtifactBuild(
 	run.buildId = build.id;
 }
 
+function handleNativeClientMutation(
+	state: FixtureMutableState,
+	context: FixtureRequestContext,
+): Response | null {
+	const { request, url } = context;
+	if (url.pathname === API_ROUTES.nativeClientPairings && request.method === "POST") {
+		state.nativePairingCounter += 1;
+		const code = `ABCDEF${String(state.nativePairingCounter + 21).slice(-2)}`;
+		const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+		const serverId = "11111111-2222-4333-8444-555555555555";
+		const deepLink = new URL("couchview://pair");
+		deepLink.searchParams.set("protocol", NATIVE_CLIENT_PROTOCOL);
+		deepLink.searchParams.set("baseUrl", url.origin);
+		deepLink.searchParams.set("serverId", serverId);
+		deepLink.searchParams.set("code", code);
+		deepLink.searchParams.set("expiresAt", expiresAt);
+		return fixtureJson(
+			{
+				protocol: NATIVE_CLIENT_PROTOCOL,
+				baseUrl: url.origin,
+				serverId,
+				code,
+				expiresAt,
+				deepLink: deepLink.toString(),
+			},
+			201,
+		);
+	}
+	const nativeClientRoute = /^\/api\/native-clients\/([^/]+)$/.exec(url.pathname);
+	if (nativeClientRoute && request.method === "DELETE") {
+		const clientId = decodeURIComponent(nativeClientRoute[1] ?? "");
+		state.nativeClients = state.nativeClients.filter((client) => client.id !== clientId);
+		return new Response(null, { status: 204, headers: fixtureSecurityHeaders });
+	}
+	return null;
+}
+
 export async function handleFixtureSystemMutation(
 	state: FixtureMutableState,
 	context: FixtureRequestContext,
@@ -86,6 +124,8 @@ export async function handleFixtureSystemMutation(
 		state.reset();
 		return fixtureJson({ reset: true });
 	}
+	const nativeClientResponse = handleNativeClientMutation(state, context);
+	if (nativeClientResponse) return nativeClientResponse;
 	if (url.pathname === API_ROUTES.settingsProfiles && request.method === "POST") {
 		const input = (await request.json()) as {
 			name: string;
