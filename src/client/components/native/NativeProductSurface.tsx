@@ -1,40 +1,18 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { ActivityIndicator, View } from "react-native";
 
+import { normalizeThemePreference } from "../../../shared/theme.ts";
 import type { ProductRouteMode } from "../../expo/productRouteMode.ts";
+import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
 import { nativeProductUrl } from "../../features/nativeServers/nativeProductUrl.ts";
 import { useNativeServerConnection } from "../../features/nativeServers/useNativeServerConnection.ts";
+import { Text } from "../ui/text";
+import { VStack } from "../ui/vstack";
 import { NativeHostedButton } from "./NativeControlHost.tsx";
-import { nativeTheme } from "./nativeTheme.ts";
+import { createNativeSurfaceScript } from "./nativeSurfaceBridge.ts";
 import SharedProductSurface from "./SharedProductSurface.tsx";
-
-const NATIVE_SURFACE_SCRIPT = `
-(function () {
-	function invoke(actionId) {
-		window.ReactNativeWebView?.postMessage(JSON.stringify({
-			type: "$$native_action",
-			data: { uid: Math.random().toString(36).slice(2), actionId: actionId, args: [] }
-		}));
-	}
-	function ready() { invoke("onSurfaceReady"); }
-	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", ready, { once: true });
-	} else {
-		ready();
-	}
-	document.addEventListener("click", function (event) {
-		var target = event.target;
-		var anchor = target && target.closest ? target.closest("a") : null;
-		if (!anchor || anchor.getAttribute("href") !== "couchview://servers") return;
-		event.preventDefault();
-		invoke("onManageServers");
-	}, true);
-})();
-true;
-`;
 
 function NativeSurfaceState(props: {
 	busy?: boolean;
@@ -44,24 +22,13 @@ function NativeSurfaceState(props: {
 	title: string;
 }) {
 	return (
-		<SafeAreaView
-			edges={["top", "right", "bottom", "left"]}
-			style={{ backgroundColor: nativeTheme.background, flex: 1 }}
-		>
-			<View
-				style={{
-					alignItems: "center",
-					flex: 1,
-					gap: 12,
-					justifyContent: "center",
-					padding: 24,
-				}}
-			>
-				{props.busy ? <ActivityIndicator color={nativeTheme.accent} size="large" /> : null}
-				<Text style={{ color: nativeTheme.text, fontSize: 20, fontWeight: "700" }}>
+		<View className="flex-1 bg-background p-safe">
+			<VStack className="flex-1 items-center justify-center p-6" space="md">
+				{props.busy ? <ActivityIndicator colorClassName="accent-primary" size="large" /> : null}
+				<Text bold className="text-center" size="xl">
 					{props.title}
 				</Text>
-				<Text selectable style={{ color: nativeTheme.muted, lineHeight: 21, textAlign: "center" }}>
+				<Text className="text-center leading-[21px] text-muted-foreground" selectable size="sm">
 					{props.message}
 				</Text>
 				{props.onRetry ? <NativeHostedButton label="Retry" onPress={props.onRetry} /> : null}
@@ -72,8 +39,8 @@ function NativeSurfaceState(props: {
 						variant="outlined"
 					/>
 				) : null}
-			</View>
-		</SafeAreaView>
+			</VStack>
+		</View>
 	);
 }
 
@@ -81,11 +48,17 @@ export function NativeProductSurface({ mode }: { mode: ProductRouteMode }) {
 	const router = useRouter();
 	const { repo } = useLocalSearchParams<{ repo?: string }>();
 	const { profiles } = useNativeServer();
+	const nativePreferences = useNativePreferences();
+	const { preferences } = nativePreferences;
 	const connection = useNativeServerConnection(profiles.activeProfile, profiles.update);
 	const [loading, setLoading] = useState(true);
 	const [surfaceError, setSurfaceError] = useState<string | null>(null);
 	const [reloadRevision, setReloadRevision] = useState(0);
 	const manageServers = () => router.push("/servers");
+	const surfaceScript = useMemo(
+		() => createNativeSurfaceScript(preferences.themePreference),
+		[preferences.themePreference],
+	);
 	const uri = useMemo(
 		() =>
 			profiles.activeProfile
@@ -156,7 +129,7 @@ export function NativeProductSurface({ mode }: { mode: ProductRouteMode }) {
 	}
 
 	return (
-		<View style={{ backgroundColor: nativeTheme.background, flex: 1 }}>
+		<View className="flex-1 bg-background">
 			<SharedProductSurface
 				key={`${uri}:${reloadRevision}`}
 				dom={{
@@ -164,25 +137,26 @@ export function NativeProductSurface({ mode }: { mode: ProductRouteMode }) {
 					automaticallyAdjustContentInsets: false,
 					automaticallyAdjustsScrollIndicatorInsets: false,
 					contentInsetAdjustmentBehavior: "never",
-					injectedJavaScript: NATIVE_SURFACE_SCRIPT,
+					injectedJavaScript: surfaceScript,
 					overrideUri: uri,
 					style: { flex: 1 },
 				}}
 				onManageServers={async () => manageServers()}
 				onSurfaceReady={async () => setLoading(false)}
+				onThemePreferenceChange={async (nextPreference) => {
+					const normalized = normalizeThemePreference(nextPreference);
+					if (normalized !== preferences.themePreference) {
+						nativePreferences.update({ themePreference: normalized });
+					}
+				}}
+				themePreference={preferences.themePreference}
 			/>
 			{loading ? (
 				<View
+					className="absolute inset-0 items-center justify-center bg-background uw-entering-fade-in uw-entering-duration-150 uw-exiting-fade-out uw-exiting-duration-150"
 					pointerEvents="none"
-					style={{
-						alignItems: "center",
-						backgroundColor: nativeTheme.background,
-						inset: 0,
-						justifyContent: "center",
-						position: "absolute",
-					}}
 				>
-					<ActivityIndicator color={nativeTheme.accent} size="large" />
+					<ActivityIndicator colorClassName="accent-primary" size="large" />
 				</View>
 			) : null}
 		</View>

@@ -1,8 +1,15 @@
+import {
+	DEFAULT_THEME_PREFERENCE,
+	normalizeThemePreference,
+	type ThemePreference,
+} from "../../../shared/theme.ts";
+
 export interface NativePreferences {
 	diffFontSize: number;
 	terminalFontSize: number;
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
+	themePreference: ThemePreference;
 }
 
 export const DEFAULT_NATIVE_PREFERENCES: NativePreferences = {
@@ -10,6 +17,7 @@ export const DEFAULT_NATIVE_PREFERENCES: NativePreferences = {
 	terminalFontSize: 13,
 	lineNumbersVisible: true,
 	lineWrapEnabled: false,
+	themePreference: DEFAULT_THEME_PREFERENCE,
 };
 
 function boundedFontSize(value: unknown, fallback: number): number {
@@ -35,5 +43,6 @@ export function normalizeNativePreferences(value: unknown): NativePreferences {
 			typeof candidate.lineWrapEnabled === "boolean"
 				? candidate.lineWrapEnabled
 				: DEFAULT_NATIVE_PREFERENCES.lineWrapEnabled,
+		themePreference: normalizeThemePreference(candidate.themePreference),
 	};
 }

@@ -9,8 +9,45 @@
 	--red: #ff7f85;
 	--red-bg: #321a1e;
 	--selection: #3a4e77;
+	--diff-context: #121820;
+	--diff-separator: #17243a;
+	--diff-number: #718096;
+	--surface-sunken: #090d12;
+	--warning: #f8dc9f;
+	--warning-bg: rgb(82 61 20 / 96%);
+	--warning-raised: #493918;
+	--warning-border: #6f5922;
+	--warning-soft: #2d2617;
+	--warning-text: #f1d594;
+	--warning-strong: #f3dca7;
+	--warning-muted: #d5c7a8;
 	--code-size: 13px;
 	--code-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+}
+
+:root[data-resolved-theme="light"] {
+	color-scheme: light;
+	--bg: #f6f8fb;
+	--text: #1d2633;
+	--muted: #5d6a7b;
+	--accent: #315fc4;
+	--green: #147c48;
+	--green-bg: #e1f5ea;
+	--red: #c4363d;
+	--red-bg: #fde8ea;
+	--selection: #c9d9fa;
+	--diff-context: #ffffff;
+	--diff-separator: #e7edf5;
+	--diff-number: #69778a;
+	--surface-sunken: #edf1f6;
+	--warning: #6f4b10;
+	--warning-bg: rgb(255 244 214 / 96%);
+	--warning-raised: #f4dfaa;
+	--warning-border: #c69a42;
+	--warning-soft: #fff4d6;
+	--warning-text: #744f12;
+	--warning-strong: #62420f;
+	--warning-muted: #7a6233;
 }
 
 * {
@@ -27,6 +64,13 @@ body,
 
 body {
 	overflow: hidden;
+	background: var(--bg);
+	color: var(--text);
+}
+
+.native-diff-root {
+	height: 100vh;
+	overflow: auto;
 	background: var(--bg);
 	color: var(--text);
 }
@@ -50,12 +94,12 @@ button {
 	text-size-adjust: 100%;
 	--viewer-bg: var(--bg);
 	--viewer-text: var(--text);
-	--viewer-context: #121820;
-	--viewer-separator: #17243a;
+	--viewer-context: var(--diff-context);
+	--viewer-separator: var(--diff-separator);
 	--viewer-addition: var(--green-bg);
 	--viewer-deletion: var(--red-bg);
 	--viewer-selection: var(--selection);
-	--viewer-number: #718096;
+	--viewer-number: var(--diff-number);
 	--viewer-green: var(--green);
 	--viewer-red: var(--red);
 	--viewer-accent: var(--accent);
@@ -82,8 +126,8 @@ button {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	color: #f8dc9f;
-	background: rgb(82 61 20 / 96%);
+	color: var(--warning);
+	background: var(--warning-bg);
 	font-size: 10px;
 	font-weight: 700;
 }
@@ -92,8 +136,8 @@ button {
 	position: absolute;
 	inset: 0;
 	overflow: auto;
-	color: #b9c4d1;
-	background: #090d12;
+	color: var(--muted);
+	background: var(--surface-sunken);
 }
 
 .patch-fallback-message {
@@ -101,8 +145,8 @@ button {
 	top: 0;
 	z-index: 2;
 	padding: 8px 10px;
-	color: #f8dc9f;
-	background: #493918;
+	color: var(--warning);
+	background: var(--warning-raised);
 	font-size: 11px;
 }
 
@@ -126,26 +170,26 @@ button {
 	min-height: 26px;
 	margin: 3px 6px;
 	padding: 3px 7px;
-	border: 1px solid #6f5922;
+	border: 1px solid var(--warning-border);
 	border-radius: 999px;
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	color: #f1d594;
-	background: #2d2617;
+	color: var(--warning-text);
+	background: var(--warning-soft);
 	cursor: pointer;
 }
 
 .diff-comment-reference {
 	flex: 0 0 auto;
-	color: #f3dca7;
+	color: var(--warning-strong);
 	font-family: var(--code-font-family);
 }
 
 .diff-comment-preview {
 	min-width: 0;
 	overflow: hidden;
-	color: #d5c7a8;
+	color: var(--warning-muted);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }

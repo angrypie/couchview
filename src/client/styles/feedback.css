@@ -9,7 +9,7 @@
 	align-items: center;
 	gap: 11px;
 	color: var(--text);
-	background: rgb(11 13 16 / 94%);
+	background: var(--surface-overlay);
 	text-align: center;
 }
 
@@ -24,7 +24,7 @@
 	width: 36px;
 	height: 4px;
 	border-radius: 99px;
-	background: #556170;
+	background: var(--muted);
 }
 
 .sheet-header {
@@ -42,7 +42,7 @@
 	margin-top: 7px;
 	padding: 2px;
 	border-radius: 9px;
-	background: #0e1319;
+	background: var(--surface-solid);
 }
 
 .segmented button {
@@ -71,7 +71,7 @@
 	width: 100%;
 	padding: 8px;
 	border-radius: 8px;
-	color: #cbd5e1;
+	color: var(--text);
 	background: transparent;
 	text-align: left;
 }
@@ -82,7 +82,7 @@
 
 .result-path {
 	overflow: hidden;
-	color: #99b9f7;
+	color: var(--accent);
 	font:
 		600 10px / 1.35 ui-monospace,
 		SFMono-Regular,
@@ -105,26 +105,26 @@
 .result-preview {
 	margin-top: 2px;
 	overflow: hidden;
-	color: #a8b3c0;
+	color: var(--muted);
 	text-overflow: ellipsis;
 }
 
 .match {
 	border-radius: 2px;
-	color: #fff3c9;
-	background: #6a541f;
+	color: var(--yellow);
+	background: var(--yellow-bg);
 }
 
 .source-preview {
 	min-height: 0;
 	overflow: auto;
-	background: #0e1319;
+	background: var(--surface-sunken);
 }
 
 .source-path {
 	padding: 8px 10px;
 	border-bottom: 1px solid var(--line);
-	color: #9fb4d1;
+	color: var(--accent);
 	font:
 		600 10px / 1.4 ui-monospace,
 		SFMono-Regular,
@@ -144,8 +144,8 @@
 
 .source-number {
 	padding-right: 0.8ch;
-	color: #647181;
-	background: #11161d;
+	color: var(--muted);
+	background: var(--panel);
 	text-align: right;
 	user-select: none;
 }
@@ -162,20 +162,20 @@
 	width: min(calc(100% - 16px), 470px);
 	min-height: 47px;
 	padding: 5px 5px 5px 10px;
-	border: 1px solid #46689f;
+	border: 1px solid var(--accent);
 	border-radius: 11px;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	background: #192842;
-	box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+	background: var(--accent-soft);
+	box-shadow: var(--shadow);
 	transform: translateX(-50%);
 }
 
 .selection-copy {
 	min-width: 0;
-	color: #cbdaf3;
+	color: var(--accent);
 	font-size: 10px;
 	line-height: 1.3;
 }
@@ -199,18 +199,18 @@
 	border: 1px solid var(--line-soft);
 	border-radius: 9px;
 	color: inherit;
-	background: #151b23;
+	background: var(--panel-raised);
 	text-align: left;
 }
 
 .comment-card.focused {
-	border-color: #617eb2;
-	background: #1b2637;
+	border-color: var(--accent);
+	background: var(--accent-soft);
 	box-shadow: inset 2px 0 var(--accent);
 }
 
 .comment-reference {
-	color: #9bb9ee;
+	color: var(--accent);
 	font:
 		650 10px / 1.35 ui-monospace,
 		SFMono-Regular,
@@ -220,7 +220,7 @@
 
 .comment-body {
 	margin: 6px 0 0;
-	color: #d4dce6;
+	color: var(--text);
 	font-size: 12px;
 	line-height: 1.45;
 	white-space: pre-wrap;
@@ -236,7 +236,7 @@
 	min-height: 38px;
 	padding: 6px 10px;
 	border-radius: 8px;
-	color: #adc5f2;
+	color: var(--accent);
 	background: transparent;
 	font-size: 11px;
 	font-weight: 700;
@@ -272,15 +272,15 @@
 	align-items: center;
 	gap: 6px;
 	color: var(--muted);
-	background: rgb(16 21 28 / 88%);
-	box-shadow: 0 4px 16px rgb(0 0 0 / 30%);
+	background: var(--surface-overlay);
+	box-shadow: var(--shadow);
 	font-size: 10px;
 	pointer-events: none;
 }
 
 .state-icon {
 	margin-bottom: 12px;
-	color: #687587;
+	color: var(--muted);
 }
 
 .state-title {
@@ -312,7 +312,7 @@
 .state-help {
 	max-width: 380px;
 	margin: 12px 0 0;
-	color: #687587;
+	color: var(--muted);
 	font-size: 10px;
 	line-height: 1.5;
 }
@@ -325,8 +325,8 @@
 	overflow: auto;
 	border: 1px solid var(--line);
 	border-radius: 8px;
-	color: #aebaca;
-	background: #0a0e13;
+	color: var(--text);
+	background: var(--surface-sunken);
 	font: 400 10px / 1.5 var(--code-font-family);
 	font-variant-ligatures: none;
 	font-feature-settings:
@@ -344,7 +344,6 @@
 	position: fixed;
 	z-index: 100;
 	left: 50%;
-	bottom: calc(67px + env(safe-area-inset-bottom));
 	width: min(calc(100% - 16px), 420px);
 	transform: translateX(-50%);
 	pointer-events: none;
@@ -359,8 +358,8 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: 10px;
-	color: #dce5ef;
-	background: #202731;
+	color: var(--text);
+	background: var(--panel-raised);
 	box-shadow: var(--shadow);
 	font-size: 11px;
 	pointer-events: auto;
@@ -372,8 +371,8 @@
 }
 
 .update-toast {
-	border-color: #3c5d91;
-	background: #182740;
+	border-color: var(--accent);
+	background: var(--accent-soft);
 }
 
 .disconnected-banner {
@@ -387,10 +386,11 @@
 	align-items: center;
 	justify-content: center;
 	gap: 6px;
-	color: #ffd8da;
-	background: #5b2025;
+	color: var(--red);
+	background: var(--red-bg);
 	font-size: 10px;
 	font-weight: 700;
+	animation: toast-in 150ms ease-out;
 }
 
 .sr-only {

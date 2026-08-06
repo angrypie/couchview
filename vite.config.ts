@@ -1,4 +1,6 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import { uniwind } from "uniwind/vite";
 import { defineConfig, loadEnv } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
@@ -30,6 +32,11 @@ export default defineConfig(({ mode }) => {
 	return {
 		plugins: [
 			externalizeGhosttyWasm(),
+			tailwindcss(),
+			uniwind({
+				cssEntryFile: "./global.css",
+				dtsFile: "./.uniwind-types.generated.d.ts",
+			}),
 			react(),
 			VitePWA({
 				registerType: "prompt",

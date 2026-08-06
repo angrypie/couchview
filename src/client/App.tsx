@@ -12,12 +12,14 @@ import { useRepositoryWorkspace } from "./features/repositories/useRepositoryWor
 import { useReviewWorkflow } from "./features/review/useReviewWorkflow.ts";
 import { useDisplayPreferences } from "./features/settings/useDisplayPreferences.ts";
 import { useSettingsProfiles } from "./features/settings/useSettingsProfiles.ts";
+import { useThemePreference } from "./features/settings/useThemePreference.ts";
 import { useReviewShellCommands } from "./features/shell/useReviewShellCommands.ts";
 import { useWorkspaceNavigation } from "./features/shell/useWorkspaceNavigation.ts";
 import { useChangedFileFilters } from "./features/staging/useChangedFileFilters.ts";
 import { COMPACT_LANDSCAPE_QUERY, SPLIT_VIEW_QUERY, useMediaQuery } from "./lib/mediaQuery.ts";
 
 export function App() {
+	const theme = useThemePreference();
 	const workspace = useRepositoryWorkspace();
 	const {
 		bootstrap,
@@ -116,6 +118,7 @@ export function App() {
 	});
 	const displayPreferences = useDisplayPreferences({
 		profile: settings.activeProfile,
+		themeType: theme.resolvedTheme,
 		updateProfileData: settings.updateActiveProfileData,
 	});
 
@@ -213,6 +216,7 @@ export function App() {
 			showToast={showToast}
 			splitView={splitView}
 			terminalCapability={terminalCapability}
+			theme={theme}
 			workflow={workflow}
 			workspace={workspace}
 		/>

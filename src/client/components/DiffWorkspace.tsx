@@ -10,6 +10,7 @@ import {
 import type { RefObject } from "react";
 import type { FileDiff, ReviewComment } from "../../shared/contracts.ts";
 import type { TypographyPreferences } from "../../shared/settings.ts";
+import type { ResolvedTheme } from "../../shared/theme.ts";
 import { DiffViewer, type DiffViewerHandle } from "../DiffViewer.tsx";
 import type { CommentSelection } from "../features/review/diffModel.ts";
 import { codeFontStack } from "../typographyPreferences.ts";
@@ -36,6 +37,7 @@ interface DiffWorkspaceProps {
 	rowCount: number;
 	retryAvailable: boolean;
 	selection: CommentSelection | null;
+	themeType: ResolvedTheme;
 	typography: TypographyPreferences["diff"];
 	viewerRef: RefObject<DiffViewerHandle | null>;
 	viewerSelection: SelectedLineRange | null;
@@ -81,6 +83,7 @@ export function DiffWorkspace({
 	rowCount,
 	retryAvailable,
 	selection,
+	themeType,
 	typography,
 	viewerRef,
 	viewerSelection,
@@ -153,6 +156,7 @@ export function DiffWorkspace({
 					onVisibleLineChange={onVisibleLineChange}
 					ref={viewerRef}
 					selectedRange={viewerSelection}
+					themeType={themeType}
 					widthAdjustment={typography.widthAdjustment}
 				/>
 			) : null}

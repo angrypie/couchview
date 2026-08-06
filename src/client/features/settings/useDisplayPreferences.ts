@@ -4,15 +4,18 @@ import {
 	type SettingsProfile,
 	type SettingsProfileData,
 } from "../../../shared/settings.ts";
+import type { ResolvedTheme } from "../../../shared/theme.ts";
 import { codeFontStack, terminalRendererConfig } from "../../typographyPreferences.ts";
 
 interface UseDisplayPreferencesOptions {
 	profile: SettingsProfile;
 	updateProfileData: (update: (current: SettingsProfileData) => SettingsProfileData) => void;
+	themeType: ResolvedTheme;
 }
 
 export function useDisplayPreferences({
 	profile,
+	themeType,
 	updateProfileData,
 }: UseDisplayPreferencesOptions) {
 	const typography = profile.data.typography;
@@ -23,12 +26,13 @@ export function useDisplayPreferences({
 		[profile.data.keyboard],
 	);
 	const terminalConfig = useMemo(
-		() => terminalRendererConfig(typography.terminal),
+		() => terminalRendererConfig(typography.terminal, themeType),
 		[
 			typography.terminal.cellHeightAdjustment,
 			typography.terminal.cellWidthAdjustment,
 			typography.terminal.fontFamily,
 			typography.terminal.fontSize,
+			themeType,
 		],
 	);
 

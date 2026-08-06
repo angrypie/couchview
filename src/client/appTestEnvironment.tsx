@@ -1,6 +1,7 @@
 import { mock } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type { ResolvedTheme } from "../shared/theme.ts";
 import { terminalPreviewRendererFactory, terminalRendererFactory } from "./terminalTestFakes.ts";
 import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 
@@ -14,6 +15,88 @@ if (!GlobalRegistrator.isRegistered) {
 }
 
 const React = await import("react");
+
+type TestThemeSnapshot = {
+	hasAdaptiveThemes: boolean;
+	theme: "light" | "dark";
+};
+
+interface TestThemeWrite {
+	preference: "system" | "light" | "dark";
+	transition?: { preset: number };
+}
+
+let testSystemTheme: TestThemeSnapshot["theme"] = "dark";
+let testThemeSnapshot: TestThemeSnapshot = { hasAdaptiveThemes: true, theme: testSystemTheme };
+const testThemeListeners = new Set<() => void>();
+const testThemeWrites: TestThemeWrite[] = [];
+
+function publishTestTheme(snapshot: TestThemeSnapshot): void {
+	document.documentElement.classList.remove("light", "dark");
+	document.documentElement.classList.add(snapshot.theme);
+	if (
+		testThemeSnapshot.hasAdaptiveThemes === snapshot.hasAdaptiveThemes &&
+		testThemeSnapshot.theme === snapshot.theme
+	) {
+		return;
+	}
+	testThemeSnapshot = snapshot;
+	for (const listener of testThemeListeners) listener();
+}
+
+function useTestUniwind() {
+	return React.useSyncExternalStore(
+		(listener) => {
+			testThemeListeners.add(listener);
+			return () => {
+				testThemeListeners.delete(listener);
+			};
+		},
+		() => testThemeSnapshot,
+		() => testThemeSnapshot,
+	);
+}
+
+export const testThemeRuntime = {
+	get writes(): readonly TestThemeWrite[] {
+		return testThemeWrites;
+	},
+	reset() {
+		testSystemTheme = "dark";
+		testThemeWrites.length = 0;
+		publishTestTheme({ hasAdaptiveThemes: true, theme: testSystemTheme });
+	},
+	setSystemTheme(theme: TestThemeSnapshot["theme"]) {
+		testSystemTheme = theme;
+		if (testThemeSnapshot.hasAdaptiveThemes) {
+			publishTestTheme({ hasAdaptiveThemes: true, theme });
+		}
+	},
+};
+
+mock.module("uniwind", () => ({
+	ThemeTransitionPreset: {
+		Fade: 1,
+		None: 0,
+	},
+	Uniwind: {
+		get currentTheme() {
+			return testThemeSnapshot.theme;
+		},
+		get hasAdaptiveThemes() {
+			return testThemeSnapshot.hasAdaptiveThemes;
+		},
+		setTheme(preference: "system" | "light" | "dark", transition?: { preset: number }) {
+			testThemeWrites.push({ preference, transition });
+			publishTestTheme({
+				hasAdaptiveThemes: preference === "system",
+				theme: preference === "system" ? testSystemTheme : preference,
+			});
+		},
+	},
+	useUniwind: useTestUniwind,
+}));
+
 export const viewerCommentJumps: string[] = [];
 export const viewerHunkJumps: number[] = [];
 export const viewerState: {
@@ -30,6 +113,7 @@ interface MockDiffViewerProps {
 	widthAdjustment: number;
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
+	themeType?: ResolvedTheme;
 	onCommentClick(comment: ReviewComment): void;
 	onIdentifierClick(identifier: string): void;
 	onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
@@ -46,6 +130,7 @@ mock.module("./DiffViewer.tsx", () => ({
 			widthAdjustment,
 			lineNumbersVisible,
 			lineWrapEnabled,
+			themeType,
 			onCommentClick,
 			onIdentifierClick,
 			onLineNumberClick,
@@ -68,6 +153,7 @@ mock.module("./DiffViewer.tsx", () => ({
 			<div
 				className="pierre-code-view"
 				data-line-wrap={String(lineWrapEnabled)}
+				data-theme-type={themeType}
 				data-testid="pierre-code-view"
 				style={{
 					fontFamily,

@@ -235,7 +235,7 @@ export class RepositoryCommandRunner {
 			command.stopTimer = setTimeout(() => {
 				if (ACTIVE_STATUSES.has(command.summary.status)) this.kill(command, "SIGKILL");
 			}, STOP_GRACE_MS);
-			command.stopTimer.unref?.();
+			(command.stopTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
 		}
 		return cloneSummary(command.summary);
 	}

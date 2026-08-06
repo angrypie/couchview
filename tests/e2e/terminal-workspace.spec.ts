@@ -104,6 +104,15 @@ test.describe("desktop tmux terminal", () => {
 			.evaluate((canvas, rows) => {
 				const context = (canvas as HTMLCanvasElement).getContext("2d");
 				if (!context) return -1;
+				const surface = (canvas as HTMLCanvasElement).closest<HTMLElement>(".terminal-workspace");
+				const expectedColor = getComputedStyle(surface ?? document.documentElement)
+					.getPropertyValue("--terminal-background")
+					.trim();
+				const expected = document.createElement("canvas").getContext("2d");
+				if (!expected) return -1;
+				expected.fillStyle = expectedColor;
+				expected.fillRect(0, 0, 1, 1);
+				const expectedPixel = expected.getImageData(0, 0, 1, 1).data;
 				const rowHeight = (canvas as HTMLCanvasElement).height / rows;
 				const pixels = context.getImageData(
 					0,
@@ -113,7 +122,11 @@ test.describe("desktop tmux terminal", () => {
 				).data;
 				let contaminated = 0;
 				for (let index = 0; index < pixels.length; index += 4) {
-					if (pixels[index] !== 30 || pixels[index + 1] !== 30 || pixels[index + 2] !== 46) {
+					if (
+						pixels[index] !== expectedPixel[0] ||
+						pixels[index + 1] !== expectedPixel[1] ||
+						pixels[index + 2] !== expectedPixel[2]
+					) {
 						contaminated += 1;
 					}
 				}

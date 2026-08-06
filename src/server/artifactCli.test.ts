@@ -397,7 +397,7 @@ describe("artifact CLI against a real server", () => {
 			json: false,
 		};
 		const intermediaryFetch: typeof fetch = Object.assign(
-			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			async (input: URL | RequestInfo, init?: RequestInit) => {
 				const response = await fetch(input, init);
 				const requestUrl = input instanceof Request ? input.url : String(input);
 				if (!response.ok || !requestUrl.endsWith("/download")) return response;
@@ -433,7 +433,7 @@ describe("artifact CLI against a real server", () => {
 			output: path.join(clientDirectory, "missing-metadata.bin"),
 		};
 		const withoutExecutableMetadata: typeof fetch = Object.assign(
-			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			async (input: URL | RequestInfo, init?: RequestInit) => {
 				const response = await fetch(input, init);
 				const requestUrl = input instanceof Request ? input.url : String(input);
 				if (!response.ok || !requestUrl.endsWith("/download")) return response;
@@ -459,7 +459,7 @@ describe("artifact CLI against a real server", () => {
 		).rejects.toThrow("does not provide executable artifact metadata");
 
 		const mismatchedExecutableMetadata: typeof fetch = Object.assign(
-			async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+			async (input: URL | RequestInfo, init?: RequestInit) => {
 				const response = await fetch(input, init);
 				const requestUrl = input instanceof Request ? input.url : String(input);
 				if (!response.ok || !requestUrl.endsWith("/download")) return response;

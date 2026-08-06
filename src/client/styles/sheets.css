@@ -36,7 +36,7 @@
 	border-bottom: 1px solid var(--line);
 	display: grid;
 	gap: 6px;
-	background: #11171e;
+	background: var(--panel);
 }
 
 .package-run-context > div {
@@ -55,7 +55,7 @@
 .package-run-context code {
 	min-width: 0;
 	overflow: hidden;
-	color: #d5dfeb;
+	color: var(--text);
 	font:
 		500 9px / 1.4 ui-monospace,
 		SFMono-Regular,
@@ -71,8 +71,8 @@
 	margin: 0;
 	padding: 10px;
 	overflow: auto;
-	color: #c7d2df;
-	background: #080c11;
+	color: var(--text);
+	background: var(--surface-sunken);
 	font:
 		400 10px / 1.5 ui-monospace,
 		SFMono-Regular,
@@ -87,11 +87,11 @@
 }
 
 .package-output-stderr {
-	color: #f0b9bd;
+	color: var(--red);
 }
 
 .package-output-notice {
-	color: #e4c67e;
+	color: var(--yellow);
 }
 
 .package-output-empty {
@@ -278,8 +278,8 @@
 }
 
 .danger-action {
-	color: #fff1f2;
-	background: #8f3340;
+	color: rgb(var(--ui-destructive-foreground));
+	background: rgb(var(--ui-destructive));
 }
 
 .repository-picker {
@@ -289,13 +289,13 @@
 .repository-add-form {
 	padding: 8px 10px;
 	border-bottom: 1px solid var(--line);
-	background: #11171e;
+	background: var(--panel);
 }
 
 .repository-add-form label {
 	display: block;
 	margin-bottom: 5px;
-	color: #aeb9c7;
+	color: var(--muted);
 	font-size: 10px;
 	font-weight: 700;
 }
@@ -312,7 +312,7 @@
 	border: 1px solid var(--line);
 	border-radius: 9px;
 	color: var(--text);
-	background: #0e1319;
+	background: var(--surface-solid);
 	font: inherit;
 }
 
@@ -324,8 +324,8 @@
 	width: 38px;
 	height: 38px;
 	border: 1px solid var(--line);
-	color: #c8d5e5;
-	background: #171f29;
+	color: var(--text);
+	background: var(--panel-raised);
 }
 
 .repository-directory-picker {
@@ -342,8 +342,8 @@
 	padding: 8px 11px;
 	border-bottom: 1px solid var(--line);
 	overflow: hidden;
-	color: #b9c9e5;
-	background: #11171e;
+	color: var(--text);
+	background: var(--panel);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -374,7 +374,7 @@
 	align-items: center;
 	gap: 8px;
 	color: var(--text);
-	background: #151b23;
+	background: var(--panel-raised);
 	cursor: pointer;
 	text-align: left;
 }
@@ -389,7 +389,7 @@
 }
 
 .repository-directory-row.parent {
-	color: #b9c9e5;
+	color: var(--text);
 }
 
 .repository-directory-row span {
@@ -426,16 +426,16 @@
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 44px;
 	align-items: center;
-	background: #151b23;
+	background: var(--panel-raised);
 }
 
 .repository-row.current {
-	border-color: #46679e;
+	border-color: var(--accent);
 	box-shadow: inset 2px 0 var(--accent);
 }
 
 .repository-row.unavailable {
-	background: #12171d;
+	background: var(--panel);
 }
 
 .repository-select {
@@ -455,7 +455,7 @@
 }
 
 .repository-select:disabled {
-	color: #8994a2;
+	color: var(--muted);
 	cursor: default;
 }
 
@@ -484,8 +484,8 @@
 .repository-row-status {
 	padding: 2px 6px;
 	border-radius: 999px;
-	color: #f4d28c;
-	background: #493b20;
+	color: var(--yellow);
+	background: var(--yellow-bg);
 	font-size: 9px;
 	font-weight: 750;
 }
@@ -502,7 +502,7 @@
 }
 
 .repository-picker .sheet-footer code {
-	color: #b9c9e5;
+	color: var(--text);
 	font: inherit;
 }
 
@@ -529,13 +529,13 @@
 .remote-bridge-status {
 	margin-bottom: 9px;
 	padding: 10px;
-	border: 1px solid #2f624d;
+	border: 1px solid color-mix(in srgb, var(--green) 40%, var(--line));
 	border-radius: 11px;
 	display: flex;
 	align-items: flex-start;
 	gap: 9px;
-	color: #b9f2d5;
-	background: #12261e;
+	color: var(--green);
+	background: var(--green-bg);
 }
 
 .remote-bridge-status > svg {
@@ -566,7 +566,7 @@
 	padding: 11px;
 	border: 1px solid var(--line-soft);
 	border-radius: 11px;
-	background: #141a22;
+	background: var(--panel);
 }
 
 .remote-bridge-card h3 {
@@ -607,11 +607,11 @@
 	grid-template-columns: 22px minmax(0, 1fr) 36px;
 	align-items: center;
 	gap: 7px;
-	background: #10151c;
+	background: var(--surface-solid);
 }
 
 .remote-bridge-device-icon {
-	color: #aebbd0;
+	color: var(--muted);
 }
 
 .remote-bridge-device-commands {
@@ -630,7 +630,7 @@
 
 .remote-bridge-launch-heading strong {
 	margin-right: auto;
-	color: #b9c9e5;
+	color: var(--text);
 	font-size: 10px;
 }
 
@@ -685,7 +685,7 @@
 .remote-bridge-form label {
 	display: block;
 	margin-bottom: 5px;
-	color: #aeb9c7;
+	color: var(--muted);
 	font-size: 10px;
 	font-weight: 700;
 }
@@ -702,7 +702,7 @@
 	border-radius: 9px;
 	padding: 8px 9px;
 	color: var(--text);
-	background: #0e1319;
+	background: var(--surface-solid);
 	font: inherit;
 }
 
@@ -768,8 +768,8 @@
 	border: 1px solid var(--line);
 	border-radius: 9px;
 	overflow: auto;
-	color: #d6e4f7;
-	background: #0b1016;
+	color: var(--text);
+	background: var(--surface-sunken);
 	font:
 		500 10px / 1.45 ui-monospace,
 		SFMono-Regular,
@@ -788,9 +788,9 @@
 
 .remote-bridge-error {
 	padding: 8px 9px;
-	border: 1px solid #773d45;
+	border: 1px solid color-mix(in srgb, var(--red) 40%, var(--line));
 	border-radius: 9px;
-	color: #ffd9dc;
+	color: var(--red);
 	background: var(--red-bg);
 	font-size: 10px;
 	line-height: 1.4;

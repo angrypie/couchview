@@ -3,15 +3,8 @@ import { FlashList } from "@shopify/flash-list";
 import { Link, useRouter } from "expo-router";
 import { Check, FileText, ListTree, Menu, MessageSquarePlus } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import {
-	ActivityIndicator,
-	Alert,
-	Pressable,
-	Text,
-	TextInput,
-	useWindowDimensions,
-	View,
-} from "react-native";
+import { ActivityIndicator, Alert, Pressable, useWindowDimensions, View } from "react-native";
+import { withUniwind } from "uniwind";
 
 import type { ChangeFile, FileDiff, RepositoryCatalogEntry } from "../../../shared/contracts.ts";
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
@@ -21,9 +14,14 @@ import {
 	useNativeWorkspace,
 } from "../../features/nativeServers/useNativeWorkspace.ts";
 import { selectWorkbenchLayout } from "../../lib/workbenchLayout.ts";
+import { Button, ButtonIcon, ButtonText } from "../ui/button";
+import { Input, InputField } from "../ui/input";
+import { Text } from "../ui/text";
 import { type NativeCommand, NativeCommandPalette } from "./NativeCommandPalette.tsx";
 import NativeDiffSurface from "./NativeDiffSurface.tsx";
-import { nativeTheme } from "./nativeTheme.ts";
+
+const ThemedBottomSheetView = withUniwind(BottomSheetView);
+const ThemedFileText = withUniwind(FileText);
 
 function ActionButton(props: {
 	label: string;
@@ -34,28 +32,16 @@ function ActionButton(props: {
 }) {
 	const Icon = props.icon;
 	return (
-		<Pressable
+		<Button
 			accessibilityLabel={props.label}
 			disabled={props.disabled}
 			onPress={props.onPress}
-			style={{
-				alignItems: "center",
-				backgroundColor: props.active ? nativeTheme.accentStrong : nativeTheme.panelRaised,
-				borderColor: nativeTheme.border,
-				borderRadius: 9,
-				borderWidth: 1,
-				flexDirection: "row",
-				gap: 6,
-				opacity: props.disabled ? 0.5 : 1,
-				paddingHorizontal: 10,
-				paddingVertical: 8,
-			}}
+			size="sm"
+			variant={props.active ? "default" : "secondary"}
 		>
-			{Icon ? <Icon color={nativeTheme.text} size={15} /> : null}
-			<Text style={{ color: nativeTheme.text, fontSize: 12, fontWeight: "600" }}>
-				{props.label}
-			</Text>
-		</Pressable>
+			{Icon ? <ButtonIcon as={Icon} /> : null}
+			<ButtonText>{props.label}</ButtonText>
+		</Button>
 	);
 }
 
@@ -68,26 +54,23 @@ function FileRail(props: {
 	onSelect(fileId: string): void;
 }) {
 	return (
-		<View style={{ backgroundColor: nativeTheme.panel, flex: 1, minWidth: 250 }}>
-			<View style={{ borderBottomColor: nativeTheme.border, borderBottomWidth: 1, padding: 8 }}>
-				<Text style={{ color: nativeTheme.muted, fontSize: 11, fontWeight: "700" }}>
+		<View className="min-w-[250px] flex-1 bg-card">
+			<View className="border-b border-border p-2">
+				<Text bold className="text-muted-foreground" size="xs">
 					REPOSITORIES
 				</Text>
 				{props.repositories.map((repository) => (
 					<Pressable
+						className={
+							repository.id === props.repositoryId
+								? "rounded-lg bg-muted px-2 py-[7px] disabled:opacity-50"
+								: "rounded-lg bg-transparent px-2 py-[7px] active:bg-muted disabled:opacity-50"
+						}
 						disabled={!repository.available}
 						key={repository.id}
 						onPress={() => props.onSelectRepository(repository.id)}
-						style={{
-							backgroundColor:
-								repository.id === props.repositoryId ? nativeTheme.panelRaised : "transparent",
-							borderRadius: 8,
-							opacity: repository.available ? 1 : 0.45,
-							paddingHorizontal: 8,
-							paddingVertical: 7,
-						}}
 					>
-						<Text numberOfLines={1} style={{ color: nativeTheme.text, fontSize: 12 }}>
+						<Text numberOfLines={1} size="xs">
 							{repository.name}
 						</Text>
 					</Pressable>
@@ -98,21 +81,17 @@ function FileRail(props: {
 				keyExtractor={(file) => file.id}
 				renderItem={({ item }) => (
 					<Pressable
+						className={
+							item.id === props.selectedFileId
+								? "gap-[3px] border-b border-border bg-muted px-3 py-2.5"
+								: "gap-[3px] border-b border-border bg-transparent px-3 py-2.5 active:bg-muted"
+						}
 						onPress={() => props.onSelect(item.id)}
-						style={{
-							backgroundColor:
-								item.id === props.selectedFileId ? nativeTheme.panelRaised : "transparent",
-							borderBottomColor: nativeTheme.border,
-							borderBottomWidth: 1,
-							gap: 3,
-							paddingHorizontal: 12,
-							paddingVertical: 10,
-						}}
 					>
-						<Text numberOfLines={1} style={{ color: nativeTheme.text, fontSize: 13 }}>
+						<Text numberOfLines={1} size="sm">
 							{item.path}
 						</Text>
-						<Text style={{ color: nativeTheme.muted, fontSize: 11 }}>
+						<Text className="text-muted-foreground" size="xs">
 							{item.kind} · +{item.additions ?? 0} −{item.deletions ?? 0}
 							{item.reviewed ? " · reviewed" : ""}
 						</Text>
@@ -171,31 +150,23 @@ function CommentComposer(props: {
 			onClose={props.onClose}
 			snapPoints={["80%"]}
 		>
-			<BottomSheetView
-				style={{ backgroundColor: nativeTheme.background, flex: 1, gap: 14, padding: 18 }}
-			>
-				<Text selectable style={{ color: nativeTheme.text, fontSize: 20, fontWeight: "700" }}>
+			<ThemedBottomSheetView className="flex-1 gap-3.5 bg-background p-[18px]">
+				<Text bold selectable size="xl">
 					Add comment
 				</Text>
-				<TextInput
-					accessibilityLabel="Comment"
-					autoFocus
-					multiline
-					onChangeText={setBody}
-					placeholder="What should change?"
-					placeholderTextColor={nativeTheme.muted}
-					style={{
-						backgroundColor: nativeTheme.panelRaised,
-						borderColor: nativeTheme.border,
-						borderRadius: 12,
-						borderWidth: 1,
-						color: nativeTheme.text,
-						minHeight: 160,
-						padding: 12,
-					}}
-					value={body}
-				/>
-				<View style={{ flexDirection: "row", gap: 8 }}>
+				<Input className="min-h-40 items-start">
+					<InputField
+						accessibilityLabel="Comment"
+						autoFocus
+						className="min-h-[158px] py-3"
+						multiline
+						onChangeText={setBody}
+						placeholder="What should change?"
+						textAlignVertical="top"
+						value={body}
+					/>
+				</Input>
+				<View className="flex-row gap-2">
 					<ActionButton label="Cancel" onPress={props.onClose} />
 					<ActionButton
 						disabled={!body.trim()}
@@ -203,7 +174,7 @@ function CommentComposer(props: {
 						onPress={() => props.onSave(body.trim())}
 					/>
 				</View>
-			</BottomSheetView>
+			</ThemedBottomSheetView>
 		</BottomSheet>
 	);
 }
@@ -211,7 +182,7 @@ function CommentComposer(props: {
 export function NativeWorkbench() {
 	const { profiles } = useNativeServer();
 	const workspace = useNativeWorkspace(profiles.activeProfile, profiles.update);
-	const { preferences } = useNativePreferences();
+	const { preferences, resolvedTheme } = useNativePreferences();
 	const router = useRouter();
 	const { width, height } = useWindowDimensions();
 	const layout = selectWorkbenchLayout(width, height);
@@ -236,38 +207,23 @@ export function NativeWorkbench() {
 
 	if (!profiles.hydrated || (workspace.phase === "loading" && !workspace.changes)) {
 		return (
-			<View
-				style={{
-					alignItems: "center",
-					backgroundColor: nativeTheme.background,
-					flex: 1,
-					justifyContent: "center",
-				}}
-			>
-				<ActivityIndicator color={nativeTheme.accent} />
+			<View className="flex-1 items-center justify-center bg-background">
+				<ActivityIndicator colorClassName="accent-primary" />
 			</View>
 		);
 	}
 	if (!profiles.activeProfile) {
 		return (
-			<View
-				style={{
-					backgroundColor: nativeTheme.background,
-					flex: 1,
-					gap: 14,
-					justifyContent: "center",
-					padding: 24,
-				}}
-			>
-				<Text selectable style={{ color: nativeTheme.text, fontSize: 24, fontWeight: "700" }}>
+			<View className="flex-1 justify-center gap-3.5 bg-background p-6">
+				<Text bold selectable size="2xl">
 					Pair your first server
 				</Text>
-				<Text selectable style={{ color: nativeTheme.muted }}>
+				<Text className="text-muted-foreground" selectable>
 					Couchview keeps server profiles on this device and stores each credential separately.
 				</Text>
 				<Link href="/servers" asChild>
-					<Pressable style={{ alignSelf: "flex-start" }}>
-						<Text style={{ color: nativeTheme.accent }}>Open server manager</Text>
+					<Pressable className="self-start rounded-md py-2 active:opacity-70">
+						<Text className="text-primary">Open server manager</Text>
 					</Pressable>
 				</Link>
 			</View>
@@ -275,16 +231,8 @@ export function NativeWorkbench() {
 	}
 	if (workspace.phase === "error" && !workspace.changes) {
 		return (
-			<View
-				style={{
-					backgroundColor: nativeTheme.background,
-					flex: 1,
-					gap: 12,
-					justifyContent: "center",
-					padding: 24,
-				}}
-			>
-				<Text accessibilityRole="alert" selectable style={{ color: nativeTheme.red }}>
+			<View className="flex-1 justify-center gap-3 bg-background p-6">
+				<Text accessibilityRole="alert" className="text-destructive" selectable>
 					{workspace.error}
 				</Text>
 				<ActionButton label="Retry" onPress={workspace.retry} />
@@ -302,7 +250,7 @@ export function NativeWorkbench() {
 		void workspace.selectRepository(repositoryId);
 	};
 	const reviewActions = selectedFile ? (
-		<View style={{ flexDirection: "row", gap: 8 }}>
+		<View className="flex-row gap-2">
 			<ActionButton
 				active={selectedFile.reviewed}
 				disabled={workspace.mutationBusy}
@@ -320,40 +268,23 @@ export function NativeWorkbench() {
 	) : null;
 
 	return (
-		<View style={{ backgroundColor: nativeTheme.background, flex: 1 }}>
-			<View
-				style={{
-					alignItems: "center",
-					borderBottomColor: nativeTheme.border,
-					borderBottomWidth: 1,
-					flexDirection: "row",
-					gap: 8,
-					minHeight: 48,
-					paddingHorizontal: 10,
-				}}
-			>
+		<View className="flex-1 bg-background">
+			<View className="min-h-12 flex-row items-center gap-2 border-b border-border px-2.5">
 				<ActionButton icon={ListTree} label="Files" onPress={() => setFileSheetOpen(true)} />
-				<Text
-					numberOfLines={1}
-					selectable
-					style={{ color: nativeTheme.text, flex: 1, fontWeight: "600" }}
-				>
+				<Text className="flex-1" numberOfLines={1} selectable bold>
 					{selectedFile?.path ?? selectedRepository?.name ?? "Couchview"}
 				</Text>
 				<Text
-					style={{
-						color:
-							workspace.connectionState === "connected" ? nativeTheme.green : nativeTheme.warning,
-						fontSize: 11,
-					}}
+					className={workspace.connectionState === "connected" ? "text-success" : "text-warning"}
+					size="xs"
 				>
 					{workspace.connectionState}
 				</Text>
 				<ActionButton icon={Menu} label="Commands" onPress={() => setPaletteOpen(true)} />
 			</View>
-			<View style={{ flex: 1, flexDirection: "row" }}>
+			<View className="flex-1 flex-row">
 				{layout !== "compact" ? (
-					<View style={{ borderRightColor: nativeTheme.border, borderRightWidth: 1, width: 280 }}>
+					<View className="w-[280px] border-r border-border">
 						<FileRail
 							files={files}
 							onSelect={selectFile}
@@ -364,7 +295,7 @@ export function NativeWorkbench() {
 						/>
 					</View>
 				) : null}
-				<View style={{ flex: 1 }}>
+				<View className="flex-1">
 					{workspace.diff ? (
 						<NativeDiffSurface
 							comments={comments}
@@ -389,11 +320,12 @@ export function NativeWorkbench() {
 								}
 							}}
 							scrollTarget={null}
+							theme={resolvedTheme}
 						/>
 					) : (
-						<View style={{ alignItems: "center", flex: 1, justifyContent: "center" }}>
-							<FileText color={nativeTheme.muted} size={28} />
-							<Text selectable style={{ color: nativeTheme.muted, padding: 12 }}>
+						<View className="flex-1 items-center justify-center">
+							<ThemedFileText colorClassName="accent-muted-foreground" size={28} />
+							<Text className="p-3 text-muted-foreground" selectable>
 								Choose a changed file
 							</Text>
 						</View>
@@ -401,50 +333,27 @@ export function NativeWorkbench() {
 					{workspace.diffLoading &&
 					(selectedFile?.id !== workspace.diff?.fileId ||
 						selectedFile?.contentRevision !== workspace.diff?.contentRevision) ? (
-						<View
-							style={{
-								backgroundColor: "rgba(11,13,16,.82)",
-								padding: 6,
-								position: "absolute",
-								right: 8,
-								top: 8,
-							}}
-						>
-							<Text style={{ color: nativeTheme.muted }}>Loading next diff…</Text>
+						<View className="absolute right-2 top-2 rounded-md bg-background/80 p-1.5">
+							<Text className="text-muted-foreground" size="sm">
+								Loading next diff…
+							</Text>
 						</View>
 					) : null}
 				</View>
 				{layout === "contextual" ? (
-					<View
-						style={{
-							borderLeftColor: nativeTheme.border,
-							borderLeftWidth: 1,
-							gap: 12,
-							padding: 12,
-							width: 260,
-						}}
-					>
-						<Text selectable style={{ color: nativeTheme.text, fontWeight: "600" }}>
+					<View className="w-[260px] gap-3 border-l border-border p-3">
+						<Text bold selectable>
 							Review
 						</Text>
 						{reviewActions}
-						<Text selectable style={{ color: nativeTheme.muted }}>
+						<Text className="text-muted-foreground" selectable size="sm">
 							{comments.length} comment{comments.length === 1 ? "" : "s"}
 						</Text>
 					</View>
 				) : null}
 			</View>
 			{layout === "compact" ? (
-				<View
-					style={{
-						borderTopColor: nativeTheme.border,
-						borderTopWidth: 1,
-						flexDirection: "row",
-						gap: 8,
-						justifyContent: "space-between",
-						padding: 8,
-					}}
-				>
+				<View className="flex-row justify-between gap-2 border-t border-border p-2">
 					{reviewActions}
 					<ActionButton
 						icon={MessageSquarePlus}
@@ -460,9 +369,7 @@ export function NativeWorkbench() {
 				onClose={() => setFileSheetOpen(false)}
 				snapPoints={["88%"]}
 			>
-				<BottomSheetView
-					style={{ backgroundColor: nativeTheme.background, flex: 1, paddingTop: 16 }}
-				>
+				<ThemedBottomSheetView className="flex-1 bg-background pt-4">
 					<FileRail
 						files={files}
 						onSelect={selectFile}
@@ -471,7 +378,7 @@ export function NativeWorkbench() {
 						repositoryId={workspace.repositoryId}
 						selectedFileId={workspace.selectedFileId}
 					/>
-				</BottomSheetView>
+				</ThemedBottomSheetView>
 			</BottomSheet>
 			<CommentComposer
 				key={commentAnchor ? `${commentAnchor.fileId}:${commentAnchor.startLine}` : "closed"}

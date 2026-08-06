@@ -1,0 +1,135 @@
+@layer theme {
+	:root {
+		@variant light {
+			--ui-primary: 49 95 196;
+			--ui-primary-foreground: 255 255 255;
+			--ui-card: 255 255 255;
+			--ui-card-foreground: 29 38 51;
+			--ui-secondary: 233 238 245;
+			--ui-secondary-foreground: 29 38 51;
+			--ui-background: 246 248 251;
+			--ui-popover: 255 255 255;
+			--ui-popover-foreground: 29 38 51;
+			--ui-muted: 233 238 245;
+			--ui-muted-foreground: 93 106 123;
+			--ui-destructive: 196 54 61;
+			--ui-destructive-foreground: 255 255 255;
+			--ui-foreground: 29 38 51;
+			--ui-border: 203 213 225;
+			--ui-input: 203 213 225;
+			--ui-ring: 49 95 196;
+			--ui-accent: 223 232 251;
+			--ui-accent-foreground: 30 72 143;
+			--ui-success: 20 124 72;
+			--ui-success-foreground: 255 255 255;
+			--ui-warning: 149 103 26;
+			--ui-warning-foreground: 255 255 255;
+			--bg: #f6f8fb;
+			--panel: #ffffff;
+			--panel-raised: #eef2f7;
+			--panel-hover: #e4eaf2;
+			--line: #cbd5e1;
+			--line-soft: #e1e7ef;
+			--text: #1d2633;
+			--muted: #5d6a7b;
+			--accent: #315fc4;
+			--accent-strong: #244fae;
+			--accent-soft: #dfe8fb;
+			--green: #147c48;
+			--green-bg: #e1f5ea;
+			--red: #c4363d;
+			--red-bg: #fde8ea;
+			--yellow: #95671a;
+			--yellow-bg: #fff4d6;
+			--selection: #c9d9fa;
+			--diff-context: #ffffff;
+			--diff-separator: #e7edf5;
+			--diff-number: #69778a;
+			--surface-solid: #ffffff;
+			--surface-sunken: #edf1f6;
+			--surface-overlay: rgb(255 255 255 / 96%);
+			--scrim: rgb(24 35 51 / 36%);
+			--shadow: 0 18px 50px rgb(33 45 61 / 18%);
+			--theme-color: #f6f8fb;
+		}
+
+		@variant dark {
+			--ui-primary: 77 125 230;
+			--ui-primary-foreground: 13 16 20;
+			--ui-card: 19 24 32;
+			--ui-card-foreground: 231 237 245;
+			--ui-secondary: 26 32 41;
+			--ui-secondary-foreground: 231 237 245;
+			--ui-background: 13 16 20;
+			--ui-popover: 21 26 34;
+			--ui-popover-foreground: 231 237 245;
+			--ui-muted: 32 40 51;
+			--ui-muted-foreground: 143 155 170;
+			--ui-destructive: 255 127 133;
+			--ui-destructive-foreground: 13 16 20;
+			--ui-foreground: 231 237 245;
+			--ui-border: 42 52 65;
+			--ui-input: 42 52 65;
+			--ui-ring: 125 166 255;
+			--ui-accent: 32 49 82;
+			--ui-accent-foreground: 220 231 250;
+			--ui-success: 82 208 145;
+			--ui-success-foreground: 13 16 20;
+			--ui-warning: 234 191 98;
+			--ui-warning-foreground: 13 16 20;
+			--bg: #0d1014;
+			--panel: #131820;
+			--panel-raised: #1a2029;
+			--panel-hover: #202833;
+			--line: #2a3441;
+			--line-soft: #202833;
+			--text: #e7edf5;
+			--muted: #8f9baa;
+			--accent: #7da6ff;
+			--accent-strong: #4d7de6;
+			--accent-soft: #203152;
+			--green: #52d091;
+			--green-bg: #112b22;
+			--red: #ff7f85;
+			--red-bg: #321a1e;
+			--yellow: #eabf62;
+			--yellow-bg: #312815;
+			--selection: #3a4e77;
+			--diff-context: #121820;
+			--diff-separator: #17243a;
+			--diff-number: #718096;
+			--surface-solid: #10151c;
+			--surface-sunken: #090d12;
+			--surface-overlay: rgb(19 24 32 / 96%);
+			--scrim: rgb(3 6 10 / 66%);
+			--shadow: 0 18px 50px rgb(0 0 0 / 45%);
+			--theme-color: #101317;
+		}
+	}
+}
+
+@theme inline {
+	--color-primary: rgb(var(--ui-primary));
+	--color-primary-foreground: rgb(var(--ui-primary-foreground));
+	--color-card: rgb(var(--ui-card));
+	--color-card-foreground: rgb(var(--ui-card-foreground));
+	--color-secondary: rgb(var(--ui-secondary));
+	--color-secondary-foreground: rgb(var(--ui-secondary-foreground));
+	--color-background: rgb(var(--ui-background));
+	--color-popover: rgb(var(--ui-popover));
+	--color-popover-foreground: rgb(var(--ui-popover-foreground));
+	--color-muted: rgb(var(--ui-muted));
+	--color-muted-foreground: rgb(var(--ui-muted-foreground));
+	--color-destructive: rgb(var(--ui-destructive));
+	--color-destructive-foreground: rgb(var(--ui-destructive-foreground));
+	--color-foreground: rgb(var(--ui-foreground));
+	--color-border: rgb(var(--ui-border));
+	--color-input: rgb(var(--ui-input));
+	--color-ring: rgb(var(--ui-ring));
+	--color-accent: rgb(var(--ui-accent));
+	--color-accent-foreground: rgb(var(--ui-accent-foreground));
+	--color-success: rgb(var(--ui-success));
+	--color-success-foreground: rgb(var(--ui-success-foreground));
+	--color-warning: rgb(var(--ui-warning));
+	--color-warning-foreground: rgb(var(--ui-warning-foreground));
+}

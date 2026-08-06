@@ -24,7 +24,7 @@ export function AppToastStack({
 }: AppToastStackProps) {
 	const undo = toast?.undo;
 	return (
-		<div className="toast-stack" aria-live="polite">
+		<div className="toast-stack bottom-safe-offset-[67px]" aria-live="polite">
 			{toast && (
 				<div className="toast" key={toast.id}>
 					<span>{toast.message}</span>

@@ -1,5 +1,6 @@
 import { WifiOff } from "lucide-react";
 import type { RemoteBridgeCapability, TerminalCapability } from "../../shared/contracts.ts";
+import type { ResolvedTheme } from "../../shared/theme.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
@@ -37,6 +38,7 @@ interface ReviewWorkspaceChromeProps {
 	remoteBridgeCapability: RemoteBridgeCapability;
 	splitView: boolean;
 	terminalCapability: TerminalCapability;
+	themeType: ResolvedTheme;
 	workflow: ReturnType<typeof useReviewWorkflow>;
 	workspace: ReturnType<typeof useRepositoryWorkspace>;
 	workspaceMode: WorkspaceMode;
@@ -65,6 +67,7 @@ export function ReviewWorkspaceChrome({
 	remoteBridgeCapability,
 	splitView,
 	terminalCapability,
+	themeType,
 	workflow,
 	workspace,
 	workspaceMode,
@@ -191,6 +194,7 @@ export function ReviewWorkspaceChrome({
 				rowCount={diff.rows.length}
 				selection={diff.commentSelection}
 				typography={display.typography.diff}
+				themeType={themeType}
 				viewerRef={diff.viewerRef}
 				viewerSelection={diff.viewerSelection}
 			/>

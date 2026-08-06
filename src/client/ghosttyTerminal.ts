@@ -1,5 +1,5 @@
 import ghosttyWasmUrl from "ghostty-web/ghostty-vt.wasm?url";
-
+import { installGhosttyCellThemeAdapter, toGhosttyTheme } from "./ghosttyThemeRuntime.ts";
 import { adjustedTerminalCellMetrics } from "./terminalCellMetrics.ts";
 import { installTerminalClipboardPaste } from "./terminalClipboardPaste.ts";
 import { TerminalEchoPaintController } from "./terminalEchoPaint.ts";
@@ -10,7 +10,11 @@ import {
 	terminalModifierOnlyKey,
 } from "./terminalKeyboard.ts";
 import { installTerminalKeyRepeat } from "./terminalKeyRepeat.ts";
-import { codeFontStack, type TerminalRendererConfig } from "./typographyPreferences.ts";
+import {
+	codeFontStack,
+	type TerminalRendererConfig,
+	type TerminalRendererTheme,
+} from "./typographyPreferences.ts";
 
 export interface BrowserTerminalRenderer {
 	readonly cols: number;
@@ -19,6 +23,7 @@ export interface BrowserTerminalRenderer {
 	sendKey(input: TerminalKeyInput): void;
 	setVirtualControl(active: boolean): void;
 	setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null): void;
+	updateTheme(theme: TerminalRendererTheme): void;
 	focus(): void;
 	fit(): void;
 	dispose(): void;
@@ -70,34 +75,6 @@ async function loadTerminalFont(config: TerminalRendererConfig): Promise<void> {
 	}
 }
 
-function ghosttyTheme(config: TerminalRendererConfig) {
-	const palette = config.theme.palette;
-	return {
-		background: config.theme.background,
-		foreground: config.theme.foreground,
-		cursor: config.theme.cursor,
-		cursorAccent: config.theme.background,
-		selectionBackground: config.theme.selectionBackground,
-		selectionForeground: config.theme.selectionForeground,
-		black: palette[0],
-		red: palette[1],
-		green: palette[2],
-		yellow: palette[3],
-		blue: palette[4],
-		magenta: palette[5],
-		cyan: palette[6],
-		white: palette[7],
-		brightBlack: palette[8],
-		brightRed: palette[9],
-		brightGreen: palette[10],
-		brightYellow: palette[11],
-		brightBlue: palette[12],
-		brightMagenta: palette[13],
-		brightCyan: palette[14],
-		brightWhite: palette[15],
-	};
-}
-
 function applyTerminalAdjustedMetrics(
 	terminal: import("ghostty-web").Terminal,
 	config: TerminalRendererConfig,
@@ -124,7 +101,14 @@ function renderTerminalBuffer(terminal: import("ghostty-web").Terminal, forceAll
 	renderer.render(wasmTerm, forceAll, terminal.viewportY, terminal, scrollbarOpacity);
 }
 
-function terminalPreviewContent(cols: number, rows: number): string {
+function terminalPreviewForeground(color: string): 30 | 97 {
+	const red = Number.parseInt(color.slice(1, 3), 16);
+	const green = Number.parseInt(color.slice(3, 5), 16);
+	const blue = Number.parseInt(color.slice(5, 7), 16);
+	return (red * 299 + green * 587 + blue * 114) / 255_000 > 0.55 ? 30 : 97;
+}
+
+function terminalPreviewContent(cols: number, rows: number, theme: TerminalRendererTheme): string {
 	const width = Math.max(2, cols);
 	const height = Math.max(1, rows);
 	const ruler = Array.from({ length: width }, () => "·");
@@ -141,29 +125,26 @@ function terminalPreviewContent(cols: number, rows: number): string {
 	const location = " utf-8  3:18 ";
 	const locationColumn = Math.max(1, width - location.length + 1);
 	const commandRow = Math.min(3, Math.max(1, lualineRow - 1));
+	const blueForeground = terminalPreviewForeground(theme.palette[4]!);
+	const cyanForeground = terminalPreviewForeground(theme.palette[6]!);
 	return [
 		"\x1b[?25l\x1b[2J\x1b[H",
-		"\x1b[48;2;24;24;37m\x1b[38;2;125;138;156m",
+		"\x1b[49m\x1b[90m",
 		ruler.join(""),
-		`\x1b[${commandRow};1H\x1b[49m\x1b[38;2;166;227;161m❯`,
+		`\x1b[${commandRow};1H\x1b[49m\x1b[92m❯`,
 		"\x1b[39m nvim ~/.config/nvim/init.lua",
 		`\x1b[${lualineRow};1H`,
-		"\x1b[1m\x1b[48;2;137;180;250m\x1b[38;2;17;17;27m NORMAL ",
-		"\x1b[48;2;49;50;68m\x1b[38;2;137;180;250m",
-		"\x1b[22m\x1b[38;2;205;214;244m settings.lua ",
-		"\x1b[48;2;24;24;37m\x1b[38;2;49;50;68m",
+		`\x1b[1m\x1b[44m\x1b[${blueForeground}m NORMAL `,
+		"\x1b[49m\x1b[34m",
+		"\x1b[22m\x1b[39m settings.lua ",
 		`\x1b[${lualineRow};${locationColumn}H`,
-		"\x1b[48;2;49;50;68m\x1b[38;2;186;194;222m",
+		"\x1b[90m",
 		location,
 		`\x1b[${tmuxRow};1H`,
-		"\x1b[1m\x1b[48;2;137;180;250m\x1b[38;2;17;17;27m 0 ",
-		"\x1b[48;2;69;71;90m\x1b[38;2;137;180;250m",
-		"\x1b[22m\x1b[38;2;205;214;244m bun ",
-		"\x1b[48;2;137;180;250m\x1b[38;2;69;71;90m",
-		"\x1b[1m\x1b[38;2;17;17;27m 1 ",
-		"\x1b[48;2;148;226;213m\x1b[38;2;137;180;250m",
-		"\x1b[38;2;17;17;27m nvim * ",
-		"\x1b[48;2;49;50;68m\x1b[38;2;148;226;213m",
+		`\x1b[1m\x1b[44m\x1b[${blueForeground}m 0 `,
+		"\x1b[49m\x1b[34m",
+		"\x1b[22m\x1b[39m bun ",
+		`\x1b[1m\x1b[46m\x1b[${cyanForeground}m 1 nvim * `,
 		"\x1b[0m\x1b[?25l",
 	].join("");
 }
@@ -183,13 +164,15 @@ export async function createBrowserTerminalPreview(
 		fontSize: options.config.fontSize,
 		ghostty: instance,
 		scrollback: 0,
-		theme: ghosttyTheme(options.config),
+		theme: toGhosttyTheme(options.config.theme),
 	});
 	const fitAddon = new ghostty.FitAddon();
 	terminal.loadAddon(fitAddon);
 	const previouslyFocused =
 		document.activeElement instanceof HTMLElement ? document.activeElement : null;
 	terminal.open(options.container);
+	const initialTheme = toGhosttyTheme(options.config.theme);
+	const cellThemeAdapter = installGhosttyCellThemeAdapter(terminal.wasmTerm!, initialTheme);
 	options.container.setAttribute("aria-hidden", "true");
 	options.container.setAttribute("contenteditable", "false");
 	options.container.setAttribute("tabindex", "-1");
@@ -205,7 +188,9 @@ export async function createBrowserTerminalPreview(
 	let disposed = false;
 	let updateRevision = 0;
 	const renderPreview = () => {
-		if (!disposed) terminal.write(terminalPreviewContent(terminal.cols, terminal.rows));
+		if (!disposed) {
+			terminal.write(terminalPreviewContent(terminal.cols, terminal.rows, config.theme));
+		}
 	};
 	const resizeSubscription = terminal.onResize(renderPreview);
 	applyTerminalAdjustedMetrics(terminal, config);
@@ -221,6 +206,9 @@ export async function createBrowserTerminalPreview(
 			config = nextConfig;
 			terminal.options.fontFamily = codeFontStack(config.fontFamily);
 			terminal.options.fontSize = config.fontSize;
+			const nextTheme = toGhosttyTheme(config.theme);
+			cellThemeAdapter.update(nextTheme);
+			terminal.renderer?.setTheme(nextTheme);
 			applyTerminalAdjustedMetrics(terminal, config);
 			fitAddon.fit();
 			renderPreview();
@@ -231,6 +219,7 @@ export async function createBrowserTerminalPreview(
 			updateRevision += 1;
 			window.clearTimeout(restoreFocusTimer);
 			resizeSubscription.dispose();
+			cellThemeAdapter.dispose();
 			fitAddon.dispose();
 			terminal.dispose();
 		},
@@ -252,11 +241,13 @@ export async function createBrowserTerminal(
 		fontSize: config.fontSize,
 		scrollback: 5_000,
 		ghostty: ghosttyInstance,
-		theme: ghosttyTheme(config),
+		theme: toGhosttyTheme(config.theme),
 	});
 	const fitAddon = new ghostty.FitAddon();
 	terminal.loadAddon(fitAddon);
 	terminal.open(options.container);
+	const initialTheme = toGhosttyTheme(config.theme);
+	const cellThemeAdapter = installGhosttyCellThemeAdapter(terminal.wasmTerm!, initialTheme);
 	const disposeClipboardPaste = installTerminalClipboardPaste(options.container);
 	const disposeKeyRepeat = installTerminalKeyRepeat(options.container);
 	const terminalRenderer = terminal.renderer;
@@ -380,6 +371,12 @@ export async function createBrowserTerminal(
 			}
 		},
 		setLatencyKeyHandler,
+		updateTheme(theme) {
+			const nextTheme = toGhosttyTheme(theme);
+			cellThemeAdapter.update(nextTheme);
+			terminal.renderer?.setTheme(nextTheme);
+			renderTerminalBuffer(terminal);
+		},
 		focus() {
 			terminal.focus();
 		},
@@ -389,6 +386,7 @@ export async function createBrowserTerminal(
 		dispose() {
 			disposeClipboardPaste();
 			disposeKeyRepeat();
+			cellThemeAdapter.dispose();
 			echoPaintController.reset();
 			dataSubscription.dispose();
 			setLatencyKeyHandler(null);

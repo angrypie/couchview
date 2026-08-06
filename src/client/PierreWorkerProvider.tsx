@@ -1,3 +1,4 @@
+import { DEFAULT_THEMES } from "@pierre/diffs";
 import {
 	type WorkerInitializationRenderOptions,
 	WorkerPoolContextProvider,
@@ -7,7 +8,7 @@ import PierreWorkerUrl from "@pierre/diffs/worker/worker.js?worker&url";
 import { type ReactNode, useMemo } from "react";
 
 const highlighterOptions: WorkerInitializationRenderOptions = {
-	theme: "pierre-dark",
+	theme: DEFAULT_THEMES,
 	lineDiffType: "word-alt",
 	useTokenTransformer: true,
 	tokenizeMaxLineLength: 2_000,

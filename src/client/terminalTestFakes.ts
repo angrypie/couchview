@@ -25,6 +25,7 @@ export const rendererState = {
 	keyInputs: [] as TerminalKeyInput[],
 	options: null as RendererOptions | null,
 	pendingCanvasRenders: [] as BrowserTerminalWriteProfile[],
+	themes: [] as TerminalRendererConfig["theme"][],
 	writes: [] as Uint8Array[],
 	virtualControl: false,
 };
@@ -47,6 +48,7 @@ export function resetRendererState(): void {
 	rendererState.keyInputs.length = 0;
 	rendererState.options = null;
 	rendererState.pendingCanvasRenders.length = 0;
+	rendererState.themes.length = 0;
 	rendererState.writes.length = 0;
 	rendererState.virtualControl = false;
 	previewRendererState.calls = 0;
@@ -113,6 +115,9 @@ export async function terminalRendererFactory(
 		setLatencyKeyHandler(handler: ((event: KeyboardEvent) => void) | null) {
 			rendererState.latencyKeyHandler = handler;
 			if (!handler) rendererState.pendingCanvasRenders.length = 0;
+		},
+		updateTheme(theme) {
+			rendererState.themes.push(theme);
 		},
 		write(data: Uint8Array<ArrayBuffer>, profile?: BrowserTerminalWriteProfile) {
 			rendererState.writes.push(data);

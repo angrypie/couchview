@@ -17,6 +17,7 @@ import { useState } from "react";
 
 import type { ChangeFile, RepositorySummary } from "../../../shared/contracts.ts";
 import type { GitHistoryFile } from "../../../shared/git/index.ts";
+import type { ResolvedTheme } from "../../../shared/theme.ts";
 import { DiffViewer } from "../../DiffViewer.tsx";
 import type { GitWorkspaceController } from "../../features/git/index.ts";
 import type { useDisplayPreferences } from "../../features/settings/useDisplayPreferences.ts";
@@ -31,6 +32,7 @@ interface GitHistoryPageProps {
 	onBack(): void;
 	onOpenCommandPalette(): void;
 	repository: RepositorySummary | null;
+	themeType: ResolvedTheme;
 }
 
 const commitDate = new Intl.DateTimeFormat(undefined, {
@@ -50,7 +52,8 @@ function fileKindLabel(file: GitHistoryFile): string {
 function HistoricalDiff({
 	controller,
 	display,
-}: Pick<GitHistoryPageProps, "controller" | "display">) {
+	themeType,
+}: Pick<GitHistoryPageProps, "controller" | "display" | "themeType">) {
 	if (controller.diffBusy && !controller.diff) {
 		return (
 			<div className="loading-state git-diff-state">
@@ -100,6 +103,7 @@ function HistoricalDiff({
 				onLineNumberClick={() => undefined}
 				onVisibleLineChange={() => undefined}
 				selectedRange={null}
+				themeType={themeType}
 				widthAdjustment={display.typography.diff.widthAdjustment}
 			/>
 			{controller.diffBusy && (
@@ -119,6 +123,7 @@ export function GitHistoryPage({
 	onBack,
 	onOpenCommandPalette,
 	repository,
+	themeType,
 }: GitHistoryPageProps) {
 	const [menuOpen, setMenuOpen] = useState(false);
 	const mobileView = controller.selectedFileId
@@ -380,7 +385,7 @@ export function GitHistoryPage({
 								{controller.diff && <small>Read-only historical preview</small>}
 							</div>
 						</header>
-						<HistoricalDiff controller={controller} display={display} />
+						<HistoricalDiff controller={controller} display={display} themeType={themeType} />
 					</section>
 				</div>
 			</div>

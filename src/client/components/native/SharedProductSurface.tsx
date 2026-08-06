@@ -1,24 +1,40 @@
 "use dom";
 
+import { useEffect } from "react";
+
+import { THEME_PREFERENCE_ATTRIBUTE, type ThemePreference } from "../../../shared/theme.ts";
+import "../../../../native.css";
+
 interface SharedProductSurfaceProps {
 	dom?: import("expo/dom").DOMProps;
 	onManageServers(): Promise<void>;
 	onSurfaceReady(): Promise<void>;
+	onThemePreferenceChange(themePreference: ThemePreference): Promise<void>;
+	themePreference: ThemePreference;
 }
 
-export default function SharedProductSurface(_props: SharedProductSurfaceProps) {
+export default function SharedProductSurface({
+	onThemePreferenceChange,
+	themePreference,
+}: SharedProductSurfaceProps) {
+	useEffect(() => {
+		const root = document.documentElement;
+		root.setAttribute(THEME_PREFERENCE_ATTRIBUTE, themePreference);
+		const observer = new MutationObserver(() => {
+			const nextPreference = root.getAttribute(THEME_PREFERENCE_ATTRIBUTE);
+			if (nextPreference === "system" || nextPreference === "light" || nextPreference === "dark") {
+				void onThemePreferenceChange(nextPreference);
+			}
+		});
+		observer.observe(root, {
+			attributeFilter: [THEME_PREFERENCE_ATTRIBUTE],
+			attributes: true,
+		});
+		return () => observer.disconnect();
+	}, [onThemePreferenceChange, themePreference]);
+
 	return (
-		<main
-			style={{
-				alignItems: "center",
-				background: "#0b0d10",
-				color: "#e7edf5",
-				display: "flex",
-				font: "15px system-ui, sans-serif",
-				height: "100vh",
-				justifyContent: "center",
-			}}
-		>
+		<main className="flex h-screen items-center justify-center bg-background text-[15px] text-foreground">
 			Opening Couchview…
 		</main>
 	);

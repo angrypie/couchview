@@ -41,6 +41,57 @@ test.describe("desktop review layout", () => {
 		await expect(page).toHaveURL(/\/settings/);
 	});
 
+	test("applies and persists a device-local color theme", async ({ page }) => {
+		await page.emulateMedia({ colorScheme: "dark" });
+		await page.goto("/settings");
+		await page.evaluate(() => localStorage.removeItem("couchview:theme-preference:v1"));
+		await page.reload();
+
+		const settings = page.getByRole("region", { name: "Settings" });
+		const root = page.locator("html");
+		const save = settings.getByRole("button", { name: "Save changes" });
+		await expect(settings.getByRole("radio", { name: "System" })).toBeChecked();
+		await expect(root).toHaveClass(/\bdark\b/);
+
+		await settings.getByRole("radio", { name: "Light" }).click();
+		await expect(root).toHaveClass(/\blight\b/);
+		await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 248, 251)");
+		await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#f6f8fb");
+		await expect(save).toBeDisabled();
+
+		await page.reload();
+		await expect(settings.getByRole("radio", { name: "Light" })).toBeChecked();
+		await expect(root).toHaveClass(/\blight\b/);
+		await settings.getByRole("button", { name: "Review", exact: true }).click();
+		await expect(page.locator(".top-bar")).toHaveCSS(
+			"background-color",
+			"rgba(255, 255, 255, 0.96)",
+		);
+		await expect(page.locator(".file-bar")).toHaveCSS(
+			"background-color",
+			"rgba(255, 255, 255, 0.96)",
+		);
+		await expect(page.locator(".bottom-bar")).toHaveCSS(
+			"background-color",
+			"rgba(255, 255, 255, 0.96)",
+		);
+		await expect(page.getByRole("searchbox", { name: "Filter changed files" })).toHaveCSS(
+			"background-color",
+			"rgb(255, 255, 255)",
+		);
+		await expect(page.getByRole("button", { name: "Select repository" })).toHaveCSS(
+			"color",
+			"rgb(29, 38, 51)",
+		);
+
+		await page.getByRole("button", { name: "Open settings" }).click();
+		await settings.getByRole("radio", { name: "Dark" }).click();
+		await expect(root).toHaveClass(/\bdark\b/);
+		await expect(page.locator("body")).toHaveCSS("background-color", "rgb(13, 16, 20)");
+		await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#101317");
+		await expect(save).toBeDisabled();
+	});
+
 	test("keeps filenames and controls visible while the changed-files list scrolls", async ({
 		page,
 	}) => {

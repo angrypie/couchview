@@ -136,4 +136,15 @@ describe("browser typography preferences", () => {
 			}).terminal.cellWidthAdjustment,
 		).toBe(-5);
 	});
+
+	test("provides a readable light terminal palette", () => {
+		const config = terminalRendererConfig(DEFAULT_TYPOGRAPHY_PREFERENCES.terminal, "light");
+
+		expect(config.theme).toMatchObject({
+			background: "#fbfcfe",
+			foreground: "#233044",
+			selectionBackground: "#c9d9fa",
+		});
+		expect(config.theme.palette).toHaveLength(16);
+	});
 });

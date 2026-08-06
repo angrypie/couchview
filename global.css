@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "uniwind";
+@import "./src/client/styles/uniwind-theme.css";
+@import "./src/client/styles.css";

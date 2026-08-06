@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-expo*/
 .expo/
+.uniwind-types.generated.d.ts
 ios/
 android/
 .couchview-build-*/

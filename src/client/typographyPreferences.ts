@@ -7,6 +7,7 @@ import {
 	TYPOGRAPHY_LIMITS,
 	type TypographyPreferences,
 } from "../shared/settings.ts";
+import type { ResolvedTheme } from "../shared/theme.ts";
 
 export type {
 	CodeFontFamily,
@@ -38,14 +39,14 @@ export interface TerminalRendererConfig extends TerminalTypographyPreferences {
 	theme: TerminalRendererTheme;
 }
 
-const TERMINAL_THEME: TerminalRendererTheme = {
+const DARK_TERMINAL_THEME: TerminalRendererTheme = {
 	background: "#1e1e2e",
 	foreground: "#cdd6f4",
 	cursor: "#ced5f1",
 	selectionBackground: "#353749",
 	selectionForeground: "#cdd6f4",
 	palette: [
-		"#45475a",
+		"#11111b",
 		"#f38ba8",
 		"#a6e3a1",
 		"#f9e2af",
@@ -63,6 +64,36 @@ const TERMINAL_THEME: TerminalRendererTheme = {
 		"#a6adc8",
 	],
 };
+
+const LIGHT_TERMINAL_THEME: TerminalRendererTheme = {
+	background: "#fbfcfe",
+	foreground: "#233044",
+	cursor: "#315fc4",
+	selectionBackground: "#c9d9fa",
+	selectionForeground: "#172033",
+	palette: [
+		"#172033",
+		"#c4363d",
+		"#188a51",
+		"#95671a",
+		"#315fc4",
+		"#8b4eb0",
+		"#0e7f8a",
+		"#d9e0e8",
+		"#69778a",
+		"#dc4c53",
+		"#21965d",
+		"#ad791e",
+		"#4774d0",
+		"#9f63be",
+		"#188e9a",
+		"#ffffff",
+	],
+};
+
+export function terminalRendererTheme(themeType: ResolvedTheme): TerminalRendererTheme {
+	return themeType === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+}
 
 export const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
 	iosevka:
@@ -115,13 +146,14 @@ export function saveTypographyPreferences(
 
 export function terminalRendererConfig(
 	preferences: TerminalTypographyPreferences,
+	themeType: ResolvedTheme = "dark",
 ): TerminalRendererConfig {
 	const normalized = normalizeTypographyPreferences({ terminal: preferences }).terminal;
 	return {
 		...normalized,
 		cursorStyle: "block",
 		cursorBlink: false,
-		theme: TERMINAL_THEME,
+		theme: terminalRendererTheme(themeType),
 	};
 }
 

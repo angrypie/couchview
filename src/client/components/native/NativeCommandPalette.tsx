@@ -1,8 +1,9 @@
 import { FlashList } from "@shopify/flash-list";
 import { useMemo, useState } from "react";
-import { Modal, Pressable, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, View } from "react-native";
 
-import { nativeTheme } from "./nativeTheme.ts";
+import { Input, InputField } from "../ui/input";
+import { Text } from "../ui/text";
 
 export interface NativeCommand {
 	id: string;
@@ -26,63 +27,41 @@ export function NativeCommandPalette(props: {
 		<Modal animationType="fade" onRequestClose={props.onClose} transparent visible={props.open}>
 			<Pressable
 				accessibilityLabel="Close command palette"
+				className="flex-1 items-center justify-start bg-black/60 px-6 pt-[90px]"
 				onPress={props.onClose}
-				style={{
-					alignItems: "center",
-					backgroundColor: "rgba(0,0,0,.62)",
-					flex: 1,
-					justifyContent: "flex-start",
-					padding: 24,
-					paddingTop: 90,
-				}}
 			>
 				<Pressable
+					className="max-h-[460px] w-full overflow-hidden rounded-2xl border border-border bg-card"
 					onPress={(event) => event.stopPropagation()}
-					style={{
-						backgroundColor: nativeTheme.panelRaised,
-						borderColor: nativeTheme.border,
-						borderRadius: 16,
-						borderWidth: 1,
-						maxHeight: 460,
-						overflow: "hidden",
-						width: "100%",
-					}}
 				>
-					<TextInput
-						accessibilityLabel="Search commands"
-						autoFocus
-						onChangeText={setQuery}
-						placeholder="Type a command"
-						placeholderTextColor={nativeTheme.muted}
-						style={{
-							borderBottomColor: nativeTheme.border,
-							borderBottomWidth: 1,
-							color: nativeTheme.text,
-							fontSize: 16,
-							padding: 14,
-						}}
-						value={query}
-					/>
+					<Input className="rounded-none border-x-0 border-t-0 bg-card shadow-none">
+						<InputField
+							accessibilityLabel="Search commands"
+							autoFocus
+							className="p-3.5"
+							onChangeText={setQuery}
+							placeholder="Type a command"
+							value={query}
+						/>
+					</Input>
 					<FlashList
 						data={commands}
 						keyExtractor={(item) => item.id}
 						renderItem={({ item }) => (
 							<Pressable
+								className="border-b border-border p-3.5 active:bg-accent"
 								onPress={() => {
 									props.onClose();
 									item.run();
 								}}
-								style={{ borderBottomColor: nativeTheme.border, borderBottomWidth: 1, padding: 14 }}
 							>
-								<Text selectable style={{ color: nativeTheme.text }}>
-									{item.label}
-								</Text>
+								<Text selectable>{item.label}</Text>
 							</Pressable>
 						)}
 					/>
 					{commands.length === 0 ? (
-						<View style={{ padding: 16 }}>
-							<Text selectable style={{ color: nativeTheme.muted }}>
+						<View className="p-4">
+							<Text className="text-muted-foreground" selectable size="sm">
 								No matching commands
 							</Text>
 						</View>

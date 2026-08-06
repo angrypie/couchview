@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import type { ResolvedTheme } from "../shared/theme.ts";
 import {
 	type BrowserTerminalPreviewRenderer,
 	createBrowserTerminalPreview,
@@ -11,16 +11,21 @@ import {
 
 interface GhosttyTerminalPreviewProps {
 	preferences: TerminalTypographyPreferences;
+	themeType?: ResolvedTheme;
 }
 
-export function GhosttyTerminalPreview({ preferences }: GhosttyTerminalPreviewProps) {
+export function GhosttyTerminalPreview({
+	preferences,
+	themeType = "dark",
+}: GhosttyTerminalPreviewProps) {
 	const config = useMemo(
-		() => terminalRendererConfig(preferences),
+		() => terminalRendererConfig(preferences, themeType),
 		[
 			preferences.cellHeightAdjustment,
 			preferences.cellWidthAdjustment,
 			preferences.fontFamily,
 			preferences.fontSize,
+			themeType,
 		],
 	);
 	const containerRef = useRef<HTMLDivElement>(null);

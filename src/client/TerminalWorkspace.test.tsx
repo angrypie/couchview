@@ -8,7 +8,11 @@ import {
 	resetRendererState,
 	terminalRendererFactory,
 } from "./terminalTestFakes.ts";
-import { SAFE_TERMINAL_RENDERER_CONFIG } from "./typographyPreferences.ts";
+import {
+	DEFAULT_TYPOGRAPHY_PREFERENCES,
+	SAFE_TERMINAL_RENDERER_CONFIG,
+	terminalRendererConfig,
+} from "./typographyPreferences.ts";
 
 if (!GlobalRegistrator.isRegistered) {
 	GlobalRegistrator.register({ url: "http://127.0.0.1:4173/" });
@@ -689,6 +693,25 @@ describe("TerminalWorkspace", () => {
 		]);
 	});
 
+	test("updates the terminal palette without reconnecting the tmux attachment", async () => {
+		const props = defaultProps();
+		const view = render(<TerminalWorkspace {...props} />);
+
+		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+		const initialSocket = FakeTerminalWebSocket.instances[0]!;
+		await act(async () => initialSocket.emitMessage(JSON.stringify({ type: "ready" })));
+		await waitFor(() => expect(rendererState.themes).toContain(props.rendererConfig.theme));
+
+		const lightConfig = terminalRendererConfig(DEFAULT_TYPOGRAPHY_PREFERENCES.terminal, "light");
+		view.rerender(<TerminalWorkspace {...props} rendererConfig={lightConfig} />);
+
+		await waitFor(() => expect(rendererState.themes).toContain(lightConfig.theme));
+		expect(rendererState.calls).toBe(1);
+		expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+		expect(rendererState.disposed).toBe(0);
+		expect(initialSocket.closes).toHaveLength(0);
+	});
+
 	test("asks before taking control from another tab", async () => {
 		attachmentResponses.push(
 			jsonResponse(
@@ -835,6 +858,28 @@ describe("TerminalWorkspace", () => {
 		expect(rendererState.disposed).toBe(1);
 		expect(screen.getByText("Connected · Safe Mode")).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "Safe Mode" })).toBeNull();
+	});
+
+	test("reinitializes in Safe Mode when the requested layout already matches defaults", async () => {
+		attachmentResponses.push(
+			jsonResponse(
+				{
+					error: {
+						code: "terminal_size_invalid",
+						message: "Terminal dimensions are outside the supported range",
+					},
+				},
+				400,
+			),
+		);
+
+		render(<TerminalWorkspace {...defaultProps()} />);
+
+		expect(await screen.findByRole("button", { name: "Safe Mode" })).toBeTruthy();
+		fireEvent.click(screen.getByRole("button", { name: "Safe Mode" }));
+		await waitFor(() => expect(rendererState.calls).toBe(2));
+		expect(rendererState.disposed).toBe(1);
+		expect(FakeTerminalWebSocket.instances).toHaveLength(1);
 	});
 
 	test("does not reconnect after an unsupported terminal resize", async () => {

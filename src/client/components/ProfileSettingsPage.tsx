@@ -27,6 +27,7 @@ import {
 	type ProfileSettingsEditor,
 	useProfileSettingsEditor,
 } from "../features/settings/useProfileSettingsEditor.ts";
+import type { ThemePreferenceController } from "../features/settings/useThemePreference.ts";
 import { GhosttyTerminalPreview } from "../GhosttyTerminalPreview.tsx";
 import { formatShortcut } from "../shortcutEngine.ts";
 import { codeFontStack, DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "../typographyPreferences.ts";
@@ -52,6 +53,7 @@ interface ProfileSettingsPageProps {
 	onSelect(profileId: string): void;
 	profile: SettingsProfile;
 	profiles: SettingsProfile[];
+	theme: ThemePreferenceController;
 }
 
 interface TypographySliderProps {
@@ -272,7 +274,55 @@ function ProfilePicker({
 	);
 }
 
-function AppearanceSettingsCard({ editor }: { editor: ProfileSettingsEditor }) {
+function ThemePreferencePicker({ theme }: { theme: ThemePreferenceController }) {
+	const options = [
+		{
+			description: "Follow this device’s appearance.",
+			label: "System",
+			value: "system",
+		},
+		{ description: "Always use the light interface.", label: "Light", value: "light" },
+		{ description: "Always use the dark interface.", label: "Dark", value: "dark" },
+	] as const;
+	return (
+		<fieldset
+			aria-describedby="theme-preference-description"
+			className="settings-fieldset theme-preference-fieldset"
+		>
+			<legend>Color theme</legend>
+			<p id="theme-preference-description">
+				This choice applies immediately and stays on this device, independently of the active
+				profile.
+			</p>
+			<div className="theme-preference-picker">
+				{options.map((option) => (
+					<label className={theme.preference === option.value ? "active" : ""} key={option.value}>
+						<input
+							aria-label={option.label}
+							checked={theme.preference === option.value}
+							name="theme-preference"
+							onChange={() => theme.setPreference(option.value)}
+							type="radio"
+							value={option.value}
+						/>
+						<span>
+							<strong>{option.label}</strong>
+							<small>{option.description}</small>
+						</span>
+					</label>
+				))}
+			</div>
+		</fieldset>
+	);
+}
+
+function AppearanceSettingsCard({
+	editor,
+	theme,
+}: {
+	editor: ProfileSettingsEditor;
+	theme: ThemePreferenceController;
+}) {
 	const diff = editor.draft.typography.diff;
 	const terminal = editor.draft.typography.terminal;
 	const diffLineHeight = Math.max(
@@ -288,10 +338,11 @@ function AppearanceSettingsCard({ editor }: { editor: ProfileSettingsEditor }) {
 					</span>
 					<div>
 						<h2 id="appearance-settings-title">Appearance</h2>
-						<p>Diff and terminal typography saved in this profile.</p>
+						<p>Device color theme and profile-specific typography.</p>
 					</div>
 				</div>
 			</header>
+			<ThemePreferencePicker theme={theme} />
 			<h3>Diff view</h3>
 			<FontFamilyPicker
 				label="Diff font family"
@@ -424,7 +475,7 @@ function AppearanceSettingsCard({ editor }: { editor: ProfileSettingsEditor }) {
 				value={terminal.cellWidthAdjustment}
 				{...TYPOGRAPHY_LIMITS.terminal.cellWidthAdjustment}
 			/>
-			<GhosttyTerminalPreview preferences={terminal} />
+			<GhosttyTerminalPreview preferences={terminal} themeType={theme.resolvedTheme} />
 		</section>
 	);
 }
@@ -598,7 +649,7 @@ export function ProfileSettingsPage(props: ProfileSettingsPageProps) {
 			<div className="settings-scroll">
 				<ProfilePicker editor={editor} profile={props.profile} profiles={props.profiles} />
 				<div className="settings-grid settings-profile-grid">
-					<AppearanceSettingsCard editor={editor} />
+					<AppearanceSettingsCard editor={editor} theme={props.theme} />
 					<DisplaySettingsCard editor={editor} />
 					<CodexGenerationSettingsCard editor={editor} />
 					<KeyboardSettingsCard editor={editor} />

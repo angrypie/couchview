@@ -94,6 +94,7 @@ function injectWebMetadata(html: string): string {
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="mask-icon" href="/icon.svg" color="#101317" />
+    <script src="/theme-bootstrap.js"></script>
 `;
 	return withViewportFit.replace("</head>", `${metadata}</head>`);
 }

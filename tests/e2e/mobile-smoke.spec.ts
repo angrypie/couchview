@@ -64,7 +64,15 @@ test.describe("mobile fixture review", () => {
 
 		const status = page.getByTestId("repository-connection-status");
 		await expect(status).toHaveClass(/reconnecting/);
-		await expect(status).toHaveCSS("background-color", "rgb(234, 191, 98)");
+		const themeWarningColor = await page.evaluate(() => {
+			const probe = document.createElement("span");
+			probe.style.backgroundColor = "var(--yellow)";
+			document.body.append(probe);
+			const color = getComputedStyle(probe).backgroundColor;
+			probe.remove();
+			return color;
+		});
+		await expect(status).toHaveCSS("background-color", themeWarningColor);
 		await expect(page.locator(".disconnected-banner")).toHaveCount(0);
 	});
 

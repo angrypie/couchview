@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require("expo/metro-config");
+const { withUniwindConfig } = require("uniwind/metro");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -16,4 +17,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
 	return context.resolveRequest(context, normalizedName, platform);
 };
 
-module.exports = config;
+module.exports = withUniwindConfig(config, {
+	cssEntryFile: "./native.css",
+	dtsFile: "./.uniwind-types.generated.d.ts",
+});

@@ -5,21 +5,13 @@ export default function NotFoundRoute() {
 	return (
 		<>
 			<Stack.Screen options={{ title: "Not found" }} />
-			<View
-				style={{
-					backgroundColor: "#0b0d10",
-					flex: 1,
-					gap: 12,
-					justifyContent: "center",
-					padding: 24,
-				}}
-			>
-				<Text selectable style={{ color: "#e7edf5", fontSize: 22, fontWeight: "700" }}>
+			<View className="flex-1 justify-center gap-3 bg-background p-6">
+				<Text className="text-[22px] font-bold text-foreground" selectable>
 					Page not found
 				</Text>
 				<Link href="/" asChild>
-					<Pressable>
-						<Text style={{ color: "#7da6ff" }}>Return to Couchview</Text>
+					<Pressable className="self-start rounded-md py-2 active:opacity-70">
+						<Text className="text-primary">Return to Couchview</Text>
 					</Pressable>
 				</Link>
 			</View>

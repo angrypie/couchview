@@ -1,9 +1,15 @@
 import { Button, Host, Row } from "@expo/ui";
 import type { ReactNode } from "react";
+import { useResolveClassNames } from "uniwind";
+
+import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 
 export function NativeControlHost({ children }: { children: ReactNode }) {
+	const { resolvedTheme } = useNativePreferences();
+	const { color: seedColor } = useResolveClassNames("text-primary");
+
 	return (
-		<Host colorScheme="dark" matchContents seedColor="#7da6ff">
+		<Host colorScheme={resolvedTheme} matchContents seedColor={seedColor}>
 			<Row spacing={8}>{children}</Row>
 		</Host>
 	);

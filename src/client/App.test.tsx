@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+	THEME_METADATA_COLORS,
+	THEME_PREFERENCE_ATTRIBUTE,
+	THEME_PREFERENCE_STORAGE_KEY,
+} from "../shared/theme.ts";
+import {
 	App,
 	act,
 	cleanup,
@@ -313,6 +318,41 @@ describe("Couchview app lifecycle and settings", () => {
 		fireEvent.keyDown(window, { key: "g" });
 		fireEvent.keyDown(window, { key: "s" });
 		expect(await screen.findByRole("region", { name: "Settings" })).toBeTruthy();
+	});
+
+	test("applies a device-local theme without dirtying the active profile", async () => {
+		window.history.replaceState(null, "", "/settings");
+		render(<App />);
+
+		const settings = await screen.findByRole("region", { name: "Settings" });
+		const save = within(settings).getByRole("button", {
+			name: "Save changes",
+		}) as HTMLButtonElement;
+		await waitFor(() => expect(save.disabled).toBe(true));
+		expect(
+			(within(settings).getByRole("radio", { name: "System" }) as HTMLInputElement).checked,
+		).toBe(true);
+
+		const profilePutCount = fixture.requests.filter(
+			(request) => request.method === "PUT" && request.path.startsWith("/api/settings/profiles/"),
+		).length;
+		fireEvent.click(within(settings).getByRole("radio", { name: "Light" }));
+
+		expect(
+			(within(settings).getByRole("radio", { name: "Light" }) as HTMLInputElement).checked,
+		).toBe(true);
+		expect(localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY)).toBe("light");
+		expect(document.documentElement.getAttribute(THEME_PREFERENCE_ATTRIBUTE)).toBe("light");
+		expect(document.documentElement.style.colorScheme).toBe("light");
+		expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe(
+			THEME_METADATA_COLORS.light,
+		);
+		expect(save.disabled).toBe(true);
+		expect(
+			fixture.requests.filter(
+				(request) => request.method === "PUT" && request.path.startsWith("/api/settings/profiles/"),
+			).length,
+		).toBe(profilePutCount);
 	});
 
 	test("creates, renames, duplicates, selects, and deletes host-wide profiles", async () => {

@@ -70,6 +70,17 @@ function stateLabel(state: ConnectionState): string {
 	}
 }
 
+function rendererLayoutRevision(config: TerminalRendererConfig): string {
+	return [
+		config.cellHeightAdjustment,
+		config.cellWidthAdjustment,
+		config.cursorBlink,
+		config.cursorStyle,
+		config.fontFamily,
+		config.fontSize,
+	].join(":");
+}
+
 export function useTerminalWorkspace({
 	active,
 	capability,
@@ -120,11 +131,17 @@ export function useTerminalWorkspace({
 	}
 	const activeRef = useRef(active);
 	activeRef.current = active;
-	const activeRendererConfig = safeMode ? SAFE_TERMINAL_RENDERER_CONFIG : rendererConfig;
+	const activeRendererConfig = safeMode
+		? { ...SAFE_TERMINAL_RENDERER_CONFIG, theme: rendererConfig.theme }
+		: rendererConfig;
+	const activeRendererConfigRef = useRef(activeRendererConfig);
+	activeRendererConfigRef.current = activeRendererConfig;
+	const activeRendererLayoutRevision = `${safeMode}:${rendererLayoutRevision(activeRendererConfig)}`;
+	const requestedRendererLayoutRevision = rendererLayoutRevision(rendererConfig);
 
 	useEffect(() => {
 		setSafeMode(false);
-	}, [rendererConfig]);
+	}, [requestedRendererLayoutRevision]);
 
 	useEffect(() => {
 		suppressAutomaticP2pRef.current = false;
@@ -188,7 +205,7 @@ export function useTerminalWorkspace({
 		setLatencySummary(null);
 		void createBrowserTerminal({
 			container: containerRef.current,
-			config: activeRendererConfig,
+			config: activeRendererConfigRef.current,
 			onData(data) {
 				return sendTerminalData(data);
 			},
@@ -234,7 +251,7 @@ export function useTerminalWorkspace({
 			rendererRef.current = null;
 		};
 	}, [
-		activeRendererConfig,
+		activeRendererLayoutRevision,
 		capability.available,
 		capability.reason,
 		rendererRetryNonce,
@@ -242,6 +259,10 @@ export function useTerminalWorkspace({
 		sendTerminalControl,
 		sendTerminalData,
 	]);
+
+	useEffect(() => {
+		rendererRef.current?.updateTheme(activeRendererConfig.theme);
+	}, [activeRendererConfig.theme, rendererGeneration]);
 
 	useEffect(() => {
 		const tracker = latencyTrackerRef.current;

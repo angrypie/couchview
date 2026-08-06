@@ -1,8 +1,9 @@
 "use dom";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 import type { FileDiff, ReviewComment } from "../../../shared/contracts.ts";
+import type { ResolvedTheme } from "../../../shared/theme.ts";
 import { DiffViewer, type DiffViewerHandle, type ViewerLineTarget } from "../../DiffViewer.tsx";
 import "./nativeDiffSurface.css";
 
@@ -15,6 +16,7 @@ interface NativeDiffSurfaceProps {
 	scrollTarget: ViewerLineTarget | null;
 	onCommentOpen(commentId: string): Promise<void>;
 	onLinePress(lineNumber: number, side: "old" | "new"): Promise<void>;
+	theme: ResolvedTheme;
 	dom?: import("expo/dom").DOMProps;
 }
 
@@ -25,22 +27,20 @@ export default function NativeDiffSurface({
 	lineNumbersVisible,
 	lineWrapEnabled,
 	scrollTarget,
+	theme,
 	onCommentOpen,
 	onLinePress,
 }: NativeDiffSurfaceProps) {
 	const viewer = useRef<DiffViewerHandle>(null);
+	useLayoutEffect(() => {
+		document.documentElement.dataset.resolvedTheme = theme;
+		document.documentElement.style.colorScheme = theme;
+	}, [theme]);
 	useEffect(() => {
 		if (scrollTarget) viewer.current?.scrollToLine(scrollTarget);
 	}, [scrollTarget]);
 	return (
-		<main
-			style={{
-				background: "#0d1014",
-				color: "#e7edf5",
-				height: "100vh",
-				overflow: "auto",
-			}}
-		>
+		<main className="native-diff-root">
 			<DiffViewer
 				ref={viewer}
 				comments={comments}
@@ -56,6 +56,7 @@ export default function NativeDiffSurface({
 				onLineNumberClick={(lineNumber, side) => void onLinePress(lineNumber, side)}
 				onVisibleLineChange={() => undefined}
 				selectedRange={null}
+				themeType={theme}
 				widthAdjustment={0}
 			/>
 		</main>

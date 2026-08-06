@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
@@ -7,13 +7,14 @@ import {
 	type NativeTerminalDescriptor,
 	useNativeWorkspace,
 } from "../../features/nativeServers/useNativeWorkspace.ts";
+import { Text } from "../ui/text";
+import { VStack } from "../ui/vstack";
 import NativeTerminalSurface from "./NativeTerminalSurface.tsx";
-import { nativeTheme } from "./nativeTheme.ts";
 
 export function NativeTerminalScreen() {
 	const { profiles } = useNativeServer();
 	const workspace = useNativeWorkspace(profiles.activeProfile, profiles.update);
-	const { preferences } = useNativePreferences();
+	const { preferences, resolvedTheme } = useNativePreferences();
 	const { issueTerminal, endTerminal } = workspace;
 	const [descriptor, setDescriptor] = useState<NativeTerminalDescriptor | null>(null);
 	const [error, setError] = useState<string | null>(null);
@@ -27,6 +28,10 @@ export function NativeTerminalScreen() {
 	useEffect(() => {
 		connect();
 	}, [connect]);
+	const handleDisconnected = useCallback(async (message: string) => {
+		setDescriptor(null);
+		setError(message);
+	}, []);
 	const confirmEnd = () => {
 		Alert.alert(
 			"End tmux session?",
@@ -54,24 +59,16 @@ export function NativeTerminalScreen() {
 	};
 	if (descriptor) {
 		return (
-			<View style={{ backgroundColor: nativeTheme.background, flex: 1 }}>
-				<View
-					style={{
-						alignItems: "center",
-						borderBottomColor: nativeTheme.border,
-						borderBottomWidth: 1,
-						flexDirection: "row",
-						justifyContent: "flex-end",
-						paddingHorizontal: 10,
-						paddingVertical: 4,
-					}}
-				>
+			<View className="flex-1 bg-background">
+				<View className="flex-row items-center justify-end border-b border-border px-2.5 py-1">
 					<Pressable
 						accessibilityLabel="End tmux session"
+						className="rounded-md p-2 active:bg-destructive/10"
 						onPress={confirmEnd}
-						style={{ padding: 8 }}
 					>
-						<Text style={{ color: nativeTheme.red }}>End tmux</Text>
+						<Text className="text-destructive" size="sm">
+							End tmux
+						</Text>
 					</Pressable>
 				</View>
 				<NativeTerminalSurface
@@ -81,45 +78,36 @@ export function NativeTerminalScreen() {
 						style: { flex: 1 },
 					}}
 					fontSize={preferences.terminalFontSize}
-					onDisconnected={async (message) => {
-						setDescriptor(null);
-						setError(message);
-					}}
+					onDisconnected={handleDisconnected}
 					protocol={descriptor.protocol}
 					socketUrl={descriptor.socketUrl}
 					ticket={descriptor.ticket}
+					theme={resolvedTheme}
 				/>
 			</View>
 		);
 	}
 	return (
-		<View
-			style={{
-				alignItems: "center",
-				backgroundColor: nativeTheme.background,
-				flex: 1,
-				gap: 12,
-				justifyContent: "center",
-				padding: 24,
-			}}
-		>
-			{error ? (
-				<>
-					<Text accessibilityRole="alert" selectable style={{ color: nativeTheme.red }}>
-						{error}
-					</Text>
-					<Pressable onPress={connect} style={{ padding: 10 }}>
-						<Text style={{ color: nativeTheme.accent }}>Reconnect</Text>
-					</Pressable>
-				</>
-			) : (
-				<>
-					<ActivityIndicator color={nativeTheme.accent} />
-					<Text selectable style={{ color: nativeTheme.muted }}>
-						Attaching terminal…
-					</Text>
-				</>
-			)}
+		<View className="flex-1 items-center justify-center bg-background p-6">
+			<VStack className="items-center" space="md">
+				{error ? (
+					<>
+						<Text accessibilityRole="alert" className="text-center text-destructive" selectable>
+							{error}
+						</Text>
+						<Pressable className="rounded-md p-2.5 active:bg-accent" onPress={connect}>
+							<Text className="text-primary">Reconnect</Text>
+						</Pressable>
+					</>
+				) : (
+					<>
+						<ActivityIndicator colorClassName="accent-primary" />
+						<Text className="text-muted-foreground" selectable size="sm">
+							Attaching terminal…
+						</Text>
+					</>
+				)}
+			</VStack>
 		</View>
 	);
 }

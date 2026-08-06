@@ -21,7 +21,7 @@
 	grid-template-columns: auto minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 6px;
-	background: rgb(19 24 32 / 98%);
+	background: var(--surface-overlay);
 }
 
 .git-history-back {
@@ -32,8 +32,8 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	color: #dce5ef;
-	background: #11171f;
+	color: var(--text);
+	background: var(--surface-solid);
 }
 
 .git-history-heading {
@@ -93,10 +93,10 @@
 	right: 0;
 	width: min(260px, calc(100vw - 24px));
 	padding: 5px;
-	border: 1px solid #394554;
+	border: 1px solid var(--line);
 	border-radius: 10px;
-	background: #171e27;
-	box-shadow: 0 14px 36px rgb(0 0 0 / 48%);
+	background: var(--panel-raised);
+	box-shadow: var(--shadow);
 }
 
 .git-action-menu button {
@@ -106,7 +106,7 @@
 	border: 0;
 	border-radius: 7px;
 	gap: 8px;
-	color: #d5deea;
+	color: var(--text);
 	background: transparent;
 	text-align: left;
 }
@@ -116,7 +116,7 @@
 }
 
 .git-action-menu button.danger {
-	color: #ffb8bc;
+	color: var(--red);
 }
 
 .git-action-menu button:disabled {
@@ -128,19 +128,19 @@
 	padding: 5px 9px 5px 12px;
 	justify-content: space-between;
 	gap: 8px;
-	border-bottom: 1px solid #58471f;
-	color: #eed59e;
-	background: #2c2517;
+	border-bottom: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
+	color: var(--yellow);
+	background: var(--yellow-bg);
 	font-size: 10px;
 }
 
 .git-detached-banner button {
 	min-height: 27px;
 	padding: 3px 8px;
-	border: 1px solid #725d2d;
+	border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
 	border-radius: 6px;
 	color: inherit;
-	background: #3a301c;
+	background: var(--panel);
 }
 
 .git-workspace-content {
@@ -186,7 +186,7 @@
 	border: 0;
 	border-radius: 8px;
 	gap: 8px;
-	color: #ccd6e2;
+	color: var(--text);
 	background: transparent;
 	text-align: left;
 }
@@ -206,7 +206,7 @@
 .git-commit-row > svg,
 .git-file-row > svg {
 	flex: 0 0 auto;
-	color: #7da6ff;
+	color: var(--accent);
 }
 
 .git-commit-copy,
@@ -252,8 +252,8 @@
 	padding: 2px 5px;
 	border-radius: 99px;
 	overflow: hidden;
-	color: #bcd1fb;
-	background: #223352;
+	color: var(--accent);
+	background: var(--accent-soft);
 	font-size: 8px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -321,11 +321,11 @@
 	left: 50%;
 	width: min(440px, calc(100vw - 24px));
 	max-height: calc(100dvh - 24px);
-	border: 1px solid #414d5c;
+	border: 1px solid var(--line);
 	border-radius: 13px;
 	overflow: auto;
-	background: #171e27;
-	box-shadow: 0 18px 52px rgb(0 0 0 / 58%);
+	background: var(--panel-raised);
+	box-shadow: var(--shadow);
 	transform: translate(-50%, -50%);
 }
 
@@ -335,7 +335,7 @@
 
 .git-confirm-copy {
 	padding: 12px;
-	color: #cbd5e1;
+	color: var(--text);
 	font-size: 12px;
 	line-height: 1.5;
 }
@@ -354,10 +354,10 @@
 .git-action-warning {
 	margin-top: 10px;
 	padding: 8px;
-	border: 1px solid #634d22;
+	border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
 	border-radius: 8px;
-	color: #efd59d;
-	background: #302717;
+	color: var(--yellow);
+	background: var(--yellow-bg);
 }
 
 .git-clean-acknowledgment {
@@ -380,8 +380,8 @@
 }
 
 .git-confirm-actions .action-button.danger {
-	color: #fff;
-	background: #a63d45;
+	color: rgb(var(--ui-destructive-foreground));
+	background: var(--red);
 }
 
 @media (orientation: landscape) and (min-width: 900px) and (min-height: 600px) {

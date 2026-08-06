@@ -15,6 +15,7 @@ import type { useRepositoryWorkspace } from "../features/repositories/useReposit
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
 import type { useDisplayPreferences } from "../features/settings/useDisplayPreferences.ts";
 import type { useSettingsProfiles } from "../features/settings/useSettingsProfiles.ts";
+import type { useThemePreference } from "../features/settings/useThemePreference.ts";
 import type { useReviewShellCommands } from "../features/shell/useReviewShellCommands.ts";
 import type { useWorkspaceNavigation } from "../features/shell/useWorkspaceNavigation.ts";
 import type { DrawerView } from "../features/staging/types.ts";
@@ -59,6 +60,7 @@ interface CouchviewApplicationViewProps {
 	showToast: (message: string) => void;
 	splitView: boolean;
 	terminalCapability: TerminalCapability;
+	theme: ReturnType<typeof useThemePreference>;
 	workflow: ReturnType<typeof useReviewWorkflow>;
 	workspace: ReturnType<typeof useRepositoryWorkspace>;
 }
@@ -89,6 +91,7 @@ export function CouchviewApplicationView({
 	showToast,
 	splitView,
 	terminalCapability,
+	theme,
 	workflow,
 	workspace,
 }: CouchviewApplicationViewProps) {
@@ -155,6 +158,7 @@ export function CouchviewApplicationView({
 					onSelect={settings.selectProfile}
 					profile={settings.activeProfile}
 					profiles={settings.profiles}
+					theme={theme}
 				/>
 				{commandUi}
 			</>
@@ -189,6 +193,7 @@ export function CouchviewApplicationView({
 					onBack={navigation.closeGitHistory}
 					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
 					repository={workspace.repository}
+					themeType={theme.resolvedTheme}
 				/>
 				{toastUi}
 				<FailureDetailsSheet
@@ -266,6 +271,7 @@ export function CouchviewApplicationView({
 					remoteBridgeCapability={remoteBridgeCapability}
 					splitView={splitView}
 					terminalCapability={terminalCapability}
+					themeType={theme.resolvedTheme}
 					workflow={workflow}
 					workspace={workspace}
 					workspaceMode={navigation.mode}

@@ -1,5 +1,4 @@
 import { App } from "../App.tsx";
-import "../styles.css";
 
 import type { ProductRouteMode } from "./productRouteMode.ts";
 

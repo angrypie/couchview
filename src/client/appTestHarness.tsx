@@ -15,6 +15,7 @@ import {
 	EventSourceStub,
 	originalFetch,
 	originalWebSocket,
+	testThemeRuntime,
 	viewerCommentJumps,
 	viewerHunkJumps,
 	viewerState,
@@ -161,6 +162,7 @@ export function createAppTestHarness() {
 		fixture.instanceOffline = false;
 		resetRendererState();
 		resetFakeTerminalWebSockets();
+		testThemeRuntime.reset();
 		EventSourceStub.instances.length = 0;
 		viewerCommentJumps.length = 0;
 		viewerHunkJumps.length = 0;

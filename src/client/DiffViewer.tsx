@@ -1,4 +1,4 @@
-import type { CodeViewLineSelection, CodeViewOptions } from "@pierre/diffs";
+import { type CodeViewLineSelection, type CodeViewOptions, DEFAULT_THEMES } from "@pierre/diffs";
 import {
 	CodeView,
 	type CodeViewHandle,
@@ -18,6 +18,7 @@ import {
 	useRef,
 } from "react";
 import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type { ResolvedTheme } from "../shared/theme.ts";
 import { formatCommentReference } from "./commentExport.ts";
 import {
 	adaptFileDiff,
@@ -92,6 +93,7 @@ interface DiffViewerProps {
 	lineWrapEnabled: boolean;
 	interactive?: boolean;
 	selectedRange: SelectedLineRange | null;
+	themeType?: ResolvedTheme;
 	onCommentClick(comment: ReviewComment): void;
 	onIdentifierClick(identifier: string): void;
 	onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
@@ -233,6 +235,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 		onLineNumberClick,
 		onVisibleLineChange,
 		selectedRange,
+		themeType = "dark",
 	},
 	ref,
 ) {
@@ -348,8 +351,8 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 
 	const options = useMemo<CodeViewOptions<CommentAnnotationMetadata>>(
 		() => ({
-			theme: "pierre-dark",
-			themeType: "dark",
+			theme: DEFAULT_THEMES,
+			themeType,
 			diffStyle: "unified",
 			diffIndicators: "bars",
 			hunkSeparators: "metadata",
@@ -402,6 +405,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			lineWrapEnabled,
 			onIdentifierClick,
 			onLineNumberClick,
+			themeType,
 			widthAdjustment,
 		],
 	);
