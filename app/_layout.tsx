@@ -21,9 +21,9 @@ export default function RootLayout() {
 						}}
 					>
 						<Stack.Screen name="index" options={{ headerShown: false, title: "Couchview" }} />
-						<Stack.Screen name="history" options={{ title: "History" }} />
-						<Stack.Screen name="artifacts" options={{ title: "Artifacts" }} />
-						<Stack.Screen name="settings" options={{ title: "Settings" }} />
+						<Stack.Screen name="history" options={{ headerShown: false, title: "History" }} />
+						<Stack.Screen name="artifacts" options={{ headerShown: false, title: "Artifacts" }} />
+						<Stack.Screen name="settings" options={{ headerShown: false, title: "Settings" }} />
 						<Stack.Screen
 							name="servers"
 							options={{ presentation: "formSheet", title: "Servers" }}
@@ -32,7 +32,7 @@ export default function RootLayout() {
 							name="pair"
 							options={{ presentation: "formSheet", title: "Pair server" }}
 						/>
-						<Stack.Screen name="terminal" options={{ title: "Terminal" }} />
+						<Stack.Screen name="terminal" options={{ headerShown: false, title: "Terminal" }} />
 					</Stack>
 				</NativeServerProvider>
 			</NativePreferencesProvider>

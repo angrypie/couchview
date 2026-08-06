@@ -1,5 +1,7 @@
 export const NATIVE_CLIENT_PROTOCOL = "couchview-native-v1";
 export const NATIVE_CLIENT_TOKEN_HEADER = "x-couchview-client-token";
+export const NATIVE_PRODUCT_SURFACE_QUERY = "couchviewNative";
+export const NATIVE_PRODUCT_SURFACE_VALUE = "1";
 
 export interface NativeClientDevice {
 	id: string;

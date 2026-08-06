@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export function useServiceWorkerRegistration() {
+export function useServiceWorkerRegistration(disabled = false) {
 	const [needRefresh, setNeedRefresh] = useState(false);
 	const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
 	const reloadRequestedRef = useRef(false);
 
 	useEffect(() => {
-		if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
+		if (disabled || process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) {
+			return;
+		}
 		let disposed = false;
 		const onControllerChange = () => {
 			if (reloadRequestedRef.current) window.location.reload();
@@ -37,21 +39,25 @@ export function useServiceWorkerRegistration() {
 			disposed = true;
 			navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
 		};
-	}, []);
+	}, [disabled]);
 
-	const updateServiceWorker = useCallback(async (reloadPage = false) => {
-		const registration =
-			registrationRef.current ?? (await navigator.serviceWorker?.getRegistration("/"));
-		if (!registration) return;
-		registrationRef.current = registration;
-		if (reloadPage) reloadRequestedRef.current = true;
-		if (registration.waiting) {
-			registration.waiting.postMessage({ type: "SKIP_WAITING" });
-			setNeedRefresh(false);
-			return;
-		}
-		await registration.update();
-	}, []);
+	const updateServiceWorker = useCallback(
+		async (reloadPage = false) => {
+			if (disabled) return;
+			const registration =
+				registrationRef.current ?? (await navigator.serviceWorker?.getRegistration("/"));
+			if (!registration) return;
+			registrationRef.current = registration;
+			if (reloadPage) reloadRequestedRef.current = true;
+			if (registration.waiting) {
+				registration.waiting.postMessage({ type: "SKIP_WAITING" });
+				setNeedRefresh(false);
+				return;
+			}
+			await registration.update();
+		},
+		[disabled],
+	);
 
 	return { needRefresh, updateServiceWorker };
 }

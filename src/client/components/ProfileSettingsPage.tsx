@@ -6,6 +6,7 @@ import {
 	RotateCcw,
 	Save,
 	Search,
+	Server,
 	Settings2,
 	SquareTerminal,
 	Trash2,
@@ -39,6 +40,7 @@ interface ProfileSettingsPageProps {
 	onDelete(profileId: string): Promise<void>;
 	onDirtyChange(dirty: boolean): void;
 	onDuplicate(profileId: string, name: string): Promise<void>;
+	nativeServerManagerUrl: string | null;
 	onRecordingChange(recording: boolean): void;
 	onOpenCommandPalette(): void;
 	onSave(
@@ -140,8 +142,12 @@ function SettingsToolbar({
 	busy,
 	commandPaletteShortcut,
 	editor,
+	nativeServerManagerUrl,
 	onOpenCommandPalette,
-}: Pick<ProfileSettingsPageProps, "busy" | "commandPaletteShortcut" | "onOpenCommandPalette"> & {
+}: Pick<
+	ProfileSettingsPageProps,
+	"busy" | "commandPaletteShortcut" | "nativeServerManagerUrl" | "onOpenCommandPalette"
+> & {
 	editor: ProfileSettingsEditor;
 }) {
 	return (
@@ -154,6 +160,16 @@ function SettingsToolbar({
 				<span>Settings</span>
 			</div>
 			<div className="settings-toolbar-actions">
+				{nativeServerManagerUrl ? (
+					<a
+						aria-label="Manage paired servers"
+						className="terminal-toolbar-button command-palette-trigger"
+						href={nativeServerManagerUrl}
+					>
+						<Server size={15} />
+						<span className="workspace-command-label">Servers</span>
+					</a>
+				) : null}
 				<button
 					aria-label="Open command palette"
 					className="terminal-toolbar-button command-palette-trigger"
@@ -576,6 +592,7 @@ export function ProfileSettingsPage(props: ProfileSettingsPageProps) {
 				busy={props.busy}
 				commandPaletteShortcut={props.commandPaletteShortcut}
 				editor={editor}
+				nativeServerManagerUrl={props.nativeServerManagerUrl}
 				onOpenCommandPalette={props.onOpenCommandPalette}
 			/>
 			<div className="settings-scroll">

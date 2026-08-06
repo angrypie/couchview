@@ -135,6 +135,27 @@ Copy the `192.168...` address into the phone browser. If it does not connect, co
 
 LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
 
+### Native iPhone and iPad app
+
+The Expo app uses the same mobile product surface as the PWA. After it verifies
+the selected paired server with the device credential stored in SecureStore, it
+opens that server's PWA in the native shell. Review, commands, settings, Git
+history, artifacts, downloads, and the tmux terminal therefore use the same
+components and same-origin transports as mobile Safari. Pairing and paired-server
+management remain native.
+
+Run one reachable Couchview process on the computer; a separate API server is
+not needed. The same `couchview --host 0.0.0.0 ...` process serves the PWA, JSON
+API, event streams, artifact downloads, and terminal sockets. Keep it running
+while using the app. In Couchview's bridge sheet, choose **Generate app pairing**,
+then open or paste that link in the native app.
+
+For local native development, use `bun run ios` or an installed development
+client with `bun run dev:native`. A signed local Xcode build can also be made
+with `bun x expo run:ios --configuration Release`. The EAS profiles are ready
+for local EAS builds after the project is linked once with `bun x eas init`; then use
+`bun x eas build --platform ios --profile development --local`.
+
 ### Browser tmux terminal
 
 Couchview provides one persistent tmux terminal per repository, rendered by

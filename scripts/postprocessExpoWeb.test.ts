@@ -3,7 +3,11 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { expoWebManifest, extractInlineBootstrapScripts } from "./postprocessExpoWeb.ts";
+import {
+	ensureViewportFitCover,
+	expoWebManifest,
+	extractInlineBootstrapScripts,
+} from "./postprocessExpoWeb.ts";
 
 test("extracts executable Expo bootstrap scripts into hashed local assets", async () => {
 	const directory = await mkdtemp(path.join(tmpdir(), "couchview-expo-html-"));
@@ -30,4 +34,17 @@ test("keeps the install manifest scoped to the network-served application", () =
 		start_url: "/",
 	});
 	expect(expoWebManifest.icons.some(({ purpose }) => purpose === "maskable")).toBe(true);
+});
+
+test("enables CSS safe-area insets in the Expo web viewport", () => {
+	const html =
+		'<head><meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" /></head>';
+	expect(ensureViewportFitCover(html)).toContain(
+		'content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"',
+	);
+	expect(
+		ensureViewportFitCover(
+			'<meta name="viewport" content="width=device-width, viewport-fit=cover" />',
+		),
+	).toBe('<meta name="viewport" content="width=device-width, viewport-fit=cover" />');
 });

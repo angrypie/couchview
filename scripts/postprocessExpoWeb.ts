@@ -73,8 +73,18 @@ export async function extractInlineBootstrapScripts(html: string, outputRoot: st
 	return processed + html.slice(cursor);
 }
 
+export function ensureViewportFitCover(html: string): string {
+	return html.replace(/<meta\s+name=["']viewport["'][^>]*>/i, (viewport) => {
+		if (/viewport-fit\s*=\s*cover/i.test(viewport)) return viewport;
+		return viewport.replace(/content=(["'])(.*?)\1/i, (_content, quote, value) => {
+			return `content=${quote}${value}, viewport-fit=cover${quote}`;
+		});
+	});
+}
+
 function injectWebMetadata(html: string): string {
-	if (html.includes('rel="manifest"')) return html;
+	const withViewportFit = ensureViewportFitCover(html);
+	if (withViewportFit.includes('rel="manifest"')) return withViewportFit;
 	const metadata = `
     <meta name="theme-color" content="#101317" />
     <meta name="description" content="Review local Git changes from a compact installable interface." />
@@ -85,7 +95,7 @@ function injectWebMetadata(html: string): string {
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="mask-icon" href="/icon.svg" color="#101317" />
 `;
-	return html.replace("</head>", `${metadata}</head>`);
+	return withViewportFit.replace("</head>", `${metadata}</head>`);
 }
 
 async function installBundledFonts(outputRoot: string) {

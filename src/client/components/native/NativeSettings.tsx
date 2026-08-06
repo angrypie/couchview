@@ -4,10 +4,12 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
+import { useNativeWorkspace } from "../../features/nativeServers/useNativeWorkspace.ts";
 import { nativeTheme } from "./nativeTheme.ts";
 
 export function NativeSettings() {
-	const { profiles, workspace } = useNativeServer();
+	const { profiles } = useNativeServer();
+	const workspace = useNativeWorkspace(profiles.activeProfile, profiles.update);
 	const nativePreferences = useNativePreferences();
 	const { preferences } = nativePreferences;
 	const router = useRouter();

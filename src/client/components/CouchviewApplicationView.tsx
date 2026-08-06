@@ -19,6 +19,7 @@ import type { useReviewShellCommands } from "../features/shell/useReviewShellCom
 import type { useWorkspaceNavigation } from "../features/shell/useWorkspaceNavigation.ts";
 import type { DrawerView } from "../features/staging/types.ts";
 import type { useChangedFileFilters } from "../features/staging/useChangedFileFilters.ts";
+import { isNativeProductSurface, NATIVE_SERVER_MANAGER_URL } from "../lib/nativeProductSurface.ts";
 import { formatShortcut } from "../shortcutEngine.ts";
 import { ApplicationStateView } from "./ApplicationStateView.tsx";
 import { AppToastStack } from "./AppToastStack.tsx";
@@ -142,6 +143,7 @@ export function CouchviewApplicationView({
 				<ProfileSettingsPage
 					busy={settings.busy}
 					commandPaletteShortcut={commandPaletteShortcut}
+					nativeServerManagerUrl={isNativeProductSurface() ? NATIVE_SERVER_MANAGER_URL : null}
 					onBack={navigation.closeSettings}
 					onCreate={(name) => settings.createProfile(name)}
 					onDelete={settings.deleteProfile}

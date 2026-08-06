@@ -87,6 +87,20 @@ describe("Couchview app lifecycle and settings", () => {
 		);
 	});
 
+	test("returns native-hosted failures to paired server management", async () => {
+		window.history.replaceState(null, "", "/?couchviewNative=1");
+		globalThis.fetch = (() => Promise.reject(new TypeError("offline"))) as unknown as typeof fetch;
+		render(<App />);
+
+		await screen.findByRole("heading", { name: "Couchview is unavailable" });
+		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+		expect(screen.getByRole("link", { name: "Manage servers" }).getAttribute("href")).toBe(
+			"couchview://servers",
+		);
+		expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
+		expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+	});
+
 	test("does not suggest authentication or cache recovery for a server response", async () => {
 		fixture.bootstrapFailureStatus = 503;
 		render(<App />);

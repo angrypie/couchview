@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { isNativeProductSurface } from "../../lib/nativeProductSurface.ts";
 import { shouldApplyPwaUpdate } from "../../pwaUpdatePolicy.ts";
 import { useServiceWorkerRegistration } from "./useServiceWorkerRegistration.ts";
 
@@ -14,6 +15,7 @@ interface PwaUpdateOptions {
 }
 
 export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
+	const nativeProductSurface = isNativeProductSurface();
 	const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
 	const [installDismissed, setInstallDismissed] = useState(() => {
 		try {
@@ -22,23 +24,25 @@ export function usePwaUpdate({ updateSafe }: PwaUpdateOptions) {
 			return false;
 		}
 	});
-	const { needRefresh, updateServiceWorker } = useServiceWorkerRegistration();
+	const { needRefresh, updateServiceWorker } = useServiceWorkerRegistration(nativeProductSurface);
 	const launchedAtRef = useRef(window.performance.now());
 	const updateRequestedRef = useRef(false);
 
 	const standalone =
+		nativeProductSurface ||
 		window.matchMedia("(display-mode: standalone)").matches ||
 		Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
 	const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
 	useEffect(() => {
+		if (nativeProductSurface) return;
 		const onInstallPrompt = (event: Event) => {
 			event.preventDefault();
 			setInstallPrompt(event as InstallPromptEvent);
 		};
 		window.addEventListener("beforeinstallprompt", onInstallPrompt);
 		return () => window.removeEventListener("beforeinstallprompt", onInstallPrompt);
-	}, []);
+	}, [nativeProductSurface]);
 
 	useEffect(() => {
 		if (!needRefresh || updateRequestedRef.current) return;

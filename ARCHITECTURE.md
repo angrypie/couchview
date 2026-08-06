@@ -66,20 +66,25 @@ Expo Router owns the cross-platform route entry points in `app/`. Route files
 stay thin: the native layout composes safe-area, server-profile, and stack
 providers, while the web layout removes native navigation chrome. On web,
 `src/client/expo/ProductRoot.web.tsx` delegates to the established browser
-composition root for full behavior parity. On iPhone and iPad,
-`src/client/expo/ProductRoot.tsx` selects native workbench, server, settings,
-terminal, and explicitly deferred history or artifact surfaces.
+composition root. On iPhone and iPad, `src/client/expo/ProductRoot.tsx` keeps
+pairing and server management native, then delegates every product route to
+`NativeProductSurface`. That surface verifies the selected server identity with
+the SecureStore credential before its Expo DOM WebView opens the PWA at the
+paired origin. Review, commands, settings, history, artifacts, and terminal
+therefore use the same `App` composition, components, same-origin HTTP, event
+streams, downloads, browser history, and WebSocket behavior on mobile web and
+in the native shell.
 
 Native server profiles, secure credentials, pairing-link validation, API
-transport, repository streams, bounded revision-keyed diff caching, prefetch,
-and optimistic workspace mutations belong to
+transport, identity preflight, and paired-origin URL construction belong to
 `src/client/features/nativeServers/`. Platform files separate AsyncStorage
-metadata from SecureStore credentials. Device-local diff and terminal display
-preferences belong to `src/client/features/nativePreferences/` and use their
-own AsyncStorage adapter. Native rendering belongs to
-`src/client/components/native/`; only the Pierre diff and Ghostty terminal
-surfaces use DOM components. A terminal DOM component receives a short-lived
-device-bound ticket and socket URL, never the durable native-client token.
+metadata from SecureStore credentials. The durable native-client token never
+enters the hosted PWA; it is used only by native transport to verify the paired
+server before navigation. The hosted page uses the browser session and the
+server's normal origin/CSRF protections. A native query marker disables PWA
+installation and service-worker lifecycle UI inside the shell and exposes a
+custom-scheme return to native server management. Native loading, error,
+pairing, and server-manager rendering belongs to `src/client/components/native/`.
 
 Browser-side Couchview app pairing state and API orchestration belong to
 `src/client/features/nativeClients/`; the pairing panel only renders its
@@ -96,10 +101,11 @@ worker. Navigation and `/api` requests remain network-only, and repository
 responses are never placed in offline caches. `bun run build:legacy-web`
 retains the former Vite build as a temporary rollback path.
 
-The reusable path across React Native Web is feature logic and shared
-contracts, not a mechanical replacement of DOM tags. Keep `window`, history,
-service workers, clipboard, streams, storage, and terminal/browser integrations
-behind feature or platform-facing adapters.
+The current shared mobile product surface deliberately reuses the complete web
+composition instead of maintaining two feature UIs. Future native tabs or
+focused native screens may reuse platform-independent feature logic and shared
+contracts, but must keep `window`, history, service workers, clipboard, streams,
+storage, and terminal/browser integrations behind platform-facing adapters.
 
 ## Enforced limits
 

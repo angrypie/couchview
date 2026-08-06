@@ -3,12 +3,16 @@ import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
-import type { NativeTerminalDescriptor } from "../../features/nativeServers/useNativeWorkspace.ts";
+import {
+	type NativeTerminalDescriptor,
+	useNativeWorkspace,
+} from "../../features/nativeServers/useNativeWorkspace.ts";
 import NativeTerminalSurface from "./NativeTerminalSurface.tsx";
 import { nativeTheme } from "./nativeTheme.ts";
 
 export function NativeTerminalScreen() {
-	const { workspace } = useNativeServer();
+	const { profiles } = useNativeServer();
+	const workspace = useNativeWorkspace(profiles.activeProfile, profiles.update);
 	const { preferences } = useNativePreferences();
 	const { issueTerminal, endTerminal } = workspace;
 	const [descriptor, setDescriptor] = useState<NativeTerminalDescriptor | null>(null);

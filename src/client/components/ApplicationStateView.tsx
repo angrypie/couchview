@@ -2,6 +2,7 @@ import { AlertTriangle, LoaderCircle, LogIn, RefreshCw, RotateCcw } from "lucide
 import type { ReactNode } from "react";
 import { API_ROUTES } from "../../shared/contracts.ts";
 import type { AppPhase } from "../features/repositories/useRepositoryWorkspace.ts";
+import { isNativeProductSurface, NATIVE_SERVER_MANAGER_URL } from "../lib/nativeProductSurface.ts";
 
 interface ApplicationStateViewProps {
 	appCacheResetBusy: boolean;
@@ -43,6 +44,7 @@ export function ApplicationStateView({
 	const authenticationRequired = loadErrorCode === "authentication_required";
 	const authenticationRefreshFailed = loadErrorCode === "authentication_refresh_failed";
 	const disconnected = loadErrorCode === "disconnected";
+	const nativeProductSurface = isNativeProductSurface();
 	const repositoryId = new URL(window.location.href).searchParams.get("repo");
 	const accessRefresh = new URL(API_ROUTES.accessRefresh, window.location.origin);
 	if (repositoryId) accessRefresh.searchParams.set("repo", repositoryId);
@@ -68,7 +70,16 @@ export function ApplicationStateView({
 							: loadError}
 				</p>
 				<div className="state-actions">
-					{authenticationRefreshFailed ? (
+					{nativeProductSurface ? (
+						<>
+							<button className="action-button" onClick={() => void onLoad()} type="button">
+								<RefreshCw size={16} /> Retry
+							</button>
+							<a className="action-button secondary" href={NATIVE_SERVER_MANAGER_URL}>
+								Manage servers
+							</a>
+						</>
+					) : authenticationRefreshFailed ? (
 						<>
 							<a className="action-button" href={API_ROUTES.accessLogout}>
 								<RotateCcw size={16} /> Reset Cloudflare sign-in

@@ -16,7 +16,10 @@ import {
 import type { ChangeFile, FileDiff, RepositoryCatalogEntry } from "../../../shared/contracts.ts";
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
-import type { NativeCommentAnchor } from "../../features/nativeServers/useNativeWorkspace.ts";
+import {
+	type NativeCommentAnchor,
+	useNativeWorkspace,
+} from "../../features/nativeServers/useNativeWorkspace.ts";
 import { selectWorkbenchLayout } from "../../lib/workbenchLayout.ts";
 import { type NativeCommand, NativeCommandPalette } from "./NativeCommandPalette.tsx";
 import NativeDiffSurface from "./NativeDiffSurface.tsx";
@@ -206,7 +209,8 @@ function CommentComposer(props: {
 }
 
 export function NativeWorkbench() {
-	const { profiles, workspace } = useNativeServer();
+	const { profiles } = useNativeServer();
+	const workspace = useNativeWorkspace(profiles.activeProfile, profiles.update);
 	const { preferences } = useNativePreferences();
 	const router = useRouter();
 	const { width, height } = useWindowDimensions();

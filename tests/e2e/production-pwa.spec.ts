@@ -93,6 +93,41 @@ test.describe("production PWA", () => {
 		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
 	});
 
+	test("uses the full mobile product surface without PWA lifecycle UI in the native shell", async ({
+		page,
+	}, testInfo) => {
+		test.skip(
+			testInfo.project.name !== "mobile-375-webkit",
+			"The native shell hosts the iOS mobile surface.",
+		);
+		await page.goto("/?couchviewNative=1");
+
+		await expect(page.getByRole("button", { name: "Open command palette" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Open repository artifacts" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Open Git history" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
+		await page.getByRole("button", { name: "Open settings" }).click();
+		await expect(page.getByRole("link", { name: "Manage paired servers" })).toHaveAttribute(
+			"href",
+			"couchview://servers",
+		);
+		await expect(page).toHaveURL(/\/settings\?.*couchviewNative=1/);
+		await page.evaluate(() => {
+			const event = new Event("beforeinstallprompt", { cancelable: true });
+			Object.defineProperties(event, {
+				prompt: { value: async () => undefined },
+				userChoice: { value: Promise.resolve({ outcome: "dismissed" }) },
+			});
+			window.dispatchEvent(event);
+		});
+		await expect(page.getByText("Install Couchview for full-screen access.")).toHaveCount(0);
+		await expect
+			.poll(() =>
+				page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length),
+			)
+			.toBe(0);
+	});
+
 	test("keeps documents and APIs network-only without prompting over unsaved work", async ({
 		context,
 		page,
