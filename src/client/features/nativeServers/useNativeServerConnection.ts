@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { nativeCredentialStore } from "./credentialStore";
-import { NativeApiClient, NativeApiError } from "./nativeApi.ts";
+import { fetchNativeServerInstance, NativeApiError } from "./nativeApi.ts";
 import type { NativeServerProfile } from "./types.ts";
 
-export type NativeServerConnectionPhase = "idle" | "loading" | "ready" | "error";
+type NativeServerConnectionPhase = "idle" | "loading" | "ready" | "error";
 
 export interface NativeServerConnectionController {
 	phase: NativeServerConnectionPhase;
@@ -49,9 +49,7 @@ export function useNativeServerConnection(
 		void (async () => {
 			const token = await nativeCredentialStore.get(profile.serverId);
 			if (!token) throw new Error("This server profile has no device credential; pair it again");
-			const instance = await new NativeApiClient(profile.baseUrl, token).instance(
-				controller.signal,
-			);
+			const instance = await fetchNativeServerInstance(profile.baseUrl, token, controller.signal);
 			if (instance.serverId !== profile.serverId) {
 				throw new Error("The server at this address has a different Couchview identity");
 			}

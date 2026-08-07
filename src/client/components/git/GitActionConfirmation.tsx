@@ -1,13 +1,13 @@
 import { AlertTriangle, LoaderCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { ChangeFile, RepositorySummary } from "../../../shared/contracts.ts";
+import type { FileChange, RepositorySummary } from "../../../shared/contracts.ts";
 import type { GitWorkspaceStatus } from "../../../shared/git/index.ts";
 import type { GitPendingAction } from "../../features/git/index.ts";
 
 interface GitActionConfirmationProps {
 	busy: boolean;
-	files: ChangeFile[];
+	files: FileChange[];
 	onCancel: () => void;
 	onConfirm: () => void;
 	onRequestStash: () => void;

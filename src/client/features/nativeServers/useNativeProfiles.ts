@@ -12,10 +12,9 @@ export interface NativeProfilesController {
 	error: string | null;
 	claiming: boolean;
 	activate(profileId: string): Promise<void>;
-	claim(link: string, deviceLabel: string): Promise<NativeServerProfile>;
+	claim(link: string, deviceLabel: string): Promise<void>;
 	remove(profileId: string): Promise<void>;
 	update(profile: NativeServerProfile): Promise<void>;
-	clearError(): void;
 }
 
 function errorMessage(error: unknown): string {
@@ -108,7 +107,6 @@ export function useNativeProfiles(): NativeProfilesController {
 					await nativeCredentialStore.remove(pairing.serverId);
 					throw saveError;
 				}
-				return profile;
 			} catch (claimError) {
 				setError(errorMessage(claimError));
 				throw claimError;
@@ -158,6 +156,5 @@ export function useNativeProfiles(): NativeProfilesController {
 		claim,
 		remove,
 		update,
-		clearError: () => setError(null),
 	};
 }

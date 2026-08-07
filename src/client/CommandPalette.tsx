@@ -12,7 +12,7 @@ interface CommandPaletteProps {
 	open: boolean;
 }
 
-export function ShortcutBadge({ command }: { command: RuntimeCommand }) {
+function ShortcutBadge({ command }: { command: RuntimeCommand }) {
 	return (
 		<kbd className={`command-shortcut ${command.binding ? "" : "unassigned"}`}>
 			{formatShortcut(command.binding)}

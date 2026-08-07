@@ -6,14 +6,7 @@ import {
 	DEFAULT_SETTINGS_PROFILE_ID,
 	DEFAULT_SETTINGS_PROFILE_NAME,
 } from "../src/shared/settings.ts";
-import {
-	alternateRepository,
-	comments,
-	files,
-	initialFiles,
-	repository,
-	reviews,
-} from "./e2eFixtureData.ts";
+import { alternateRepository, files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
 import { fixtureJson, fixtureSecurityHeaders, requireFixtureCsrf } from "./e2eFixtureHttp.ts";
 import { handleFixtureReadRoute } from "./e2eFixtureReadRoutes.ts";
 import { handleFixtureReviewMutation } from "./e2eFixtureReviewMutations.ts";
@@ -73,7 +66,6 @@ const state: FixtureMutableState = {
 		this.artifactTimers.clear();
 		files.splice(0, files.length, ...structuredClone(initialFiles));
 		reviews.splice(0);
-		comments.splice(0);
 		this.packageRuns = [];
 		this.settingsProfileCounter = 0;
 		this.settingsProfiles = [defaultSettingsProfile()];
@@ -147,8 +139,7 @@ function requestContext(request: Request): FixtureRequestContext {
 		repositoryId,
 		selectedRepository,
 		nestedPath,
-		fileRoute: /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath),
-		commentRoute: /^comments\/([^/]+)$/.exec(nestedPath),
+		fileRoute: /^files\/([^/]+)\/(diff|stage|review)$/.exec(nestedPath),
 		packageRunRoute: /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath),
 		artifactRoute: /^artifacts\/([^/]+)$/.exec(nestedPath),
 		artifactRunRoute: /^artifacts\/([^/]+)\/runs(?:\/([^/]+)\/(stop|events))?$/.exec(nestedPath),

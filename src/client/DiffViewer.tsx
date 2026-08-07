@@ -1,13 +1,10 @@
-import { type CodeViewLineSelection, type CodeViewOptions, DEFAULT_THEMES } from "@pierre/diffs";
+import { type CodeViewOptions, DEFAULT_THEMES } from "@pierre/diffs";
 import {
 	CodeView,
 	type CodeViewHandle,
 	type CodeViewItem,
 	type CodeViewScrollTarget,
-	type DiffLineAnnotation,
-	type SelectedLineRange,
 } from "@pierre/diffs/react";
-import { MessageSquareText } from "lucide-react";
 import {
 	type CSSProperties,
 	forwardRef,
@@ -17,15 +14,10 @@ import {
 	useMemo,
 	useRef,
 } from "react";
-import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type { FileDiff } from "../shared/contracts.ts";
 import type { ResolvedTheme } from "../shared/theme.ts";
-import { formatCommentReference } from "./commentExport.ts";
 import {
 	adaptFileDiff,
-	annotationsForFile,
-	type CommentAnnotationMetadata,
-	commentAnnotation,
-	commentAnnotationsVersion,
 	fromPierreSide,
 	reconstructUnifiedPatch,
 	toPierreSide,
@@ -51,7 +43,6 @@ const PIERRE_UNSAFE_CSS = `
   --diffs-bg-separator-override: var(--viewer-separator, #17243a);
   --diffs-bg-addition-override: var(--viewer-addition, #112b22);
   --diffs-bg-deletion-override: var(--viewer-deletion, #321a1e);
-  --diffs-bg-selection-override: var(--viewer-selection, #3a4e77);
   --diffs-fg-number-override: var(--viewer-number, #718096);
   --diffs-addition-color-override: var(--viewer-green, #52d091);
   --diffs-deletion-color-override: var(--viewer-red, #ff7f85);
@@ -66,10 +57,9 @@ const PIERRE_UNSAFE_CSS = `
 [data-line-number-content] {
   min-width: 1ch !important;
 }
-[data-column-number][role="button"], [data-char][role="button"] {
+[data-char][role="button"] {
   cursor: pointer;
 }
-[data-column-number][role="button"]:focus-visible,
 [data-char][role="button"]:focus-visible {
   z-index: 5;
   border-radius: 2px;
@@ -83,7 +73,6 @@ const PIERRE_UNSAFE_CSS = `
 `;
 
 interface DiffViewerProps {
-	comments: readonly ReviewComment[];
 	diff: FileDiff;
 	fontFamily: string;
 	fontSize: number;
@@ -92,11 +81,8 @@ interface DiffViewerProps {
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
 	interactive?: boolean;
-	selectedRange: SelectedLineRange | null;
 	themeType?: ResolvedTheme;
-	onCommentClick(comment: ReviewComment): void;
 	onIdentifierClick(identifier: string): void;
-	onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
 	onVisibleLineChange(lineNumber: number, side: "old" | "new"): void;
 }
 
@@ -121,16 +107,6 @@ function hunkTarget(diff: FileDiff, hunkIndex: number): ViewerLineTarget | null 
 	return null;
 }
 
-function commentTarget(comment: ReviewComment): ViewerLineTarget | null {
-	const annotation = commentAnnotation(comment);
-	if (!annotation) return null;
-	return {
-		lineNumber: annotation.lineNumber,
-		side: fromPierreSide(annotation.side),
-		align: "center",
-	};
-}
-
 function keyActivates(event: KeyboardEvent): boolean {
 	return event.key === "Enter" || event.key === " ";
 }
@@ -138,7 +114,6 @@ function keyActivates(event: KeyboardEvent): boolean {
 function enhanceRenderedDiff(
 	host: HTMLElement,
 	phase: "mount" | "update" | "unmount",
-	lineNumbersVisible: boolean,
 	fontFamily: string,
 	fontSize: number,
 	lineHeight: number,
@@ -172,25 +147,6 @@ function enhanceRenderedDiff(
 	host.style.setProperty("--diffs-letter-spacing", `${letterSpacing}px`);
 	if (!interactive) return;
 
-	if (lineNumbersVisible) {
-		for (const number of root.querySelectorAll<HTMLElement>("[data-column-number]")) {
-			const lineNumber = number.getAttribute("data-column-number");
-			if (!lineNumber) continue;
-			const type = number.getAttribute("data-line-type");
-			const side = type === "change-deletion" ? "old" : "new";
-			const label = `Select ${side} line ${lineNumber}`;
-			number.setAttribute("role", "button");
-			number.tabIndex = 0;
-			number.setAttribute("aria-label", label);
-			number.title = label;
-			number.onkeydown = (event) => {
-				if (!keyActivates(event)) return;
-				event.preventDefault();
-				number.click();
-			};
-		}
-	}
-
 	for (const token of root.querySelectorAll<HTMLElement>("[data-char]")) {
 		if (token.querySelector("[data-char]")) continue;
 		const identifier = token.textContent ?? "";
@@ -221,7 +177,6 @@ function toScrollTarget(diffId: string, target: ViewerLineTarget): CodeViewScrol
 
 export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function DiffViewer(
 	{
-		comments,
 		diff,
 		fontFamily,
 		fontSize,
@@ -230,16 +185,13 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 		widthAdjustment,
 		lineNumbersVisible,
 		lineWrapEnabled,
-		onCommentClick,
 		onIdentifierClick,
-		onLineNumberClick,
 		onVisibleLineChange,
-		selectedRange,
 		themeType = "dark",
 	},
 	ref,
 ) {
-	const codeViewRef = useRef<CodeViewHandle<CommentAnnotationMetadata>>(null);
+	const codeViewRef = useRef<CodeViewHandle<never>>(null);
 	const scrollFrameRef = useRef<number | null>(null);
 	const pendingAnchorRef = useRef<{
 		lineNumber: number;
@@ -257,42 +209,24 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 		}
 	}, [diff]);
 
-	const annotations = useMemo(
-		() => annotationsForFile(comments, diff.fileId),
-		[comments, diff.fileId],
-	);
-	const annotationVersion = useMemo(
-		() => commentAnnotationsVersion(comments, diff.fileId, diff.contentRevision),
-		[comments, diff.contentRevision, diff.fileId],
-	);
 	const lineHeight = Math.max(
 		4,
 		fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER + lineHeightAdjustment,
 	);
 
-	const items = useMemo<CodeViewItem<CommentAnnotationMetadata>[]>(() => {
+	const items = useMemo<CodeViewItem<never>[]>(() => {
 		if (!adapted.value) return [];
 		return [
 			{
 				id: diff.fileId,
 				type: "diff",
 				fileDiff: adapted.value.fileDiff,
-				annotations,
-				version: annotationVersion,
 			},
 		];
-	}, [adapted.value, annotationVersion, annotations, diff.fileId]);
-
-	const selectedLines = useMemo<CodeViewLineSelection | null>(
-		() => (selectedRange ? { id: diff.fileId, range: selectedRange } : null),
-		[diff.fileId, selectedRange],
-	);
+	}, [adapted.value, diff.fileId]);
 
 	const handleScroll = useCallback(
-		(
-			scrollTop: number,
-			viewer: NonNullable<ReturnType<CodeViewHandle<CommentAnnotationMetadata>["getInstance"]>>,
-		) => {
+		(scrollTop: number, viewer: NonNullable<ReturnType<CodeViewHandle<never>["getInstance"]>>) => {
 			const rendered = viewer
 				.getRenderedItems()
 				.find((item) => item.type === "diff" && item.id === diff.fileId);
@@ -338,10 +272,6 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 				const target = hunkTarget(diff, hunkIndex);
 				if (target) scrollToLine({ ...target, behavior: "instant" });
 			},
-			scrollToComment(comment) {
-				const target = commentTarget(comment);
-				if (target) scrollToLine(target);
-			},
 			scrollToTop() {
 				codeViewRef.current?.scrollTo({ type: "position", position: 0 });
 			},
@@ -349,7 +279,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 		[diff, scrollToLine],
 	);
 
-	const options = useMemo<CodeViewOptions<CommentAnnotationMetadata>>(
+	const options = useMemo<CodeViewOptions<never>>(
 		() => ({
 			theme: DEFAULT_THEMES,
 			themeType,
@@ -362,7 +292,7 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			disableFileHeader: true,
 			disableLineNumbers: !lineNumbersVisible,
 			enableLineSelection: false,
-			lineHoverHighlight: interactive && lineNumbersVisible ? "both" : "line",
+			lineHoverHighlight: "line",
 			useTokenTransformer: true,
 			tokenizeMaxLineLength: 2_000,
 			tokenizeMaxLength: 100_000,
@@ -373,10 +303,6 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			},
 			layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
 			unsafeCSS: PIERRE_UNSAFE_CSS,
-			onLineNumberClick(props) {
-				if (!interactive || !lineNumbersVisible || props.type !== "diff-line") return;
-				onLineNumberClick(props.lineNumber, fromPierreSide(props.annotationSide));
-			},
 			onTokenClick(props) {
 				if (!interactive || props.type !== "token" || !IDENTIFIER_PATTERN.test(props.tokenText))
 					return;
@@ -386,7 +312,6 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 				enhanceRenderedDiff(
 					node,
 					phase,
-					lineNumbersVisible,
 					fontFamily,
 					fontSize,
 					lineHeight,
@@ -404,34 +329,9 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 			lineNumbersVisible,
 			lineWrapEnabled,
 			onIdentifierClick,
-			onLineNumberClick,
 			themeType,
 			widthAdjustment,
 		],
-	);
-
-	const renderAnnotation = useCallback(
-		(annotation: DiffLineAnnotation<CommentAnnotationMetadata>) => {
-			const comment = annotation.metadata?.comment;
-			if (!comment) return null;
-			return (
-				<button
-					aria-label={`Open comment at ${formatCommentReference(comment)}`}
-					className="diff-comment-chip"
-					data-comment-chip={comment.id}
-					onClick={(event) => {
-						event.stopPropagation();
-						onCommentClick(comment);
-					}}
-					type="button"
-				>
-					<MessageSquareText aria-hidden="true" size={12} />
-					<span className="diff-comment-reference">{formatCommentReference(comment)}</span>
-					<span className="diff-comment-preview">{comment.body}</span>
-				</button>
-			);
-		},
-		[onCommentClick],
 	);
 
 	if (!adapted.value) {
@@ -463,14 +363,12 @@ export const DiffViewer = forwardRef<DiffViewerHandle, DiffViewerProps>(function
 					Complete file exceeds 2 MiB or 20,000 rows. Showing diff hunks instead.
 				</div>
 			)}
-			<CodeView<CommentAnnotationMetadata>
+			<CodeView<never>
 				className="pierre-code-view"
 				items={items}
 				onScroll={handleScroll}
 				options={options}
 				ref={codeViewRef}
-				renderAnnotation={renderAnnotation}
-				selectedLines={selectedLines}
 				style={
 					{
 						"--diffs-font-family": fontFamily,

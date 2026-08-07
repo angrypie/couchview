@@ -14,6 +14,17 @@ import {
 
 describe("Couchview app repository workflows", () => {
 	const fixture = createAppTestHarness();
+	const syncReviewRecords = () => {
+		fixture.reviews = fixture.files
+			.filter((file) => file.reviewed)
+			.map((file) => ({
+				fileId: file.id,
+				path: file.path,
+				contentRevision: file.contentRevision,
+				reviewed: true,
+				updatedAt: "2025-01-01T00:00:00.000Z",
+			}));
+	};
 
 	test("shows reconnecting without a banner while the server still responds", async () => {
 		render(<App />);
@@ -95,7 +106,8 @@ describe("Couchview app repository workflows", () => {
 			).length;
 		const reviewRequestCount = () =>
 			fixture.requests.filter(
-				(request) => request.path === "/api/repositories/repo/comments" && request.method === "GET",
+				(request) =>
+					request.path === "/api/repositories/repo/files/review" && request.method === "GET",
 			).length;
 		const initialDiffRequests = diffRequestCount();
 		const initialReviewRequests = reviewRequestCount();
@@ -169,6 +181,7 @@ describe("Couchview app repository workflows", () => {
 
 	test("stages only reviewed files from the changed-files drawer", async () => {
 		fixture.files[0] = { ...fixture.files[0]!, reviewed: true };
+		syncReviewRecords();
 		render(<App />);
 
 		await screen.findByTestId("pierre-code-view");
@@ -242,6 +255,7 @@ describe("Couchview app repository workflows", () => {
 			worktreeStatus: ".",
 		};
 		fixture.files[1] = { ...fixture.files[1]!, reviewed: true };
+		syncReviewRecords();
 		render(<App />);
 
 		await screen.findByTestId("pierre-code-view");
@@ -258,8 +272,10 @@ describe("Couchview app repository workflows", () => {
 
 		await screen.findByText("1 review mark removed");
 		expect(
-			fixture.requests.find((request) => request.path === "/api/repositories/repo/files/review")
-				?.body,
+			fixture.requests.find(
+				(request) =>
+					request.path === "/api/repositories/repo/files/review" && request.method === "PUT",
+			)?.body,
 		).toEqual({
 			files: [{ fileId: "first", contentRevision: "first-v1" }],
 			reviewed: false,
@@ -271,6 +287,7 @@ describe("Couchview app repository workflows", () => {
 
 	test("restores review markers when a bulk unreview request fails", async () => {
 		fixture.files[0] = { ...fixture.files[0]!, reviewed: true };
+		syncReviewRecords();
 		fixture.bulkReviewFailure = true;
 		render(<App />);
 
@@ -696,7 +713,9 @@ describe("Couchview app repository workflows", () => {
 		);
 		await waitFor(() =>
 			expect(
-				fixture.requests.some((request) => request.path === "/api/repositories/repo-two/comments"),
+				fixture.requests.some(
+					(request) => request.path === "/api/repositories/repo-two/files/review",
+				),
 			).toBe(true),
 		);
 

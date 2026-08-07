@@ -7,7 +7,7 @@ mutations, network streams, browser overlays, or substantial screen markup.
 ## Client ownership
 
 - `src/client/features/` owns stateful use cases and side effects. Each folder
-  owns one product capability: repositories, review, staging, comments,
+  owns one product capability: repositories, review, staging,
   packages, artifacts, settings, commands, PWA lifecycle, notifications, or
   application shell behavior.
 - `src/client/components/` owns rendering and local presentation behavior.
@@ -98,14 +98,12 @@ socket closure after revocation.
 metadata, extracts inline executable bootstrap code for the existing CSP,
 fingerprints bundled terminal fonts, and generates a bounded app-shell service
 worker. Navigation and `/api` requests remain network-only, and repository
-responses are never placed in offline caches. `bun run build:legacy-web`
-retains the former Vite build as a temporary rollback path.
+responses are never placed in offline caches.
 
-The current shared mobile product surface deliberately reuses the complete web
-composition instead of maintaining two feature UIs. Future native tabs or
-focused native screens may reuse platform-independent feature logic and shared
-contracts, but must keep `window`, history, service workers, clipboard, streams,
-storage, and terminal/browser integrations behind platform-facing adapters.
+The shared mobile product surface reuses the complete web composition instead
+of maintaining two feature UIs. Platform-independent feature logic and shared
+contracts keep `window`, history, service workers, clipboard, streams, storage,
+and terminal/browser integrations behind platform-facing adapters.
 
 ## Enforced limits
 

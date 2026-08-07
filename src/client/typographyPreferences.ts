@@ -5,15 +5,12 @@ import {
 	normalizeTypographyPreferences,
 	type TerminalTypographyPreferences,
 	TYPOGRAPHY_LIMITS,
-	type TypographyPreferences,
 } from "../shared/settings.ts";
 import type { ResolvedTheme } from "../shared/theme.ts";
 
 export type {
 	CodeFontFamily,
-	DiffTypographyPreferences,
 	TerminalTypographyPreferences,
-	TypographyPreferences,
 } from "../shared/settings.ts";
 export {
 	DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER,
@@ -21,8 +18,6 @@ export {
 	normalizeTypographyPreferences,
 	TYPOGRAPHY_LIMITS,
 };
-
-export const TYPOGRAPHY_STORAGE_KEY = "couchview:typography:v1";
 
 export interface TerminalRendererTheme {
 	background: string;
@@ -95,7 +90,7 @@ export function terminalRendererTheme(themeType: ResolvedTheme): TerminalRendere
 	return themeType === "dark" ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
 }
 
-export const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
+const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
 	iosevka:
 		'"Iosevka", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
 	system:
@@ -104,44 +99,6 @@ export const CODE_FONT_STACKS: Record<CodeFontFamily, string> = {
 
 export function codeFontStack(fontFamily: CodeFontFamily): string {
 	return CODE_FONT_STACKS[fontFamily];
-}
-
-export function loadTypographyPreferences(
-	storage: Pick<Storage, "getItem" | "setItem"> = window.localStorage,
-): TypographyPreferences {
-	try {
-		const stored = storage.getItem(TYPOGRAPHY_STORAGE_KEY);
-		if (stored) return normalizeTypographyPreferences(JSON.parse(stored));
-
-		const legacySize = Number(storage.getItem("couchview:font-size") ?? Number.NaN);
-		if (Number.isFinite(legacySize)) {
-			const migrated = normalizeTypographyPreferences({
-				...DEFAULT_TYPOGRAPHY_PREFERENCES,
-				diff: {
-					...DEFAULT_TYPOGRAPHY_PREFERENCES.diff,
-					fontSize: legacySize,
-				},
-			});
-			storage.setItem(TYPOGRAPHY_STORAGE_KEY, JSON.stringify(migrated));
-			return migrated;
-		}
-	} catch {
-		// Browser defaults remain usable when persistent storage is unavailable.
-	}
-	return DEFAULT_TYPOGRAPHY_PREFERENCES;
-}
-
-export function saveTypographyPreferences(
-	preferences: TypographyPreferences,
-	storage: Pick<Storage, "setItem"> = window.localStorage,
-): TypographyPreferences {
-	const normalized = normalizeTypographyPreferences(preferences);
-	try {
-		storage.setItem(TYPOGRAPHY_STORAGE_KEY, JSON.stringify(normalized));
-	} catch {
-		// Live settings remain usable when persistent storage is unavailable.
-	}
-	return normalized;
 }
 
 export function terminalRendererConfig(

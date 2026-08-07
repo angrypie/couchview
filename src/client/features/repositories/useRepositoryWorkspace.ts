@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
 	BootstrapResponse,
-	ChangeFile,
 	ChangesResponse,
+	FileChange,
 	RepositoryCatalogEntry,
 	RepositorySummary,
 } from "../../../shared/contracts.ts";
@@ -20,7 +20,7 @@ export function useRepositoryWorkspace() {
 	const [repositoryId, setRepositoryId] = useState<string | null>(null);
 	const [repository, setRepository] = useState<RepositorySummary | null>(null);
 	const [repositoryLoading, setRepositoryLoading] = useState(false);
-	const [files, setFiles] = useState<ChangeFile[]>([]);
+	const [files, setFiles] = useState<FileChange[]>([]);
 	const [operationRevision, setOperationRevision] = useState("");
 	const [loadError, setLoadError] = useState("");
 	const [loadErrorCode, setLoadErrorCode] = useState("");

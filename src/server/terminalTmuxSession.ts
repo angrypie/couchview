@@ -70,7 +70,7 @@ function probeDependencies(): TerminalDependencies {
 	};
 }
 
-export function resolveUserTmuxConfigPath(
+function resolveUserTmuxConfigPath(
 	environment: Record<string, string | undefined> = process.env,
 	homeDirectory = homedir(),
 	exists: (candidate: string) => boolean = existsSync,

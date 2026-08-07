@@ -9,7 +9,7 @@ import {
 } from "../../../shared/git/index.ts";
 import { request, withQuery } from "../../api.ts";
 
-export interface GitWorkspaceTransport {
+interface GitWorkspaceTransport {
 	history(
 		repositoryId: string,
 		scope: GitHistoryScope,

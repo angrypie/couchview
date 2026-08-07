@@ -22,17 +22,14 @@ import {
 	nearestValue,
 	optionsFor,
 } from "./cliOptions.ts";
-import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 export {
 	CLI_VERSION,
-	type CliCommandName,
 	type CliInvocation,
 	CliPromptInterrupted,
 	CliUsageError,
 	type CompletionShell,
 	type InteractivePrompter,
-	type InteractiveServeDefaults,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
@@ -308,16 +305,7 @@ function parseBridgeArguments(args: string[]): CliInvocation {
 	const profileId = stringValue(parsed.values, "profile");
 	const repositoryRoot = stringValue(parsed.values, "repo");
 	const explicitOriginAccess = stringValue(parsed.values, "origin-access");
-	const cloudflareAccess = booleanValue(parsed.values, "cloudflare-access");
-	if (explicitOriginAccess && cloudflareAccess) {
-		throw new CliUsageError(
-			"--origin-access and --cloudflare-access may only be provided once.",
-			"bridge",
-		);
-	}
-	const originAccess =
-		explicitOriginAccess ??
-		(cloudflareAccess ? CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID : REMOTE_BRIDGE_NO_ORIGIN_ACCESS);
+	const originAccess = explicitOriginAccess ?? REMOTE_BRIDGE_NO_ORIGIN_ACCESS;
 	if (!remoteBridgeOriginAccessIdIsValid(originAccess)) {
 		throw new CliUsageError(
 			"The bridge origin-access provider must use lowercase letters, numbers, and hyphens.",
@@ -364,18 +352,18 @@ function parseBridgeArguments(args: string[]): CliInvocation {
 				"bridge",
 			);
 		}
-		if (origin || code || explicitOriginAccess || cloudflareAccess) {
+		if (origin || code || explicitOriginAccess) {
 			throw new CliUsageError(
-				"--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
+				"--url, --code, and --origin-access are only valid for bridge pair.",
 				"bridge",
 			);
 		}
 		return { kind: "bridge-proxy", profileId };
 	}
 	if (action === "codex") {
-		if (origin || code || explicitOriginAccess || cloudflareAccess) {
+		if (origin || code || explicitOriginAccess) {
 			throw new CliUsageError(
-				"--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
+				"--url, --code, and --origin-access are only valid for bridge pair.",
 				"bridge",
 			);
 		}
@@ -396,9 +384,9 @@ function parseBridgeArguments(args: string[]): CliInvocation {
 				"bridge",
 			);
 		}
-		if (origin || code || explicitOriginAccess || cloudflareAccess) {
+		if (origin || code || explicitOriginAccess) {
 			throw new CliUsageError(
-				"--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
+				"--url, --code, and --origin-access are only valid for bridge pair.",
 				"bridge",
 			);
 		}
@@ -412,9 +400,9 @@ function parseBridgeArguments(args: string[]): CliInvocation {
 		};
 	}
 	if (action === "claude") {
-		if (origin || code || explicitOriginAccess || cloudflareAccess) {
+		if (origin || code || explicitOriginAccess) {
 			throw new CliUsageError(
-				"--url, --code, --origin-access, and --cloudflare-access are only valid for bridge pair.",
+				"--url, --code, and --origin-access are only valid for bridge pair.",
 				"bridge",
 			);
 		}

@@ -57,7 +57,7 @@ function exposeThemePreference(preference: ThemePreference, resolvedTheme: Resol
 	}
 }
 
-export function prefersReducedMotion(): boolean {
+function prefersReducedMotion(): boolean {
 	return (
 		typeof window !== "undefined" &&
 		typeof window.matchMedia === "function" &&

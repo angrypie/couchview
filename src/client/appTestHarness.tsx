@@ -1,6 +1,6 @@
 import { afterEach, beforeEach } from "bun:test";
 import type {
-	ChangeFile,
+	FileChange,
 	FileDiff,
 	PackageRunSummary,
 	SettingsProfile,
@@ -16,7 +16,6 @@ import {
 	originalFetch,
 	originalWebSocket,
 	testThemeRuntime,
-	viewerCommentJumps,
 	viewerHunkJumps,
 	viewerState,
 } from "./appTestEnvironment.tsx";
@@ -36,10 +35,8 @@ export {
 	cleanup,
 	EventSourceStub,
 	fireEvent,
-	fixtureComment,
 	render,
 	screen,
-	viewerCommentJumps,
 	viewerHunkJumps,
 	waitFor,
 	within,
@@ -64,8 +61,7 @@ export { repository } from "./appTestData.ts";
 
 export function createAppTestHarness() {
 	const fixture = {
-		files: structuredClone(initialFiles) as ChangeFile[],
-		comments: [] as Array<Record<string, unknown>>,
+		files: structuredClone(initialFiles) as FileChange[],
 		reviews: [] as Array<Record<string, unknown>>,
 		packageRuns: [] as PackageRunSummary[],
 		requests: [] as Array<{ path: string; method: string; body: unknown }>,
@@ -113,7 +109,6 @@ export function createAppTestHarness() {
 
 	beforeEach(() => {
 		fixture.files = structuredClone(initialFiles);
-		fixture.comments = [];
 		fixture.reviews = [];
 		fixture.packageRuns = [];
 		fixture.requests = [];
@@ -164,7 +159,6 @@ export function createAppTestHarness() {
 		resetFakeTerminalWebSockets();
 		testThemeRuntime.reset();
 		EventSourceStub.instances.length = 0;
-		viewerCommentJumps.length = 0;
 		viewerHunkJumps.length = 0;
 		viewerState.visibleLineChange = null;
 		localStorage.clear();
@@ -652,10 +646,9 @@ export function createAppTestHarness() {
 					operationRevision: fixture.currentOperationRevision,
 				});
 			}
-			if (nestedPath === "comments" && method === "GET") {
+			if (nestedPath === "files/review" && method === "GET") {
 				return Response.json({
 					reviews: fixture.reviews,
-					comments: fixture.comments,
 				});
 			}
 			if (nestedPath === "files/first/diff") {
@@ -890,28 +883,6 @@ export function createAppTestHarness() {
 					message: "feat(review): generate commit messages with Codex",
 					operationRevision: fixture.currentOperationRevision,
 				});
-			}
-			if (nestedPath === "files/first/comments" && method === "POST") {
-				const now = new Date().toISOString();
-				const comment = {
-					...(body as Record<string, unknown>),
-					id: "comment-1",
-					path: "src/first.ts",
-					excerpt: ["- const value = load(oldPath);", "+ const value = load(newPath);"],
-					stale: false,
-					createdAt: now,
-					updatedAt: now,
-				};
-				fixture.comments = [comment];
-				return Response.json({ comment }, { status: 201 });
-			}
-			if (nestedPath === "comments/comment-1" && method === "PUT") {
-				fixture.comments[0] = { ...fixture.comments[0], body: (body as { body: string }).body };
-				return Response.json({ comment: fixture.comments[0] });
-			}
-			if (nestedPath === "comments/comment-1" && method === "DELETE") {
-				fixture.comments = [];
-				return Response.json({ deletedId: "comment-1" });
 			}
 			return Response.json(
 				{ error: { code: "not_found", message: url.pathname } },

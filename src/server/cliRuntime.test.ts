@@ -407,67 +407,6 @@ describe("multi-project CLI startup", () => {
 		expect(result.replacement.remoteBridgeOriginAccess).toBe("auto");
 	});
 
-	test("falls back to browser restart authentication for a pre-control server", async () => {
-		const root = await repositoryFixture("restart-legacy");
-		const port = freePort();
-		let replacementReady = false;
-		const app = await createCouchviewApp({
-			root,
-			host: "127.0.0.1",
-			port,
-			restart: {
-				available: true,
-				reason: null,
-				request: async () => {
-					replacementReady = true;
-				},
-			},
-		});
-		app.registerServerInstance();
-		applications.push(app);
-		endpoints.set(port, (request) => {
-			const pathname = new URL(request.url).pathname;
-			if (pathname === "/api/control/restart") {
-				return Response.json(
-					{
-						error: {
-							code: "origin_required",
-							message: "A same-origin browser request is required",
-						},
-					},
-					{ status: 403 },
-				);
-			}
-			if (replacementReady && pathname === "/api/instance") {
-				return Response.json({
-					service: "couchview",
-					protocolVersion: app.protocolVersion,
-					version: app.version,
-					instanceId: "legacy-replacement",
-					bindHost: app.bindHost,
-					port: app.port,
-					accessOrigins: app.accessOrigins,
-					terminalEnabled: app.terminalSessions.enabled,
-					terminalP2pEnabled: app.terminalSessions.p2pEnabled,
-					terminalStunUrls: [...app.terminalSessions.stunUrls],
-					remoteBridgeEnabled: app.remoteBridge.enabled,
-					remoteBridgeP2pEnabled: app.remoteBridge.p2pEnabled,
-					remoteBridgeStunUrls: [...app.remoteBridge.stunUrls],
-					remoteBridgeTargetPort: app.remoteBridge.targetPort,
-					remoteBridgeOriginAccess: app.remoteBridgeOriginAccess,
-				});
-			}
-			return app.fetch(request);
-		});
-
-		const result = await restartRunningServer(["--port", String(port)], {
-			fetch: runtimeFetch,
-			wait: async () => undefined,
-		});
-
-		expect(result.replacement.instanceId).toBe("legacy-replacement");
-	});
-
 	test("accepts exact public and internal reverse-proxy origins", async () => {
 		const root = await repositoryFixture("public-origin");
 		const port = freePort();

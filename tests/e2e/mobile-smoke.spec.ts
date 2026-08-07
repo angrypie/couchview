@@ -196,19 +196,6 @@ test.describe("mobile fixture review", () => {
 			.getByRole("complementary", { name: "Changed files" })
 			.getByRole("button", { name: "Close changed files" })
 			.click();
-
-		await page.getByRole("button", { name: "Show line numbers" }).click();
-		await page.getByRole("button", { name: "Select old line 2" }).click();
-		await page.getByRole("button", { name: "Select new line 2" }).click();
-		const selection = page.getByRole("status").filter({
-			hasText: "Old lines 2 / new lines 2",
-		});
-		await selection.getByRole("button", { name: "Comment" }).click();
-
-		const comment = page.getByPlaceholder("Describe the issue and the expected correction…");
-		await expect(comment).toHaveCSS("font-size", "16px");
-		await expect(comment).toHaveCSS("touch-action", "manipulation");
-		await expect.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(1);
 	});
 
 	test("persists independent diff and terminal typography settings", async ({ page }, testInfo) => {
@@ -583,7 +570,7 @@ test.describe("mobile fixture review", () => {
 			.toEqual({ contained: true, visible: true });
 	});
 
-	test("uses the full viewport while gutters stay fixed during horizontal code scroll", async ({
+	test("uses the full viewport while gutters stay fixed and non-interactive during code scroll", async ({
 		page,
 		request,
 	}, testInfo) => {
@@ -669,6 +656,19 @@ test.describe("mobile fixture review", () => {
 			.toBeLessThanOrEqual(6);
 		await page.getByRole("button", { name: "Show line numbers" }).click();
 		await expect(page.getByRole("button", { name: "Hide line numbers" })).toBeVisible();
+		await expect
+			.poll(() =>
+				codeHost.evaluate((host) => {
+					const number = host.shadowRoot?.querySelector<HTMLElement>("[data-column-number]");
+					return {
+						ariaLabel: number?.getAttribute("aria-label") ?? null,
+						role: number?.getAttribute("role") ?? null,
+						tabIndex: number?.getAttribute("tabindex") ?? null,
+						title: number?.getAttribute("title") ?? null,
+					};
+				}),
+			)
+			.toEqual({ ariaLabel: null, role: null, tabIndex: null, title: null });
 
 		const increaseFont = page.getByRole("button", { name: "Increase diff font size" });
 		for (let size = 12; size <= 24; size += 1) await increaseFont.click();
@@ -687,7 +687,7 @@ test.describe("mobile fixture review", () => {
 			.poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
 			.toBeGreaterThan(20);
 
-		const oldGutter = page.getByRole("button", { name: "Select new line 1", exact: true });
+		const oldGutter = page.locator("diffs-container [data-column-number]").first();
 		const firstCode = page.locator("diffs-container [data-line]").first();
 		const before = {
 			gutterX: await oldGutter.evaluate((element) => element.getBoundingClientRect().x),
@@ -806,21 +806,7 @@ test.describe("mobile fixture review", () => {
 		).toHaveLength(1);
 	});
 
-	test("searches, comments on a replacement, stages, and reviews with one-tap advance", async ({
-		page,
-	}) => {
-		await page.addInitScript(() => {
-			Object.defineProperty(Navigator.prototype, "clipboard", {
-				configurable: true,
-				get: () => ({
-					writeText: () => Promise.reject(new DOMException("Blocked for e2e", "NotAllowedError")),
-				}),
-			});
-			Object.defineProperty(Document.prototype, "execCommand", {
-				configurable: true,
-				value: () => false,
-			});
-		});
+	test("searches, stages, and reviews with one-tap advance", async ({ page }) => {
 		const currentFile = await openFixture(page);
 		await dismissPwaNotices(page);
 
@@ -842,41 +828,6 @@ test.describe("mobile fixture review", () => {
 		await search.getByRole("button", { name: /Other files \(1\)/ }).click();
 		await expect(search.getByRole("button", { name: /src\/format\.ts:2:10/ })).toBeVisible();
 		await search.getByRole("button", { name: "Close search" }).click();
-
-		await page.getByRole("button", { name: "Show line numbers" }).click();
-		await page.getByRole("button", { name: "Select old line 2" }).focus();
-		await page.keyboard.press("Space");
-		await page.getByRole("button", { name: "Select new line 2" }).click();
-		const selection = page.getByRole("status").filter({
-			hasText: "Old lines 2 / new lines 2",
-		});
-		await expect(selection).toBeVisible();
-		await selection.getByRole("button", { name: "Comment" }).click();
-
-		const editor = page.getByRole("dialog", { name: "Add review comment" });
-		await expect(editor).toContainText("src/review.ts:old L2 / new L2");
-		await editor
-			.getByPlaceholder("Describe the issue and the expected correction…")
-			.fill("Keep the loaded result intact before returning its files.");
-		await editor.getByRole("button", { name: "Add comment" }).click();
-		await expect(page.getByText("Comment added", { exact: true })).toBeVisible();
-
-		const inlineChip = page.getByRole("button", { name: /Open comment at src\/review\.ts/ });
-		await expect(inlineChip).toContainText("Keep the loaded result intact");
-		await inlineChip.click();
-		const tray = page.getByRole("dialog", { name: "Review comments" });
-		await expect(tray).toContainText("src/review.ts:old L2 / new L2");
-		await expect(tray).toContainText("Keep the loaded result intact");
-		await expect(tray.locator('[data-comment-id="fixture-comment-1"]')).toBeFocused();
-		await tray.getByRole("button", { name: "Copy 1 for Codex" }).click();
-
-		const manualCopy = page.getByRole("dialog", { name: "Copy comments manually" });
-		await expect(manualCopy).toBeVisible();
-		const correctionPrompt = await manualCopy.getByRole("textbox").inputValue();
-		expect(correctionPrompt).toContain("Please address each review comment below");
-		expect(correctionPrompt).toContain("src/review.ts:old L2 / new L2");
-		expect(correctionPrompt).toContain("Keep the loaded result intact before returning its files.");
-		await manualCopy.getByRole("button", { name: "Close manual copy dialog" }).click();
 
 		const actions = page.getByRole("navigation", { name: "Review actions" });
 		const stage = actions.getByRole("button", { name: "Stage current file" });
@@ -1051,11 +1002,9 @@ test.describe("mobile fixture review", () => {
 		await expect
 			.poll(() => actions.evaluate((element) => element.getBoundingClientRect().width))
 			.toBe(520);
-		await expect(actions.getByRole("button")).toHaveCount(7);
+		await expect(actions.getByRole("button")).toHaveCount(6);
 		await expect(actions.locator(".hunk-nav")).toBeVisible();
-		await expect(actions.locator(".comments-action")).toBeVisible();
 		await expect(page.locator(".compact-hunk-nav")).toBeVisible();
-		await expect(page.locator(".compact-comments-button")).toBeVisible();
 
 		const currentFile = page.getByRole("region", { name: "Current file" });
 		await actions.getByRole("button", { name: "Review + next" }).click();

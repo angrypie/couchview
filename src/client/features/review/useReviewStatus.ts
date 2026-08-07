@@ -6,7 +6,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import type { ChangeFile } from "../../../shared/contracts.ts";
+import type { FileChange } from "../../../shared/contracts.ts";
 import { api } from "../../api.ts";
 import { messageOf } from "../../lib/failures.ts";
 
@@ -20,11 +20,10 @@ interface UseReviewStatusOptions {
 	activeFileIndex: number;
 	csrfToken?: string;
 	dismissToast: () => void;
-	files: ChangeFile[];
+	files: FileChange[];
 	onSelectFile: (fileId: string) => void;
-	refreshReviewState: () => Promise<unknown>;
 	repositoryId: string | null;
-	setFiles: Dispatch<SetStateAction<ChangeFile[]>>;
+	setFiles: Dispatch<SetStateAction<FileChange[]>>;
 	showToast: (message: string, undo?: UndoReview) => void;
 }
 
@@ -38,7 +37,6 @@ export function useReviewStatus({
 	dismissToast,
 	files,
 	onSelectFile,
-	refreshReviewState,
 	repositoryId,
 	setFiles,
 	showToast,
@@ -57,8 +55,27 @@ export function useReviewStatus({
 		return () => requestRef.current?.abort();
 	}, [repositoryId]);
 
+	const refreshReviewState = useCallback(async () => {
+		const activeRepositoryId = repositoryIdRef.current;
+		if (!activeRepositoryId) return { reviews: [] };
+		const signal = requestRef.current?.signal;
+		const state = await api.reviews(activeRepositoryId, signal);
+		if (signal?.aborted || repositoryIdRef.current !== activeRepositoryId) return state;
+		const reviews = new Map(state.reviews.map((review) => [review.fileId, review]));
+		setFiles((current) =>
+			current.map((file) => {
+				const review = reviews.get(file.id);
+				const reviewed = Boolean(
+					review?.reviewed && review.contentRevision === file.contentRevision,
+				);
+				return file.reviewed === reviewed ? file : { ...file, reviewed };
+			}),
+		);
+		return state;
+	}, [setFiles]);
+
 	const setReviewed = useCallback(
-		async (file: ChangeFile, reviewed: boolean, advance: boolean) => {
+		async (file: FileChange, reviewed: boolean, advance: boolean) => {
 			if (!csrfToken || !repositoryId || busy || bulkBusy) return;
 			const activeRepositoryId = repositoryId;
 			const signal = requestRef.current?.signal;
@@ -119,7 +136,7 @@ export function useReviewStatus({
 	);
 
 	const unreviewMultiple = useCallback(
-		async (targets: ChangeFile[]) => {
+		async (targets: FileChange[]) => {
 			const reviewedTargets = targets.filter((file) => file.reviewed);
 			if (!csrfToken || !repositoryId || busy || bulkBusy || reviewedTargets.length === 0) {
 				return;
@@ -206,5 +223,12 @@ export function useReviewStatus({
 		[csrfToken, dismissToast, files, refreshReviewState, repositoryId, setFiles, showToast],
 	);
 
-	return { bulkBusy, busy: busy || bulkBusy, setReviewed, undoReview, unreviewMultiple };
+	return {
+		bulkBusy,
+		busy: busy || bulkBusy,
+		refreshReviewState,
+		setReviewed,
+		undoReview,
+		unreviewMultiple,
+	};
 }

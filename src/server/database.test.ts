@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { ReviewComment, ReviewRecord } from "../shared/contracts.ts";
+import type { ReviewRecord } from "../shared/contracts.ts";
 import {
 	createDefaultSettingsProfileData,
 	DEFAULT_SETTINGS_PROFILE_ID,
@@ -37,28 +37,6 @@ function review(fileId: string, reviewed = true): ReviewRecord {
 	};
 }
 
-function comment(id: string, fileId: string): ReviewComment {
-	return {
-		id,
-		fileId,
-		path: `${fileId}.ts`,
-		side: "mixed",
-		startLine: 3,
-		endLine: 4,
-		oldStartLine: 3,
-		oldEndLine: 3,
-		newStartLine: 4,
-		newEndLine: 4,
-		hunkHeader: "@@ -3 +4 @@",
-		excerpt: ["- old", "+ new"],
-		body: "Keep this review comment.",
-		contentRevision: `${fileId}-revision`,
-		stale: false,
-		createdAt: "2026-07-22T10:00:00.000Z",
-		updatedAt: "2026-07-22T10:00:00.000Z",
-	};
-}
-
 describe("global SQLite state", () => {
 	test("uses only absolute XDG data homes and otherwise follows the XDG fallback", () => {
 		expect(resolveStateDatabasePath({ XDG_DATA_HOME: "/var/lib/example" }, "/home/reviewer")).toBe(
@@ -86,7 +64,6 @@ describe("global SQLite state", () => {
 			gitDirectory: "/projects/one/.git",
 		});
 		database.setReview("repo-one", review("alpha"));
-		database.insertComment("repo-one", comment("comment-one", "alpha"));
 		database.close();
 
 		expect((await stat(path.dirname(filePath))).mode & 0o777).toBe(0o700);
@@ -110,7 +87,6 @@ describe("global SQLite state", () => {
 		expect(reopened.repository("repo-one")).toMatchObject({ name: "one" });
 		expect(reopened.reviewState("repo-one")).toEqual({
 			reviews: [review("alpha")],
-			comments: [comment("comment-one", "alpha")],
 		});
 		expect(reopened.settingsProfiles()).toEqual([
 			expect.objectContaining({ id: DEFAULT_SETTINGS_PROFILE_ID, name: "Default", revision: 1 }),
@@ -409,22 +385,18 @@ describe("global SQLite state", () => {
 
 			first.setReview("repo-one", review("alpha"));
 			second.setReview("repo-two", review("beta"));
-			second.insertComment("repo-one", comment("comment-one", "alpha"));
-
 			expect(first.reviewState("repo-one")).toEqual({
 				reviews: [review("alpha")],
-				comments: [comment("comment-one", "alpha")],
 			});
 			expect(second.reviewState("repo-two")).toEqual({
 				reviews: [review("beta")],
-				comments: [],
 			});
-			expect(first.stateRevision("repo-one")).toBe(2);
+			expect(first.stateRevision("repo-one")).toBe(1);
 			expect(second.stateRevision("repo-two")).toBe(1);
 
 			expect(second.forgetRepository("repo-one")).toBe(true);
 			expect(first.repository("repo-one")).toBeNull();
-			expect(first.reviewState("repo-one")).toEqual({ reviews: [], comments: [] });
+			expect(first.reviewState("repo-one")).toEqual({ reviews: [] });
 			expect(first.catalogRevision()).toBe(3);
 		} finally {
 			first.close();

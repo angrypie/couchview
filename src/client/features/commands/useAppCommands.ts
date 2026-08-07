@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
-import type { ChangeFile, TerminalCapability } from "../../../shared/contracts.ts";
+import type { FileChange, TerminalCapability } from "../../../shared/contracts.ts";
 import type { CommandId, ShortcutSequence } from "../../../shared/settings.ts";
 import { COMMAND_DEFINITIONS, type RuntimeCommand } from "../../commands.ts";
 import { useShortcutEngine } from "../../shortcutEngine.ts";
 
 interface UseAppCommandsOptions {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	activeFileIndex: number;
 	bootstrapReady: boolean;
 	bulkStageBusy: boolean;
@@ -14,7 +14,6 @@ interface UseAppCommandsOptions {
 	commandBindings: Record<CommandId, ShortcutSequence | null>;
 	commitBusy: boolean;
 	fileCount: number;
-	onComments: () => void;
 	onDismissOverlays: () => void;
 	onNavigateFile: (direction: -1 | 1) => void;
 	onNavigateHunk: (direction: -1 | 1) => void;
@@ -27,7 +26,7 @@ interface UseAppCommandsOptions {
 	onOpenSearch: () => void;
 	onOpenSettings: () => void;
 	onOpenTerminal: () => void;
-	onReviewFile: (file: ChangeFile) => void;
+	onReviewFile: (file: FileChange) => void;
 	onShowReview: () => boolean;
 	onToggleStage: () => void;
 	overlayVisible: boolean;
@@ -49,7 +48,6 @@ export function useAppCommands({
 	commandBindings,
 	commitBusy,
 	fileCount,
-	onComments,
 	onDismissOverlays,
 	onNavigateFile,
 	onNavigateHunk,
@@ -156,12 +154,6 @@ export function useAppCommands({
 				stagedCount === 0 ? "Stage changes before committing" : "A commit is already running",
 				reviewAction(onOpenCommit),
 			),
-			"comments.open": command(
-				"comments.open",
-				repositoryReady,
-				"Select a repository first",
-				reviewAction(onComments),
-			),
 			"file.toggleStage": command(
 				"file.toggleStage",
 				Boolean(activeFile) && !stageBusy && !bulkStageBusy,
@@ -206,7 +198,6 @@ export function useAppCommands({
 		commandBindings,
 		commitBusy,
 		fileCount,
-		onComments,
 		onDismissOverlays,
 		onNavigateFile,
 		onNavigateHunk,

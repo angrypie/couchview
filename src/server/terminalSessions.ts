@@ -29,21 +29,14 @@ import { TerminalTmuxSession } from "./terminalTmuxSession.ts";
 import { validTerminalDimensions } from "./terminalTransport.ts";
 
 export { TERMINAL_PROTOCOL, TERMINAL_TICKET_PREFIX } from "../shared/contracts.ts";
-export {
-	TERMINAL_P2P_LEASE_RENEW_INTERVAL_MS,
-	TERMINAL_P2P_LEASE_TTL_MS,
-	TERMINAL_P2P_NEGOTIATION_TIMEOUT_MS,
-} from "./terminalAttachmentManager.ts";
 export type {
 	TerminalCommandRunner,
 	TerminalDataChannel,
-	TerminalDependencies,
 	TerminalEvent,
 	TerminalPeerConnection,
 	TerminalSessionServiceOptions,
 	TerminalSocketData,
 } from "./terminalSessionTypes.ts";
-export { resolveUserTmuxConfigPath } from "./terminalTmuxSession.ts";
 
 const TICKET_LIFETIME_MS = 30_000;
 const MAX_TICKETS = 256;

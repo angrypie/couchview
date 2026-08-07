@@ -19,7 +19,6 @@ import {
 	type StageFilesResponse,
 } from "../shared/contracts.ts";
 import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
-import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import { GitCommandError } from "./git/index.ts";
 import {
@@ -46,7 +45,6 @@ async function fixture(
 	revisionPollIntervalMs?: number,
 	restart?: CouchviewAppOptions["restart"],
 	commitMessages?: CommitMessageGenerator,
-	codex?: CodexAppServerService,
 	terminalSessions?: TerminalSessionService,
 	remoteBridge?: CouchviewAppOptions["remoteBridge"],
 ) {
@@ -71,7 +69,6 @@ async function fixture(
 		revisionPollIntervalMs,
 		restart,
 		commitMessages,
-		codex,
 		terminalSessions,
 		remoteBridge,
 	});
@@ -742,10 +739,10 @@ describe("Couchview HTTP advanced routes", () => {
 		);
 		expect(reviewed.status).toBe(200);
 		const firstState = (await (
-			await app.fetch(request(API_ROUTES.comments(app.repository.id)))
+			await app.fetch(request(API_ROUTES.fileReviews(app.repository.id)))
 		).json()) as ReviewStateResponse;
 		const secondState = (await (
-			await app.fetch(request(API_ROUTES.comments(registered.repository.id)))
+			await app.fetch(request(API_ROUTES.fileReviews(registered.repository.id)))
 		).json()) as ReviewStateResponse;
 		expect(firstState.reviews).toHaveLength(1);
 		expect(secondState.reviews).toHaveLength(0);

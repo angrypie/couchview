@@ -2,7 +2,7 @@ import { createContext, type ReactNode, use } from "react";
 
 import { type NativeProfilesController, useNativeProfiles } from "./useNativeProfiles.ts";
 
-export interface NativeServerController {
+interface NativeServerController {
 	profiles: NativeProfilesController;
 }
 

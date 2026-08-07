@@ -58,7 +58,7 @@ function replaceCatalogItem(
 	return items.map((item) => (item.definition.id === artifactId ? update(item) : item));
 }
 
-export function artifactPullCommand(
+function artifactPullCommand(
 	definition: ArtifactDefinition,
 	device: RemoteBridgeDevice,
 	repositoryId: string,

@@ -10,20 +10,11 @@ import {
 	type ArtifactRunResponse,
 	type BootstrapResponse,
 	type ChangesResponse,
-	// Contracts for the "Send comments to Codex" thread and approval flow.
-	type CodexApprovalRequest,
-	type CodexThreadResponse,
-	type CodexThreadsResponse,
-	type CodexTurnResponse,
-	type CommentResponse,
 	type CommitRequest,
 	type CommitResponse,
-	type CreateCommentRequest,
 	type CreateRemoteBridgePairingRequest,
 	type CreateSettingsProfileRequest,
 	CSRF_HEADER,
-	type DeleteCommentRequest,
-	type DeleteCommentResponse,
 	type DiffResponse,
 	type ForgetRepositoryResponse,
 	type GenerateCommitMessageRequest,
@@ -59,9 +50,7 @@ import {
 	type TerminalEndResponse,
 	type TerminalLeaseRequest,
 	type TerminalLeaseResponse,
-	type TerminalSessionStatus,
 	type UpdateArtifactDefinitionRequest,
-	type UpdateCommentRequest,
 	type UpdateSettingsProfileRequest,
 } from "../shared/contracts.ts";
 import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
@@ -285,7 +274,7 @@ export const api = {
 	},
 
 	reviews(repositoryId: string, signal?: AbortSignal) {
-		return request<ReviewStateResponse>(API_ROUTES.comments(repositoryId), { signal });
+		return request<ReviewStateResponse>(API_ROUTES.fileReviews(repositoryId), { signal });
 	},
 
 	packageScripts(repositoryId: string, signal?: AbortSignal) {
@@ -376,10 +365,6 @@ export const api = {
 		);
 	},
 
-	terminalStatus(repositoryId: string, signal?: AbortSignal) {
-		return request<TerminalSessionStatus>(API_ROUTES.terminal(repositoryId), { signal });
-	},
-
 	createTerminalAttachment(
 		repositoryId: string,
 		body: TerminalAttachmentRequest,
@@ -410,63 +395,6 @@ export const api = {
 		return request<TerminalEndResponse>(
 			API_ROUTES.terminalEnd(repositoryId),
 			{ method: "POST", signal },
-			csrfToken,
-		);
-	},
-
-	codexThreads(repositoryId: string, cursor?: string | null, signal?: AbortSignal) {
-		return request<CodexThreadsResponse>(
-			withQuery(API_ROUTES.codexThreads(repositoryId), { cursor, limit: 40 }),
-			{ signal },
-		);
-	},
-
-	createCodexThread(repositoryId: string, csrfToken: string, signal?: AbortSignal) {
-		return request<CodexThreadResponse>(
-			API_ROUTES.codexThreads(repositoryId),
-			{ method: "POST", body: JSON.stringify({}), signal },
-			csrfToken,
-		);
-	},
-
-	sendCodexComments(
-		repositoryId: string,
-		threadId: string,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<CodexTurnResponse>(
-			API_ROUTES.codexThreadTurns(repositoryId, threadId),
-			{ method: "POST", body: JSON.stringify({}), signal },
-			csrfToken,
-		);
-	},
-
-	interruptCodexTurn(
-		repositoryId: string,
-		threadId: string,
-		turnId: string,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<{ status: "interrupting" }>(
-			API_ROUTES.codexThreadTurnInterrupt(repositoryId, threadId, turnId),
-			{ method: "POST", body: JSON.stringify({}), signal },
-			csrfToken,
-		);
-	},
-
-	respondCodexApproval(
-		repositoryId: string,
-		threadId: string,
-		approvalId: string,
-		body: CodexApprovalRequest,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<{ status: "submitted" }>(
-			API_ROUTES.codexApproval(repositoryId, threadId, approvalId),
-			{ method: "POST", body: JSON.stringify(body), signal },
 			csrfToken,
 		);
 	},
@@ -574,45 +502,6 @@ export const api = {
 		return request<PackageRunResponse>(
 			API_ROUTES.packageRunStop(repositoryId, runId),
 			{ method: "POST", body: JSON.stringify({}), signal },
-			csrfToken,
-		);
-	},
-
-	createComment(
-		repositoryId: string,
-		body: CreateCommentRequest,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<CommentResponse>(
-			API_ROUTES.fileComments(repositoryId, body.fileId),
-			{ method: "POST", body: JSON.stringify(body), signal },
-			csrfToken,
-		);
-	},
-
-	updateComment(
-		repositoryId: string,
-		body: UpdateCommentRequest,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<CommentResponse>(
-			API_ROUTES.comment(repositoryId, body.id),
-			{ method: "PUT", body: JSON.stringify(body), signal },
-			csrfToken,
-		);
-	},
-
-	deleteComment(
-		repositoryId: string,
-		body: DeleteCommentRequest,
-		csrfToken: string,
-		signal?: AbortSignal,
-	) {
-		return request<DeleteCommentResponse>(
-			API_ROUTES.comment(repositoryId, body.id),
-			{ method: "DELETE", body: JSON.stringify(body), signal },
 			csrfToken,
 		);
 	},

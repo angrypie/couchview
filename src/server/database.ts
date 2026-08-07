@@ -4,7 +4,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import type { RemoteBridgeDevice, ReviewComment, ReviewRecord } from "../shared/contracts.ts";
+import type { RemoteBridgeDevice, ReviewRecord } from "../shared/contracts.ts";
 import {
 	createDefaultSettingsProfileData,
 	DEFAULT_SETTINGS_PROFILE_ID,
@@ -16,8 +16,6 @@ import {
 } from "../shared/settings.ts";
 import { ArtifactDatabase } from "./artifactDatabase.ts";
 import {
-	type CommentRow,
-	commentFromRow,
 	type InstanceRow,
 	type MetadataRow,
 	type RemoteBridgeDeviceRow,
@@ -64,7 +62,6 @@ export interface StoredServerInstance {
 
 export interface StoredReviewState {
 	reviews: ReviewRecord[];
-	comments: ReviewComment[];
 }
 
 export type UpdateSettingsProfileResult =
@@ -252,29 +249,6 @@ export class StateDatabase {
           updated_at TEXT NOT NULL,
           PRIMARY KEY (repository_id, file_id)
         );
-        CREATE TABLE IF NOT EXISTS comments (
-          repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-          id TEXT NOT NULL,
-          file_id TEXT NOT NULL,
-          path TEXT NOT NULL,
-          side TEXT NOT NULL CHECK (side IN ('old', 'new', 'mixed')),
-          start_line INTEGER NOT NULL,
-          end_line INTEGER NOT NULL,
-          old_start_line INTEGER,
-          old_end_line INTEGER,
-          new_start_line INTEGER,
-          new_end_line INTEGER,
-          hunk_header TEXT NOT NULL,
-          excerpt_json TEXT NOT NULL,
-          body TEXT NOT NULL,
-          content_revision TEXT NOT NULL,
-          stale INTEGER NOT NULL CHECK (stale IN (0, 1)),
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          PRIMARY KEY (repository_id, id)
-        );
-        CREATE INDEX IF NOT EXISTS comments_repository_file
-          ON comments(repository_id, file_id);
         CREATE TABLE IF NOT EXISTS server_instances (
           instance_id TEXT PRIMARY KEY,
           bind_host TEXT NOT NULL,
@@ -719,17 +693,7 @@ export class StateDatabase {
       `)
 					.all({ repositoryId })
 					.map(reviewFromRow);
-				const comments = this.database
-					.query<CommentRow, { repositoryId: string }>(`
-        SELECT id, file_id, path, side, start_line, end_line,
-          old_start_line, old_end_line, new_start_line, new_end_line,
-          hunk_header, excerpt_json, body, content_revision, stale,
-          created_at, updated_at
-        FROM comments WHERE repository_id = $repositoryId ORDER BY created_at, id
-      `)
-					.all({ repositoryId })
-					.map(commentFromRow);
-				return { reviews, comments };
+				return { reviews };
 			})
 			.deferred();
 	}
@@ -762,112 +726,6 @@ export class StateDatabase {
 			})
 			.immediate();
 		return structuredClone(record);
-	}
-
-	insertComment(repositoryId: string, comment: ReviewComment): ReviewComment {
-		this.database
-			.transaction(() => {
-				this.database
-					.query<
-						unknown,
-						{
-							repositoryId: string;
-							id: string;
-							fileId: string;
-							path: string;
-							side: ReviewComment["side"];
-							startLine: number;
-							endLine: number;
-							oldStartLine: number | null;
-							oldEndLine: number | null;
-							newStartLine: number | null;
-							newEndLine: number | null;
-							hunkHeader: string;
-							excerptJson: string;
-							body: string;
-							contentRevision: string;
-							stale: boolean;
-							createdAt: string;
-							updatedAt: string;
-						}
-					>(`
-        INSERT INTO comments(
-          repository_id, id, file_id, path, side, start_line, end_line,
-          old_start_line, old_end_line, new_start_line, new_end_line,
-          hunk_header, excerpt_json, body, content_revision, stale,
-          created_at, updated_at
-        ) VALUES (
-          $repositoryId, $id, $fileId, $path, $side, $startLine, $endLine,
-          $oldStartLine, $oldEndLine, $newStartLine, $newEndLine,
-          $hunkHeader, $excerptJson, $body, $contentRevision, $stale,
-          $createdAt, $updatedAt
-        )
-      `)
-					.run({
-						repositoryId,
-						...comment,
-						oldStartLine: comment.oldStartLine ?? null,
-						oldEndLine: comment.oldEndLine ?? null,
-						newStartLine: comment.newStartLine ?? null,
-						newEndLine: comment.newEndLine ?? null,
-						excerptJson: JSON.stringify(comment.excerpt),
-					});
-				this.bumpStateRevision(repositoryId);
-			})
-			.immediate();
-		return structuredClone(comment);
-	}
-
-	updateComment(
-		repositoryId: string,
-		id: string,
-		body: string,
-		updatedAt: string,
-	): ReviewComment | null {
-		return this.database
-			.transaction(() => {
-				const result = this.database
-					.query<
-						unknown,
-						{
-							repositoryId: string;
-							id: string;
-							body: string;
-							updatedAt: string;
-						}
-					>(`
-        UPDATE comments SET body = $body, updated_at = $updatedAt
-        WHERE repository_id = $repositoryId AND id = $id
-      `)
-					.run({ repositoryId, id, body, updatedAt });
-				if (result.changes === 0) return null;
-				this.bumpStateRevision(repositoryId);
-				const row = this.database
-					.query<CommentRow, { repositoryId: string; id: string }>(`
-        SELECT id, file_id, path, side, start_line, end_line,
-          old_start_line, old_end_line, new_start_line, new_end_line,
-          hunk_header, excerpt_json, body, content_revision, stale,
-          created_at, updated_at
-        FROM comments WHERE repository_id = $repositoryId AND id = $id
-      `)
-					.get({ repositoryId, id });
-				return row ? commentFromRow(row) : null;
-			})
-			.immediate();
-	}
-
-	deleteComment(repositoryId: string, id: string): boolean {
-		return this.database
-			.transaction(() => {
-				const result = this.database
-					.query<unknown, { repositoryId: string; id: string }>(
-						"DELETE FROM comments WHERE repository_id = $repositoryId AND id = $id",
-					)
-					.run({ repositoryId, id });
-				if (result.changes > 0) this.bumpStateRevision(repositoryId);
-				return result.changes > 0;
-			})
-			.immediate();
 	}
 
 	remoteBridgeDevices(): RemoteBridgeDevice[] {

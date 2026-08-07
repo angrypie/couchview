@@ -193,12 +193,6 @@ export const optionDefinitions: readonly CliOptionDefinition[] = [
 		description: "Origin-access provider for HTTP and WebSocket setup.",
 		commands: ["bridge"],
 	},
-	{
-		name: "cloudflare-access",
-		type: "boolean",
-		description: "Legacy alias for --origin-access cloudflare-access.",
-		commands: ["bridge"],
-	},
 ] as const;
 
 export function optionsFor(command: CliCommandName): CliOptionDefinition[] {

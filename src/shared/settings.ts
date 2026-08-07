@@ -4,7 +4,7 @@ import {
 	parseCodexGenerationPreferences,
 } from "./codexGeneration.ts";
 
-export const SETTINGS_PROFILE_DATA_VERSION = 1 as const;
+const SETTINGS_PROFILE_DATA_VERSION = 1 as const;
 export const DEFAULT_SETTINGS_PROFILE_ID = "default";
 export const DEFAULT_SETTINGS_PROFILE_NAME = "Default";
 export const SETTINGS_PROFILE_SELECTION_KEY = "couchview:settings-profile-id:v1";
@@ -21,7 +21,6 @@ export const COMMAND_IDS = [
 	"panel.packageCommands",
 	"search.open",
 	"commit.open",
-	"comments.open",
 	"file.toggleStage",
 	"file.toggleReviewed",
 	"file.previous",
@@ -43,7 +42,7 @@ export type ShortcutSequence = ShortcutStroke[];
 
 export type CodeFontFamily = "iosevka" | "system";
 
-export interface DiffTypographyPreferences {
+interface DiffTypographyPreferences {
 	fontFamily: CodeFontFamily;
 	fontSize: number;
 	lineHeightAdjustment: number;
@@ -162,7 +161,6 @@ const COMMON_DEFAULT_KEYBINDINGS: Record<CommandId, ShortcutSequence | null> = {
 	"panel.packageCommands": sequence(stroke("g"), stroke("x")),
 	"search.open": sequence(stroke("/")),
 	"commit.open": sequence(stroke("c"), stroke("c")),
-	"comments.open": sequence(stroke("g"), stroke("c")),
 	"file.toggleStage": sequence(stroke("g"), stroke("a")),
 	"file.toggleReviewed": sequence(stroke("r")),
 	"file.previous": null,
@@ -224,33 +222,26 @@ function fontFamily(value: unknown, fallback: CodeFontFamily): CodeFontFamily {
 export function normalizeTypographyPreferences(value: unknown): TypographyPreferences {
 	const candidate =
 		value && typeof value === "object" ? (value as Partial<TypographyPreferences>) : {};
-	const diff: Partial<DiffTypographyPreferences> & {
-		letterSpacing?: unknown;
-		lineHeight?: unknown;
-	} = candidate.diff && typeof candidate.diff === "object" ? candidate.diff : {};
+	const diff: Partial<DiffTypographyPreferences> =
+		candidate.diff && typeof candidate.diff === "object" ? candidate.diff : {};
 	const terminal: Partial<TerminalTypographyPreferences> =
 		candidate.terminal && typeof candidate.terminal === "object" ? candidate.terminal : {};
 	const defaults = DEFAULT_TYPOGRAPHY_PREFERENCES;
-	const diffFontSize = boundedNumber(
-		diff.fontSize,
-		defaults.diff.fontSize,
-		TYPOGRAPHY_LIMITS.diff.fontSize,
-	);
-	const legacyLineHeightAdjustment =
-		typeof diff.lineHeight === "number"
-			? diffFontSize * (diff.lineHeight - DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER)
-			: undefined;
 	return {
 		diff: {
 			fontFamily: fontFamily(diff.fontFamily, defaults.diff.fontFamily),
-			fontSize: diffFontSize,
+			fontSize: boundedNumber(
+				diff.fontSize,
+				defaults.diff.fontSize,
+				TYPOGRAPHY_LIMITS.diff.fontSize,
+			),
 			lineHeightAdjustment: boundedNumber(
-				diff.lineHeightAdjustment ?? legacyLineHeightAdjustment,
+				diff.lineHeightAdjustment,
 				defaults.diff.lineHeightAdjustment,
 				TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment,
 			),
 			widthAdjustment: boundedNumber(
-				diff.widthAdjustment ?? diff.letterSpacing,
+				diff.widthAdjustment,
 				defaults.diff.widthAdjustment,
 				TYPOGRAPHY_LIMITS.diff.widthAdjustment,
 			),
@@ -276,7 +267,7 @@ export function normalizeTypographyPreferences(value: unknown): TypographyPrefer
 	};
 }
 
-export function commandIdIsValid(value: string): value is CommandId {
+function commandIdIsValid(value: string): value is CommandId {
 	return (COMMAND_IDS as readonly string[]).includes(value);
 }
 
@@ -451,10 +442,7 @@ export function parseSettingsProfileData(value: unknown): SettingsProfileData {
 		throw new Error("Unsupported settings profile data version");
 	}
 	validateProfileTypography(candidate.typography);
-	const codex =
-		candidate.codex === undefined
-			? { ...DEFAULT_CODEX_GENERATION_PREFERENCES }
-			: parseCodexGenerationPreferences(candidate.codex);
+	const codex = parseCodexGenerationPreferences(candidate.codex);
 	const display = candidate.display;
 	if (
 		!display ||

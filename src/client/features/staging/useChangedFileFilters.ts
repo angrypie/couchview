@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import type { ChangeFile } from "../../../shared/contracts.ts";
+import type { FileChange } from "../../../shared/contracts.ts";
 import type { ReviewFilter, StageFilter } from "./types.ts";
 
-export function useChangedFileFilters(files: ChangeFile[]) {
+export function useChangedFileFilters(files: FileChange[]) {
 	const [fileQuery, setFileQuery] = useState("");
 	const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
 	const [stageFilter, setStageFilter] = useState<StageFilter>("all");

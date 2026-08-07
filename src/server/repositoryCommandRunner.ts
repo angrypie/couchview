@@ -45,7 +45,7 @@ export type RepositoryCommandEvent =
 	| { type: "output"; chunk: RepositoryCommandOutputChunk }
 	| { type: "status"; run: RepositoryCommandSummary };
 
-export interface RepositoryCommandProcess {
+interface RepositoryCommandProcess {
 	pid: number;
 	stdout: ReadableStream<Uint8Array> | null;
 	stderr: ReadableStream<Uint8Array> | null;
@@ -53,7 +53,7 @@ export interface RepositoryCommandProcess {
 	kill(signal?: NodeJS.Signals): void;
 }
 
-export interface RepositoryCommandSpawnOptions {
+interface RepositoryCommandSpawnOptions {
 	cwd: string;
 	env: Record<string, string | undefined>;
 }

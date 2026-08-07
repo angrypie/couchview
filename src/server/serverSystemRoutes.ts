@@ -27,7 +27,6 @@ import {
 } from "../shared/settings.ts";
 import type { ArtifactProposalGenerator } from "./artifactProposal.ts";
 import type { ArtifactService } from "./artifactService.ts";
-import type { CodexAppServerService } from "./codexAppServer.ts";
 import type { CommitMessageGenerator } from "./commitMessage.ts";
 import type { StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
@@ -64,7 +63,6 @@ interface SystemRouteContext {
 	artifactProposals: ArtifactProposalGenerator;
 	repositories: RepositoryManager;
 	commitMessages: CommitMessageGenerator;
-	codex: CodexAppServerService;
 	terminalSessions: TerminalSessionService;
 	remoteBridge: RemoteBridgeService;
 	restart: RestartCapability & { request?(): Promise<void> };
@@ -112,8 +110,7 @@ export function authorizeApiRequest(
 	const remoteBridgeCredentialMutation =
 		request.method === "POST" &&
 		(url.pathname === API_ROUTES.remoteBridgeHostTickets ||
-			url.pathname === API_ROUTES.remoteBridgeHostLease ||
-			/^\/api\/repositories\/[^/]+\/remote-bridge\/(?:tickets|lease)$/.test(url.pathname));
+			url.pathname === API_ROUTES.remoteBridgeHostLease);
 	if (isArtifactRequest(url) && request.headers.has(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER)) {
 		remoteBridge.authenticateDevice(request.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER));
 	}
@@ -256,7 +253,6 @@ export async function handleSystemApi(
 			},
 			commitMessage: context.commitMessages.capability,
 			artifactProposal: context.artifactProposals.capability,
-			codex: context.codex.capabilityFor(),
 			terminal: context.terminalSessions.capability,
 			remoteBridge: context.remoteBridge.capability,
 		};

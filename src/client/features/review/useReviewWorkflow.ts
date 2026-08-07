@@ -4,7 +4,6 @@ import type {
 	CommitMessageCapability,
 } from "../../../shared/contracts.ts";
 import type { FailureState } from "../../lib/failures.ts";
-import { useReviewComments } from "../comments/useReviewComments.ts";
 import { useCommitWorkflow } from "../commit/useCommitWorkflow.ts";
 import { useRepositoryEvents } from "../repositories/useRepositoryEvents.ts";
 import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorkspace.ts";
@@ -48,28 +47,12 @@ export function useReviewWorkflow({
 		repositoryId: workspace.repositoryId,
 		showToast,
 	});
-	const comments = useReviewComments({
-		activeFile: diff.activeFile,
-		csrfToken: workspace.bootstrap?.csrfToken,
-		currentFileId: diff.currentFileId,
-		diff: diff.diff,
-		files: workspace.files,
-		onSelectFile: diff.selectFile,
-		repositoryId: workspace.repositoryId,
-		rows: diff.rows,
-		selection: diff.commentSelection,
-		setFiles: workspace.setFiles,
-		setSelection: diff.setSelection,
-		showToast,
-		viewerRef: diff.viewerRef,
-	});
 	const review = useReviewStatus({
 		activeFileIndex: diff.activeFileIndex,
 		csrfToken: workspace.bootstrap?.csrfToken,
 		dismissToast,
 		files: workspace.files,
 		onSelectFile: diff.selectFile,
-		refreshReviewState: comments.refreshReviewState,
 		repositoryId: workspace.repositoryId,
 		setFiles: workspace.setFiles,
 		showToast,
@@ -96,7 +79,7 @@ export function useReviewWorkflow({
 		capability: commitMessageCapability,
 		codexPreferences,
 		csrfToken: workspace.bootstrap?.csrfToken,
-		onCommittedStateRefresh: comments.refreshReviewState,
+		onCommittedStateRefresh: review.refreshReviewState,
 		onOpen: closeDrawer,
 		onOperationRevision: workspace.applyOperationRevision,
 		operationRevision: workspace.operationRevision,
@@ -109,8 +92,8 @@ export function useReviewWorkflow({
 
 	useEffect(() => {
 		if (!workspace.repositoryId) return;
-		void comments.refreshReviewState().catch(workspace.markConnectionFailure);
-	}, [comments.refreshReviewState, workspace.markConnectionFailure, workspace.repositoryId]);
+		void review.refreshReviewState().catch(workspace.markConnectionFailure);
+	}, [review.refreshReviewState, workspace.markConnectionFailure, workspace.repositoryId]);
 
 	useRepositoryEvents({
 		clearRepositorySelection: workspace.clearRepositorySelection,
@@ -126,7 +109,7 @@ export function useReviewWorkflow({
 		refreshChanges: workspace.refreshChanges,
 		refreshPackageScripts,
 		refreshRepositories: workspace.refreshRepositories,
-		refreshReviewState: comments.refreshReviewState,
+		refreshReviewState: review.refreshReviewState,
 		repositoryId: workspace.repositoryId,
 		repositoryLoading: workspace.repositoryLoading,
 		setConnectionState: workspace.setConnectionState,
@@ -134,7 +117,6 @@ export function useReviewWorkflow({
 	});
 
 	return {
-		comments,
 		commit,
 		diff,
 		review,

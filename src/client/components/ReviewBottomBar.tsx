@@ -6,10 +6,9 @@ import {
 	ChevronUp,
 	GitPullRequestArrow,
 	LoaderCircle,
-	MessageSquareText,
 	Undo2,
 } from "lucide-react";
-import type { ChangeFile } from "../../shared/contracts.ts";
+import type { FileChange } from "../../shared/contracts.ts";
 
 const BUTTON_MOTION_CLASSES =
 	"group transition-colors transition-transform duration-150 active:scale-[0.98]";
@@ -17,21 +16,19 @@ const GROUP_CONTENT_MOTION_CLASSES =
 	"transition-opacity duration-150 group-active:opacity-80 group-focus:opacity-90";
 
 interface ReviewBottomBarProps {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	activeFileFullyStaged: boolean;
 	activeFileIndex: number;
 	bulkStageBusy: boolean;
 	canNavigateNextHunk: boolean;
 	canNavigatePreviousHunk: boolean;
 	fileCount: number;
-	onComments: () => void;
 	onNavigateFile: (direction: -1 | 1) => void;
 	onNavigateHunk: (direction: -1 | 1) => void;
 	onReview: () => void;
 	onToggleStage: () => void;
 	reviewBusy: boolean;
 	stageBusy: boolean;
-	totalCommentCount: number;
 }
 
 export function ReviewBottomBar({
@@ -42,14 +39,12 @@ export function ReviewBottomBar({
 	canNavigateNextHunk,
 	canNavigatePreviousHunk,
 	fileCount,
-	onComments,
 	onNavigateFile,
 	onNavigateHunk,
 	onReview,
 	onToggleStage,
 	reviewBusy,
 	stageBusy,
-	totalCommentCount,
 }: ReviewBottomBarProps) {
 	return (
 		<nav
@@ -137,16 +132,6 @@ export function ReviewBottomBar({
 				<span className={`stage-copy ${GROUP_CONTENT_MOTION_CLASSES}`}>
 					{activeFileFullyStaged ? "Unstage" : "Stage"}
 				</span>
-			</button>
-			<button
-				aria-label={`Open comments (${totalCommentCount})`}
-				className={`icon-button comments-action ${BUTTON_MOTION_CLASSES}`}
-				onClick={onComments}
-				title="Review comments"
-				type="button"
-			>
-				<MessageSquareText className={GROUP_CONTENT_MOTION_CLASSES} size={19} />
-				{totalCommentCount > 0 && <span className="badge">{totalCommentCount}</span>}
 			</button>
 		</nav>
 	);

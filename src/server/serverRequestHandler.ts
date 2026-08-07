@@ -170,10 +170,8 @@ export function createRequestHandler(context: RequestHandlerContext) {
 				return undefined;
 			}
 
-			const legacyRemoteBridgeSocketRoute =
-				/^\/api\/repositories\/([^/]+)\/remote-bridge\/socket$/.exec(url.pathname);
 			const remoteBridgeHostSocket = url.pathname === API_ROUTES.remoteBridgeHostSocket;
-			if ((remoteBridgeHostSocket || legacyRemoteBridgeSocketRoute) && request.method === "GET") {
+			if (remoteBridgeHostSocket && request.method === "GET") {
 				if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
 					throw new HttpError(
 						426,
@@ -187,10 +185,6 @@ export function createRequestHandler(context: RequestHandlerContext) {
 						"websocket_required",
 						"The current server cannot upgrade this request",
 					);
-				}
-				if (legacyRemoteBridgeSocketRoute) {
-					const repositoryId = decodeSegment(legacyRemoteBridgeSocketRoute[1] ?? "");
-					await repositories.get(repositoryId);
 				}
 				const data = remoteBridge.consumeUpgrade(request, {
 					host: normalizedHost,

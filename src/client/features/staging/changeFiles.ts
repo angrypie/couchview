@@ -1,12 +1,12 @@
-import type { ChangeFile, ChangeFileDelta, FileDiff } from "../../../shared/contracts.ts";
+import type { FileChange, FileChangeDelta, FileDiff } from "../../../shared/contracts.ts";
 
-export function changeLabel(file: ChangeFile): string {
+export function changeLabel(file: FileChange): string {
 	if (file.conflicted) return "conflict";
 	return file.kind.replace("type-changed", "type");
 }
 
 export function stageLabel(
-	file: ChangeFile,
+	file: FileChange,
 ): "partial" | "staged" | "unstaged" | "untracked" | null {
 	if (file.staged && file.unstaged) return "partial";
 	if (file.staged) return "staged";
@@ -16,9 +16,9 @@ export function stageLabel(
 }
 
 export function applyChangeFileDelta(
-	current: readonly ChangeFile[],
-	delta: ChangeFileDelta,
-): ChangeFile[] {
+	current: readonly FileChange[],
+	delta: FileChangeDelta,
+): FileChange[] {
 	const removed = new Set(delta.removedFileIds);
 	const upserted = new Map(delta.upserted.map((file) => [file.id, file]));
 	const next = current.flatMap((file) => {
@@ -37,7 +37,7 @@ export function applyChangeFileDelta(
 
 export function withDiffFileMetadata(
 	current: FileDiff,
-	file: ChangeFile,
+	file: FileChange,
 	operationRevision: string,
 ): FileDiff {
 	return {

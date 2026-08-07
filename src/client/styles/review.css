@@ -89,51 +89,10 @@
 	overflow-wrap: anywhere;
 }
 
-.diff-comment-chip {
-	max-width: min(540px, calc(100vw - 24px));
-	min-height: 26px;
-	margin: 3px 6px;
-	padding: 3px 7px;
-	border: 1px solid color-mix(in srgb, var(--yellow) 45%, var(--line));
-	border-radius: 999px;
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	color: var(--yellow);
-	background: var(--yellow-bg);
-	box-shadow: 0 2px 7px rgb(0 0 0 / 24%);
-	font:
-		650 10px / 1.25 ui-sans-serif,
-		system-ui,
-		sans-serif;
-	text-align: left;
-}
-
-.diff-comment-chip:hover,
-.diff-comment-chip:focus-visible {
-	border-color: var(--yellow);
-	background: var(--yellow-bg);
-}
-
-.diff-comment-reference {
-	flex: 0 0 auto;
-	color: var(--yellow);
-	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.diff-comment-preview {
-	min-width: 0;
-	overflow: hidden;
-	color: var(--muted);
-	font-weight: 500;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 .bottom-bar {
 	border-top: 1px solid var(--line);
 	display: grid;
-	grid-template-columns: auto auto minmax(94px, 1fr) auto auto;
+	grid-template-columns: auto auto minmax(94px, 1fr) auto;
 	align-items: center;
 	gap: 3px;
 }
@@ -264,38 +223,12 @@
 
 .filter-input,
 .search-input,
-.comment-input {
+.composer-input {
 	width: 100%;
 	border: 1px solid var(--line);
 	border-radius: 9px;
 	color: var(--text);
 	background: var(--surface-solid);
-}
-
-.copy-field-wrap {
-	min-height: 0;
-	padding: 10px;
-	overflow: auto;
-}
-
-.copy-field {
-	width: 100%;
-	min-height: 260px;
-	resize: vertical;
-	border: 1px solid var(--line);
-	border-radius: 9px;
-	padding: 10px;
-	color: var(--text);
-	background: var(--surface-solid);
-	font:
-		400 16px / 1.5 ui-monospace,
-		SFMono-Regular,
-		Menlo,
-		monospace;
-}
-
-.copy-sheet {
-	grid-template-rows: auto minmax(0, 1fr);
 }
 
 .diagnostic-sheet {
@@ -389,13 +322,6 @@
 	height: 36px;
 }
 
-.chips {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 5px;
-	margin-top: 7px;
-}
-
 .drawer-tabs {
 	margin-bottom: 8px;
 	padding: 2px;
@@ -482,8 +408,7 @@
 
 .file-list,
 .commands-list,
-.search-results,
-.comment-list {
+.search-results {
 	min-height: 0;
 	overflow: auto;
 }
@@ -745,19 +670,6 @@
 	padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom))
 		max(8px, env(safe-area-inset-left));
 	border-top: 1px solid var(--line);
-}
-
-.progress-track {
-	height: 4px;
-	border-radius: 99px;
-	background: var(--panel-raised);
-	overflow: hidden;
-}
-
-.progress-value {
-	height: 100%;
-	border-radius: inherit;
-	background: var(--green);
 }
 
 .progress-label {

@@ -43,7 +43,6 @@ export interface FixtureRequestContext {
 		unborn: boolean;
 	} | null;
 	fileRoute: RegExpExecArray | null;
-	commentRoute: RegExpExecArray | null;
 	packageRunRoute: RegExpExecArray | null;
 	artifactRoute: RegExpExecArray | null;
 	artifactRunRoute: RegExpExecArray | null;

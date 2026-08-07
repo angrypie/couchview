@@ -65,7 +65,7 @@ export function CommitComposerSheet({
 				<div style={{ minHeight: 0, overflow: "auto", padding: 9 }}>
 					<textarea
 						autoFocus
-						className="comment-input commit-input"
+						className="composer-input commit-input"
 						maxLength={20_000}
 						onChange={(event) => onMessageChange(event.target.value)}
 						placeholder="Commit message…"

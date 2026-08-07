@@ -91,10 +91,6 @@ describe("native preferences hydration", () => {
 
 		await act(async () => {
 			resolveLoad?.({
-				diffFontSize: 18,
-				terminalFontSize: 16,
-				lineNumbersVisible: false,
-				lineWrapEnabled: true,
 				themePreference: "dark",
 			});
 			await loadPromise;
@@ -104,20 +100,12 @@ describe("native preferences hydration", () => {
 			const state = JSON.parse(screen.getByTestId("preferences-state").textContent ?? "{}");
 			expect(state).toEqual({
 				hydrated: true,
-				diffFontSize: 18,
-				terminalFontSize: 16,
-				lineNumbersVisible: false,
-				lineWrapEnabled: true,
 				themePreference: "light",
 			});
 		});
 		expect(themeWrites).toEqual([{ preference: "light", transition: undefined }]);
 		expect(savedPreferences).toEqual([
 			{
-				diffFontSize: 18,
-				terminalFontSize: 16,
-				lineNumbersVisible: false,
-				lineWrapEnabled: true,
 				themePreference: "light",
 			},
 		]);

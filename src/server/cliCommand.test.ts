@@ -230,20 +230,6 @@ describe("CLI command parsing", () => {
 			repositoryRoot: null,
 			claudeArgs: [],
 		});
-		expect(
-			parseCliInvocation([
-				"bridge",
-				"pair",
-				"--url",
-				"https://review.example.com",
-				"--code",
-				"a".repeat(43),
-				"--cloudflare-access",
-			]),
-		).toMatchObject({
-			kind: "bridge-pair",
-			originAccess: CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID,
-		});
 		expect(() => parseCliInvocation(["bridge", "par"])).toThrow("Did you mean 'pair'");
 	});
 

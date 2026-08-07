@@ -1,6 +1,6 @@
 # Couchview
 
-Couchview is a local-first, mobile-optimized PWA for reviewing the combined `HEAD → working tree` diff of a Git repository. It keeps code nearly full width, makes file and hunk navigation fast, searches a tapped identifier across the project, and collects line comments into a Codex-ready correction prompt.
+Couchview is a local-first, mobile-optimized PWA for reviewing the combined `HEAD → working tree` diff of a Git repository. It keeps code nearly full width, makes file and hunk navigation fast, searches a tapped identifier across the project, and supports review, staging, and commit workflows.
 
 It shows staged, unstaged, partially staged, and untracked non-ignored changes in one stable queue. Staging a file does not remove it from that queue or mark it reviewed.
 
@@ -133,7 +133,7 @@ Repository: /absolute/path/to/project
 
 Copy the `192.168...` address into the phone browser. If it does not connect, confirm both devices are on the same Wi-Fi and allow incoming Bun connections in the computer firewall. The interface list is captured at startup, so restart Couchview after changing networks. A specific interface address can be used instead of `0.0.0.0`, and `COUCHVIEW_HOST` provides the same setting through the environment.
 
-LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable. Comment copying automatically falls back to selectable text.
+LAN mode exposes repository diffs, staging controls, and detected package scripts to devices that can reach the computer. Use it only on a trusted network and stop the server when the review is finished. Plain `http://<LAN-IP>` works for reviewing, but mobile browsers do not treat it as a secure context: PWA installation, service workers, and direct clipboard access may be unavailable.
 
 ### Native iPhone and iPad app
 
@@ -441,8 +441,6 @@ through `RemoteBridgeClientRuntime`, so a compatible relay can replace those con
 without changing the SSH/WebRTC byte pump. Couchview uses
 `X-Couchview-Bridge-Token` for its own device credential, leaving the standard
 `Authorization` header available to OAuth, another tunnel, or a relay adapter.
-For compatibility, the client also sends the device credential as a bearer token when
-the selected gateway does not use `Authorization`.
 
 An authenticated browser session is not copied into the Air's CLI. Gateway cookies are
 normally browser-scoped and `HttpOnly`, and WebRTC still needs authenticated signaling,
@@ -738,21 +736,20 @@ Development also binds both processes to `127.0.0.1` by default. The UI proxies 
 
 ## Review workflow
 
-- Click the repository name to open the project picker. It shows canonical paths, marks the current project, and keeps missing projects visible as unavailable. **Forget** requires confirmation and permanently removes that project’s saved reviews and comments.
+- Click the repository name to open the project picker. It shows canonical paths, marks the current project, and keeps missing projects visible as unavailable. **Forget** requires confirmation and permanently removes that project’s saved review state.
 - Open the file drawer to jump directly to a file or filter the queue by All, Unreviewed, Reviewed, or Staged. The persistent arrow controls visit the previous or next file; `[` and `]` do the same from the keyboard.
 - Use the hunk up/down controls, or `K` and `J`, to jump between changes in the current file.
 - Tap an identifier in a diff to run a literal, case-sensitive project search. Results are separated into Current file and Other files. Opening a result shows a read-only source window with a one-tap return to the active diff.
-- Line numbers are hidden by default so the code gets the widest possible viewport; tap `123` to reveal them. Use the adjacent line-wrap control to switch long lines between horizontal scrolling and wrapping. Both display preferences are stored in the browser. Tap a number to select a line, then another number in the same hunk to extend the range. For a replacement, select a deletion and an addition to retain exact old and new ranges in one mixed comment.
-- Save any number of independent comments. The comments tray can jump to, edit, or delete them. Copy exports every current, non-stale comment as Markdown with repository-relative paths, exact old/new ranges, excerpts, and correction text. Clipboard denial opens the same text in a selectable dialog; copying never deletes comments.
-- Mark reviewed to record the current content revision and automatically advance to the next unreviewed file. In compact landscape mode, Review only toggles the mark because Next is a separate adjacent control. Undo is offered. A later content change clears the review and marks existing comment anchors stale.
+- Line numbers are hidden by default so the code gets the widest possible viewport; tap `123` to reveal them. Use the adjacent line-wrap control to switch long lines between horizontal scrolling and wrapping. Both display preferences are stored in the browser.
+- Mark reviewed to record the current content revision and automatically advance to the next unreviewed file. In compact landscape mode, Review only toggles the mark because Next is a separate adjacent control. Undo is offered. A later content change clears the review.
 - Stage writes the whole file to the real Git index; once fully staged, the same control becomes Unstage and restores that path in the index from `HEAD` without changing its working copy. Review and stage are independent actions, and a stale operation is rejected instead of changing the index.
 - Commit is available from the changed-files drawer once at least one path is staged. It commits exactly the current Git index with the supplied message; unstaged working-tree edits remain local, and stale or conflicted states are rejected. **Generate with Codex** uses the signed-in local Codex CLI to propose an editable, single-line Conventional Commit from the staged patch; generation never stages or commits changes.
 - When tracked or non-ignored `package.json` files are present, the drawer adds a **Commands** view. Scripts are grouped by subproject, run with the package manager declared by the project or indicated by its nearest lockfile, and stream stdout and stderr into a reconnectable output sheet. Long-running scripts keep running when the sheet closes and can be stopped explicitly.
 - If Git fails or stops producing output, Couchview shows the operation-specific message instead of treating an empty response as a valid diff. Open **Details** to see a diagnostic ID, failure kind, exit code, and bounded Git output, or copy the complete diagnostic for reporting.
-- Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk and comment actions in the dock; compact landscape moves hunk/comments into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
+- Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk actions in the dock; compact landscape moves hunk navigation into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
 - Use the minus and plus controls to adjust diff code from 9–24 px, or open **Settings** for all typography controls. The compact 11 px default and the selected preferences are stored in the browser.
 
-Binary and metadata-only changes remain reviewable and stageable but do not accept line comments. Very large diffs show an explicit truncation warning.
+Binary and metadata-only changes remain reviewable and stageable. Very large diffs show an explicit truncation warning.
 
 ## Install as a PWA
 
@@ -764,7 +761,7 @@ Couchview always loads documents and repository data from the network. The servi
 
 The server accepts only exact origins derived from the configured bind host and the machine's interfaces at startup, requires a per-launch CSRF header for writes and Codex generation, disables CORS, and serves a restrictive Content Security Policy. Git runs through `simple-git` with argument arrays, an inactivity timeout, bounded output, and validated repository-relative paths. Loopback binding is the default. Use `--host 0.0.0.0` only to opt into LAN access on a trusted network; the tool can read selected repositories, stage files in their indexes, execute their declared package scripts, send staged change context to Codex, and—only with explicit non-loopback terminal opt-in—control tmux and its programs as the Couchview OS user.
 
-Review flags, comments, and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
+Review flags and the saved-project catalog are stored in a user-only SQLite database using WAL mode:
 
 ```sh
 ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
@@ -814,7 +811,7 @@ bunx playwright install chromium webkit
 bun run test:e2e
 ```
 
-Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, comments, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy renderer and Iosevka loading, input, resize, Review handoff, and tmux session shutdown.
+Playwright builds the PWA and starts its deterministic fixture on port 4174. It exercises 320 px, 375 px, and 430 px touch viewports plus compact landscape, multi-project history and tabs, horizontal containment, navigation, search, staging, commits, and PWA behavior. A desktop Chromium project also runs the real Ghostty/WASM renderer against a deterministic terminal WebSocket and verifies lazy renderer and Iosevka loading, input, resize, Review handoff, and tmux session shutdown.
 
 To point the browser suite at an already running instance instead:
 

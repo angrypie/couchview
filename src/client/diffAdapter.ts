@@ -1,17 +1,8 @@
-import {
-	type DiffLineAnnotation,
-	type FileDiffMetadata,
-	parsePatchFiles,
-	type SelectedLineRange,
-} from "@pierre/diffs";
-import type { DiffSide, FileDiff, ReviewComment } from "../shared/contracts.ts";
+import { type FileDiffMetadata, parsePatchFiles } from "@pierre/diffs";
+import type { DiffSide, FileDiff } from "../shared/contracts.ts";
 
 const TRUNCATION_HEADER = "Diff preview truncated at 2 MiB or 20,000 rendered rows.";
 const NO_NEWLINE_MARKER = "\\ No newline at end of file";
-
-export interface CommentAnnotationMetadata {
-	comment: ReviewComment;
-}
 
 export interface AdaptedFileDiff {
 	fileDiff: FileDiffMetadata;
@@ -20,12 +11,6 @@ export interface AdaptedFileDiff {
 
 interface DiffHighlightCache {
 	primeDiffHighlightCache(diff: FileDiffMetadata): void;
-}
-
-export interface SelectionEndpoint {
-	lineNumber: number;
-	rowIndex: number;
-	side: "old" | "new";
 }
 
 const adaptedFileDiffCache = new WeakMap<FileDiff, AdaptedFileDiff>();
@@ -52,7 +37,7 @@ function syntheticHeader(diff: FileDiff): string[] {
 /**
  * Rebuild the single-file unified patch that Pierre expects from Couchview's
  * structured API response. The structured rows remain the source of truth for
- * comments and side conversion; this patch is only a rendering adapter.
+ * side conversion; this patch is only a rendering adapter.
  */
 export function reconstructUnifiedPatch(diff: FileDiff): string {
 	const suppliedHeader = diff.header.filter((line) => line !== TRUNCATION_HEADER);
@@ -133,89 +118,4 @@ export function toPierreSide(side: Exclude<DiffSide, "mixed">) {
 
 export function fromPierreSide(side: "deletions" | "additions") {
 	return side === "deletions" ? ("old" as const) : ("new" as const);
-}
-
-export function selectedRangeFromEndpoints(
-	anchor: SelectionEndpoint,
-	focus: SelectionEndpoint,
-): SelectedLineRange {
-	const anchorFirst = anchor.rowIndex <= focus.rowIndex;
-	const start = anchorFirst ? anchor : focus;
-	const end = anchorFirst ? focus : anchor;
-	return {
-		start: start.lineNumber,
-		side: toPierreSide(start.side),
-		end: end.lineNumber,
-		endSide: toPierreSide(end.side),
-	};
-}
-
-export function commentAnnotation(
-	comment: ReviewComment,
-): DiffLineAnnotation<CommentAnnotationMetadata> | null {
-	if (comment.stale) return null;
-
-	if (comment.side === "old") {
-		return {
-			side: "deletions",
-			lineNumber: comment.oldEndLine ?? comment.endLine,
-			metadata: { comment },
-		};
-	}
-
-	if (comment.side === "new") {
-		return {
-			side: "additions",
-			lineNumber: comment.newEndLine ?? comment.endLine,
-			metadata: { comment },
-		};
-	}
-
-	if (comment.newEndLine !== undefined) {
-		return {
-			side: "additions",
-			lineNumber: comment.newEndLine,
-			metadata: { comment },
-		};
-	}
-	if (comment.oldEndLine !== undefined) {
-		return {
-			side: "deletions",
-			lineNumber: comment.oldEndLine,
-			metadata: { comment },
-		};
-	}
-	return null;
-}
-
-export function annotationsForFile(
-	comments: readonly ReviewComment[],
-	fileId: string,
-): DiffLineAnnotation<CommentAnnotationMetadata>[] {
-	return comments.flatMap((comment) => {
-		if (comment.fileId !== fileId) return [];
-		const annotation = commentAnnotation(comment);
-		return annotation ? [annotation] : [];
-	});
-}
-
-export function commentAnnotationsVersion(
-	comments: readonly ReviewComment[],
-	fileId: string,
-	contentRevision = "",
-): number {
-	let hash = 2166136261;
-	for (let index = 0; index < contentRevision.length; index += 1) {
-		hash ^= contentRevision.charCodeAt(index);
-		hash = Math.imul(hash, 16777619);
-	}
-	for (const comment of comments) {
-		if (comment.fileId !== fileId || comment.stale) continue;
-		const value = `${comment.id}\0${comment.updatedAt}\0${comment.body}\0`;
-		for (let index = 0; index < value.length; index += 1) {
-			hash ^= value.charCodeAt(index);
-			hash = Math.imul(hash, 16777619);
-		}
-	}
-	return hash >>> 0;
 }

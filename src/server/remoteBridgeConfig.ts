@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-	REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
 	type RemoteBridgeProfile,
 	remoteBridgeOriginAccessIdIsValid,
 } from "../shared/contracts.ts";
@@ -17,7 +16,6 @@ import {
 	remoteBridgeZedUrl as buildRemoteBridgeZedUrl,
 } from "../shared/remoteBridgeCommands.ts";
 import { isCompiledExecutable } from "./cliSupervisor.ts";
-import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const CONFIG_VERSION = 2;
 const MAX_CONFIG_BYTES = 1024 * 1024;
@@ -106,17 +104,10 @@ function normalizeProfile(
 ): RemoteBridgeProfile | null {
 	if (!value || typeof value !== "object") return null;
 	const candidate = value as Record<string, unknown>;
-	const legacyCloudflareAccess = candidate.cloudflareAccess;
-	const originAccess =
-		originAccessOverride ??
-		candidate.originAccess ??
-		(typeof legacyCloudflareAccess === "boolean"
-			? legacyCloudflareAccess
-				? CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID
-				: REMOTE_BRIDGE_NO_ORIGIN_ACCESS
-			: undefined);
-	const normalized: Record<string, unknown> = { ...candidate, originAccess };
-	delete normalized.cloudflareAccess;
+	const normalized: Record<string, unknown> = {
+		...candidate,
+		originAccess: originAccessOverride ?? candidate.originAccess,
+	};
 	if (!profileIsValid(normalized)) return null;
 	return { ...normalized, origin: normalizeRemoteBridgeOrigin(normalized.origin) };
 }
@@ -154,10 +145,7 @@ export async function readRemoteBridgeConfig(
 		throw new Error(`The Couchview remote bridge config is invalid: ${paths.configFile}`);
 	}
 	const candidate = parsed as { version?: unknown; profiles?: unknown };
-	if (
-		(candidate.version !== 1 && candidate.version !== CONFIG_VERSION) ||
-		!Array.isArray(candidate.profiles)
-	) {
+	if (candidate.version !== CONFIG_VERSION || !Array.isArray(candidate.profiles)) {
 		throw new Error(`The Couchview remote bridge config is invalid: ${paths.configFile}`);
 	}
 	const profiles = candidate.profiles.map((profile) => normalizeProfile(profile));

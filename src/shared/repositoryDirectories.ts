@@ -1,4 +1,4 @@
-export interface RepositoryDirectoryEntry {
+interface RepositoryDirectoryEntry {
 	name: string;
 	path: string;
 }

@@ -22,9 +22,7 @@ interface NativePreferencesController {
 	hydrated: boolean;
 	preferences: NativePreferences;
 	resolvedTheme: ResolvedTheme;
-	error: string | null;
 	update(patch: Partial<NativePreferences>): void;
-	clearError(): void;
 }
 
 const NativePreferencesContext = createContext<NativePreferencesController | null>(null);
@@ -55,7 +53,6 @@ function useReducedMotionEnabled(): boolean {
 export function NativePreferencesProvider({ children }: { children: ReactNode }) {
 	const [preferences, setPreferences] = useState(DEFAULT_NATIVE_PREFERENCES);
 	const [hydrated, setHydrated] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 	const preferencesRef = useRef(DEFAULT_NATIVE_PREFERENCES);
 	const pendingPatchRef = useRef<Partial<NativePreferences>>({});
 	const hydratedRef = useRef(false);
@@ -64,9 +61,7 @@ export function NativePreferencesProvider({ children }: { children: ReactNode })
 	const resolvedTheme: ResolvedTheme = theme === "dark" ? "dark" : "light";
 
 	const save = useCallback((next: NativePreferences) => {
-		void nativePreferencesStorage.save(next).catch((saveError) => {
-			setError(saveError instanceof Error ? saveError.message : "Could not save app settings");
-		});
+		void nativePreferencesStorage.save(next).catch(() => undefined);
 	}, []);
 
 	useEffect(() => {
@@ -84,7 +79,7 @@ export function NativePreferencesProvider({ children }: { children: ReactNode })
 				setHydrated(true);
 				if (Object.keys(pendingPatch).length > 0) save(next);
 			},
-			(loadError) => {
+			() => {
 				if (!active) return;
 				const pendingPatch = pendingPatchRef.current;
 				const next = normalizeNativePreferences({
@@ -96,7 +91,6 @@ export function NativePreferencesProvider({ children }: { children: ReactNode })
 				hydratedRef.current = true;
 				Uniwind.setTheme(next.themePreference);
 				setPreferences(next);
-				setError(loadError instanceof Error ? loadError.message : "Could not load app settings");
 				setHydrated(true);
 				if (Object.keys(pendingPatch).length > 0) save(next);
 			},
@@ -108,7 +102,6 @@ export function NativePreferencesProvider({ children }: { children: ReactNode })
 
 	const update = useCallback(
 		(patch: Partial<NativePreferences>) => {
-			setError(null);
 			const current = preferencesRef.current;
 			const next = normalizeNativePreferences({ ...current, ...patch });
 			preferencesRef.current = next;
@@ -131,8 +124,6 @@ export function NativePreferencesProvider({ children }: { children: ReactNode })
 	return (
 		<NativePreferencesContext
 			value={{
-				clearError: () => setError(null),
-				error,
 				hydrated,
 				preferences,
 				resolvedTheme,

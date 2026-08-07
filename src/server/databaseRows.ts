@@ -1,4 +1,4 @@
-import type { RemoteBridgeDevice, ReviewComment, ReviewRecord } from "../shared/contracts.ts";
+import type { RemoteBridgeDevice, ReviewRecord } from "../shared/contracts.ts";
 import { parseSettingsProfileData, type SettingsProfile } from "../shared/settings.ts";
 
 export interface RepositoryRow {
@@ -16,26 +16,6 @@ export interface ReviewRow {
 	path: string;
 	content_revision: string;
 	reviewed: number;
-	updated_at: string;
-}
-
-export interface CommentRow {
-	id: string;
-	file_id: string;
-	path: string;
-	side: ReviewComment["side"];
-	start_line: number;
-	end_line: number;
-	old_start_line: number | null;
-	old_end_line: number | null;
-	new_start_line: number | null;
-	new_end_line: number | null;
-	hunk_header: string;
-	excerpt_json: string;
-	body: string;
-	content_revision: string;
-	stale: number;
-	created_at: string;
 	updated_at: string;
 }
 
@@ -92,34 +72,6 @@ export function reviewFromRow(row: ReviewRow): ReviewRecord {
 		path: row.path,
 		contentRevision: row.content_revision,
 		reviewed: row.reviewed === 1,
-		updatedAt: row.updated_at,
-	};
-}
-
-export function commentFromRow(row: CommentRow): ReviewComment {
-	const excerpt: unknown = JSON.parse(row.excerpt_json);
-	if (!Array.isArray(excerpt) || !excerpt.every((line) => typeof line === "string")) {
-		throw new Error(`Comment ${row.id} has invalid stored excerpt data`);
-	}
-	return {
-		id: row.id,
-		fileId: row.file_id,
-		path: row.path,
-		side: row.side,
-		startLine: row.start_line,
-		endLine: row.end_line,
-		...(row.old_start_line === null
-			? {}
-			: { oldStartLine: row.old_start_line, oldEndLine: row.old_end_line ?? row.old_start_line }),
-		...(row.new_start_line === null
-			? {}
-			: { newStartLine: row.new_start_line, newEndLine: row.new_end_line ?? row.new_start_line }),
-		hunkHeader: row.hunk_header,
-		excerpt,
-		body: row.body,
-		contentRevision: row.content_revision,
-		stale: row.stale === 1,
-		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
 }

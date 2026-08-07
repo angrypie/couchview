@@ -125,20 +125,6 @@
 	line-height: 1.4;
 }
 
-.settings-card-header .settings-apply-button {
-	min-height: 36px;
-	padding-inline: 11px;
-	flex: 0 0 auto;
-}
-
-.settings-card-status {
-	margin: 0 0 18px;
-	color: var(--muted);
-	font-size: 9px;
-	line-height: 1.4;
-	text-align: right;
-}
-
 .settings-fieldset {
 	min-width: 0;
 	margin: 0 0 18px;
@@ -346,17 +332,6 @@
 	white-space: pre;
 }
 
-.typography-column-ruler {
-	width: 100%;
-	margin-bottom: 0.6em;
-	padding-bottom: 0.35em;
-	overflow: hidden;
-	border-bottom: 1px solid var(--line-soft);
-	color: var(--diff-number);
-	line-height: inherit;
-	white-space: pre;
-}
-
 .diff-typography-preview {
 	color: var(--text);
 	background: var(--surface-solid);
@@ -433,17 +408,6 @@
 	color: var(--red);
 }
 
-.settings-reset {
-	min-height: 36px;
-	margin-top: 10px;
-	padding-inline: 0;
-	color: var(--muted);
-}
-
-.settings-reset:hover {
-	color: var(--text);
-}
-
 @media (max-width: 760px) {
 	.settings-scroll {
 		padding-top: 20px;
@@ -470,10 +434,6 @@
 
 	.theme-preference-picker {
 		grid-template-columns: minmax(0, 1fr);
-	}
-
-	.settings-card-status {
-		text-align: left;
 	}
 }
 

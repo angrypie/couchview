@@ -29,7 +29,7 @@ export function bearerToken(request: Request): string | null {
 }
 
 export function remoteBridgeDeviceToken(request: Request): string | null {
-	return request.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER) ?? bearerToken(request);
+	return request.headers.get(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER);
 }
 
 export async function readJsonObject<T extends object>(request: Request): Promise<T> {

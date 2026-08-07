@@ -11,7 +11,7 @@ import {
 	X,
 } from "lucide-react";
 import type {
-	ChangeFile,
+	FileChange,
 	PackageRunSummary,
 	PackageScriptDefinition,
 	PackageScriptsPackage,
@@ -26,7 +26,7 @@ import type {
 	StageFilter,
 } from "../features/staging/types.ts";
 
-export type { DrawerView, ReviewFilter, StageFilter };
+export type { DrawerView };
 
 interface ChangedFilesDrawerProps {
 	bulkStageBusy: BulkStageScope | null;
@@ -37,8 +37,8 @@ interface ChangedFilesDrawerProps {
 	commitBusy: boolean;
 	currentFileId: string | null;
 	fileQuery: string;
-	files: ChangeFile[];
-	filteredFiles: ChangeFile[];
+	files: FileChange[];
+	filteredFiles: FileChange[];
 	onClose: () => void;
 	onCommit: () => void;
 	onFileQueryChange: (query: string) => void;
@@ -266,7 +266,6 @@ export function ChangedFilesDrawer({
 								</span>
 								<span className="file-state-icons">
 									{file.staged && <GitPullRequestArrow aria-label="Staged" size={13} />}
-									{file.commentCount > 0 && <span className="badge">{file.commentCount}</span>}
 								</span>
 							</button>
 						))}

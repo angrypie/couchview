@@ -8,7 +8,7 @@ import type {
 } from "../../shared/git/index.ts";
 import { decodeSegment, json, readJsonObject } from "../serverHttp.ts";
 
-export interface GitWorkspaceRouteRepository {
+interface GitWorkspaceRouteRepository {
 	history(scope: GitHistoryScope, cursor: string | null): Promise<GitHistoryResponse>;
 	historyCommit(commit: string): Promise<GitCommitChangesResponse>;
 	historyDiff(commit: string, fileId: string): Promise<DiffResponse>;

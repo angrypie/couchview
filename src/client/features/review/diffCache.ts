@@ -1,4 +1,4 @@
-import type { ChangeFile, FileDiff } from "../../../shared/contracts.ts";
+import type { FileChange, FileDiff } from "../../../shared/contracts.ts";
 
 const DIFF_CACHE_LIMIT = 8;
 
@@ -13,7 +13,7 @@ export function diffCacheKey(
 export function readCachedDiff(
 	cache: Map<string, FileDiff>,
 	repositoryId: string,
-	file: ChangeFile,
+	file: FileChange,
 ): FileDiff | null {
 	const key = diffCacheKey(repositoryId, file.id, file.contentRevision);
 	const cached = cache.get(key) ?? null;

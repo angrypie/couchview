@@ -122,10 +122,8 @@
 .text-button,
 .file-row,
 .search-result,
-.comment-card,
 .number-toggle,
-.wrap-toggle,
-.diff-comment-chip {
+.wrap-toggle {
 	border: 0;
 	cursor: pointer;
 }

@@ -245,17 +245,6 @@ describe("Couchview app lifecycle and settings", () => {
 		);
 	});
 
-	test("defaults a legacy settings profile without entering a bootstrap update loop", async () => {
-		delete (fixture.settingsProfiles[0]!.data as { codex?: unknown }).codex;
-		window.history.replaceState(null, "", "/settings?repo=repo");
-		render(<App />);
-
-		const settings = await screen.findByRole("region", { name: "Settings" });
-		expect((within(settings).getByLabelText("Model") as HTMLInputElement).value).toBe(
-			"gpt-5.6-luna",
-		);
-	});
-
 	test("opens the global command palette, filters commands, and executes a destination", async () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");

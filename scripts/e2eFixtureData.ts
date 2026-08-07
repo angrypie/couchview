@@ -1,9 +1,8 @@
 import type {
-	ChangeFile,
 	DiffResponse,
+	FileChange,
 	PackageScriptsResponse,
 	RepositoryCatalogEntry,
-	ReviewComment,
 	ReviewRecord,
 } from "../src/shared/contracts.ts";
 import type { GitCommitSummary, GitHistoryFile } from "../src/shared/git/index.ts";
@@ -61,7 +60,7 @@ export const repositoryCatalog: RepositoryCatalogEntry[] = [repository, alternat
 	}),
 );
 
-export const initialFiles: ChangeFile[] = [
+export const initialFiles: FileChange[] = [
 	{
 		id: "fixture-review-ts",
 		path: "src/review.ts",
@@ -77,7 +76,6 @@ export const initialFiles: ChangeFile[] = [
 		deletions: 2,
 		contentRevision: "fixture-review-v1",
 		reviewed: false,
-		commentCount: 0,
 	},
 	{
 		id: "fixture-format-ts",
@@ -94,10 +92,9 @@ export const initialFiles: ChangeFile[] = [
 		deletions: 0,
 		contentRevision: "fixture-format-v1",
 		reviewed: false,
-		commentCount: 0,
 	},
 ];
-export const files: ChangeFile[] = structuredClone(initialFiles);
+export const files: FileChange[] = structuredClone(initialFiles);
 
 export const reviewFullFilePatch = [
 	"diff --git a/src/review.ts b/src/review.ts",
@@ -413,4 +410,3 @@ export const historyDiff: DiffResponse = {
 };
 
 export const reviews: ReviewRecord[] = [];
-export const comments: ReviewComment[] = [];

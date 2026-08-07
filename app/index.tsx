@@ -1,5 +1,5 @@
-import { ReviewRoute } from "../src/client/expo/ReviewRoute";
+import { ProductRoot } from "../src/client/expo/ProductRoot";
 
 export default function IndexRoute() {
-	return <ReviewRoute />;
+	return <ProductRoot mode="review" />;
 }

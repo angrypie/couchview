@@ -1,7 +1,7 @@
 import { type FSWatcher, watch } from "node:fs";
 import path from "node:path";
 
-import type { ChangeFile, ChangesResponse, RepositorySummary } from "../shared/contracts.ts";
+import type { ChangesResponse, FileChange, RepositorySummary } from "../shared/contracts.ts";
 import {
 	decodeGitOutput,
 	GitCommandError,
@@ -204,13 +204,8 @@ export class RepositorySnapshotService {
 		const baseEntries = await this.readBaseEntries(parsed.entries, parsed.head);
 		const state = await this.store.snapshot();
 		const reviews = new Map(state.reviews.map((review) => [review.fileId, review]));
-		const commentCounts = new Map<string, number>();
-		for (const comment of state.comments) {
-			commentCounts.set(comment.fileId, (commentCounts.get(comment.fileId) ?? 0) + 1);
-		}
-
 		const files = await Promise.all(
-			parsed.entries.map(async (entry): Promise<ChangeFile> => {
+			parsed.entries.map(async (entry): Promise<FileChange> => {
 				const id = sha256(this.id, "\0", entry.path).slice(0, 24);
 				const contentRevision = await this.content.contentRevision(
 					entry,
@@ -233,7 +228,6 @@ export class RepositorySnapshotService {
 					deletions: workingFileStatistics && !workingFileStatistics.binary ? 0 : null,
 					contentRevision,
 					reviewed: Boolean(review?.reviewed && review.contentRevision === contentRevision),
-					commentCount: commentCounts.get(id) ?? 0,
 				};
 			}),
 		);
@@ -272,7 +266,7 @@ export class RepositorySnapshotService {
 	}
 
 	private async populateTrackedLineStatistics(
-		files: ChangeFile[],
+		files: FileChange[],
 		entries: readonly ParsedStatusEntry[],
 		head: string | null,
 	): Promise<void> {

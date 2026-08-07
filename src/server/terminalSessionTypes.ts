@@ -22,7 +22,7 @@ export interface TerminalDependencies {
 	tmux256Color: boolean;
 }
 
-export interface TerminalCommandResult {
+interface TerminalCommandResult {
 	exitCode: number;
 	stdout: string;
 	stderr: string;

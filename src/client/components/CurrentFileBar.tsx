@@ -1,9 +1,9 @@
 import { Settings2 } from "lucide-react";
-import type { ChangeFile, FileDiff } from "../../shared/contracts.ts";
+import type { FileChange, FileDiff } from "../../shared/contracts.ts";
 import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
 
 interface CurrentFileBarProps {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	diff: FileDiff | null;
 	onOpenSettings: () => void;
 	visible: boolean;

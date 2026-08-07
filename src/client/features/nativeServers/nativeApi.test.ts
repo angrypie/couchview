@@ -6,7 +6,7 @@ function integrationProgram(): string {
 	return `
 		const { mock } = await import("bun:test");
 		mock.module("expo/fetch", () => ({ fetch: globalThis.fetch }));
-		const { NativeApiClient } = await import(${JSON.stringify(apiModule)});
+		const { fetchNativeServerInstance } = await import(${JSON.stringify(apiModule)});
 		const { NATIVE_CLIENT_TOKEN_HEADER } = await import(${JSON.stringify(contractsModule)});
 		const token = "n".repeat(43);
 		const requests = [];
@@ -18,26 +18,28 @@ function integrationProgram(): string {
 				const url = new URL(request.url);
 				requests.push(url.pathname);
 				receivedTokens.push(request.headers.get(NATIVE_CLIENT_TOKEN_HEADER));
-				if (url.pathname !== "/api/repositories/repo%20one/comments") {
+				if (url.pathname !== "/api/instance") {
 					return Response.json(
 						{ error: { code: "route_not_found", message: "API route not found" } },
 						{ status: 404 },
 					);
 				}
-				return Response.json({ reviews: [], comments: [] });
+				return Response.json({ serverId: "server", instanceId: "instance" });
 			},
 		});
 		try {
-			const api = new NativeApiClient(\`http://127.0.0.1:\${server.port}\`, token);
-			const reviewState = await api.reviewState("repo one");
-			process.stdout.write(JSON.stringify({ requests, receivedTokens, reviewState }));
+			const instance = await fetchNativeServerInstance(
+				\`http://127.0.0.1:\${server.port}\`,
+				token,
+			);
+			process.stdout.write(JSON.stringify({ requests, receivedTokens, instance }));
 		} finally {
 			server.stop(true);
 		}
 	`;
 }
 
-test("loads native review state from the server's comments collection", async () => {
+test("authenticates the native server identity preflight", async () => {
 	const child = Bun.spawn([process.execPath, "--eval", integrationProgram()], {
 		stdout: "pipe",
 		stderr: "pipe",
@@ -51,8 +53,8 @@ test("loads native review state from the server's comments collection", async ()
 	expect(stderr).toBe("");
 	expect(exitCode).toBe(0);
 	expect(JSON.parse(stdout)).toEqual({
-		requests: ["/api/repositories/repo%20one/comments"],
+		requests: ["/api/instance"],
 		receivedTokens: ["n".repeat(43)],
-		reviewState: { reviews: [], comments: [] },
+		instance: { serverId: "server", instanceId: "instance" },
 	});
 });

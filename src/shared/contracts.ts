@@ -65,25 +65,17 @@ export const API_ROUTES = {
 	fileReviews: (repositoryId: string) => `${repositoryFilesApiPath(repositoryId)}/review`,
 	fileReview: (repositoryId: string, fileId: string) =>
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/review`,
-	fileComments: (repositoryId: string, fileId: string) =>
-		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/comments`,
 	search: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/search`,
 	source: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/source`,
 	commit: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit`,
 	commitMessage: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit-message`,
-	comments: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/comments`,
-	comment: (repositoryId: string, commentId: string) =>
-		`${repositoryApiPath(repositoryId)}/comments/${encodeURIComponent(commentId)}`,
 	packageScripts: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/package-scripts`,
 	packageRuns: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/package-runs`,
-	packageRun: (repositoryId: string, runId: string) =>
-		`${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}`,
 	packageRunStop: (repositoryId: string, runId: string) =>
 		`${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/stop`,
 	packageRunEvents: (repositoryId: string, runId: string) =>
 		`${repositoryApiPath(repositoryId)}/package-runs/${encodeURIComponent(runId)}/events`,
 	events: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/events`,
-	terminal: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/terminal`,
 	terminalAttachments: (repositoryId: string) =>
 		`${repositoryApiPath(repositoryId)}/terminal/attachments`,
 	terminalLease: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/terminal/lease`,
@@ -97,26 +89,6 @@ export const API_ROUTES = {
 	remoteBridgeHostTickets: "/api/remote-bridge/tickets",
 	remoteBridgeHostLease: "/api/remote-bridge/lease",
 	remoteBridgeHostSocket: "/api/remote-bridge/socket",
-	// Kept for clients paired before host-wide bridge profiles were introduced.
-	remoteBridgeTickets: (repositoryId: string) =>
-		`${repositoryApiPath(repositoryId)}/remote-bridge/tickets`,
-	remoteBridgeLease: (repositoryId: string) =>
-		`${repositoryApiPath(repositoryId)}/remote-bridge/lease`,
-	remoteBridgeSocket: (repositoryId: string) =>
-		`${repositoryApiPath(repositoryId)}/remote-bridge/socket`,
-	codexThreads: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/codex/threads`,
-	codexThread: (repositoryId: string, threadId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}`,
-	codexThreadTurns: (repositoryId: string, threadId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns`,
-	codexThreadTurn: (repositoryId: string, threadId: string, turnId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}`,
-	codexThreadTurnInterrupt: (repositoryId: string, threadId: string, turnId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/turns/${encodeURIComponent(turnId)}/interrupt`,
-	codexThreadEvents: (repositoryId: string, threadId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/events`,
-	codexApproval: (repositoryId: string, threadId: string, approvalId: string) =>
-		`${repositoryApiPath(repositoryId)}/codex/threads/${encodeURIComponent(threadId)}/approvals/${encodeURIComponent(approvalId)}`,
 } as const;
 
 export const CSRF_HEADER = "x-couchview-csrf";
@@ -170,7 +142,7 @@ export interface RepositoryCatalogEntry {
 	addedAt: string;
 }
 
-export interface ChangeFile {
+export interface FileChange {
 	id: string;
 	path: string;
 	previousPath: string | null;
@@ -185,12 +157,7 @@ export interface ChangeFile {
 	deletions: number | null;
 	contentRevision: string;
 	reviewed: boolean;
-	commentCount: number;
 }
-
-// FileChange is the public contract name; ChangeFile remains as a compatibility
-// alias for the first internal implementation.
-export type FileChange = ChangeFile;
 
 export interface BootstrapResponse {
 	csrfToken: string;
@@ -201,7 +168,6 @@ export interface BootstrapResponse {
 	restart: RestartCapability;
 	commitMessage: CommitMessageCapability;
 	artifactProposal: CodexCapability;
-	codex: CodexCapability;
 	terminal: TerminalCapability;
 	remoteBridge: RemoteBridgeCapability;
 }
@@ -370,72 +336,6 @@ export interface RemoteBridgeLeaseResponse {
 	expiresAt: string;
 }
 
-export type CodexThreadStatus = "notLoaded" | "idle" | "active" | "systemError";
-
-export interface CodexThreadSummary {
-	id: string;
-	preview: string;
-	createdAt: string;
-	updatedAt: string;
-	recencyAt: string | null;
-	modelProvider: string;
-	status: CodexThreadStatus;
-}
-
-/** Paginated threads available for sending the repository's review comments. */
-export interface CodexThreadsResponse {
-	threads: CodexThreadSummary[];
-	nextCursor: string | null;
-}
-
-/** A thread returned after it is created or loaded. */
-export interface CodexThreadResponse {
-	thread: CodexThreadSummary;
-}
-
-/** Identifies the turn started to send the current review comments to Codex. */
-export interface CodexTurnResponse {
-	threadId: string;
-	turnId: string;
-	status: "started";
-}
-
-export type CodexEventType = "notification" | "approval" | "completed" | "error";
-
-export interface CodexEvent {
-	sequence: number;
-	type: CodexEventType;
-	threadId: string;
-	turnId: string | null;
-	method?: string;
-	data?: unknown;
-	approvalId?: string;
-	approvalMethod?: string;
-}
-
-export type CodexApprovalDecision =
-	| "accept"
-	| "acceptForSession"
-	| "decline"
-	| "cancel"
-	| { acceptWithExecpolicyAmendment: { execpolicy_amendment: string[] } }
-	| {
-			applyNetworkPolicyAmendment: {
-				network_policy_amendment: { action: "allow" | "deny"; host: string };
-			};
-	  };
-
-/** The user's answer to an approval prompt raised while Codex handles comments. */
-export interface CodexApprovalRequest {
-	decision:
-		| CodexApprovalDecision
-		| {
-				permissions: unknown;
-				scope?: "turn" | "session";
-				strictAutoReview?: boolean;
-		  };
-}
-
 export interface RegisterRepositoryRequest {
 	root: string;
 }
@@ -456,7 +356,7 @@ export interface ForgetRepositoryResponse {
 
 export interface ChangesResponse {
 	repository: RepositorySummary;
-	files: ChangeFile[];
+	files: FileChange[];
 	operationRevision: string;
 }
 
@@ -491,7 +391,7 @@ export interface FileDiff {
 	header: string[];
 	/**
 	 * A full-context patch used only for rendering complete modified files.
-	 * The compact hunks remain the source of truth for navigation and comments.
+	 * The compact hunks remain the source of truth for navigation.
 	 * Null means the complete file exceeded the diff response limits.
 	 */
 	fullFilePatch?: string | null;
@@ -544,32 +444,8 @@ export interface ReviewRecord {
 	updatedAt: string;
 }
 
-export interface CommentAnchor {
-	side: DiffSide;
-	startLine: number;
-	endLine: number;
-	oldStartLine?: number;
-	oldEndLine?: number;
-	newStartLine?: number;
-	newEndLine?: number;
-	hunkHeader: string;
-	excerpt: string[];
-}
-
-export interface ReviewComment extends CommentAnchor {
-	id: string;
-	fileId: string;
-	path: string;
-	body: string;
-	contentRevision: string;
-	stale: boolean;
-	createdAt: string;
-	updatedAt: string;
-}
-
 export interface ReviewStateResponse {
 	reviews: ReviewRecord[];
-	comments: ReviewComment[];
 }
 
 export interface SetReviewRequest {
@@ -596,29 +472,6 @@ export interface SetReviewsResponse {
 	reviews: ReviewRecord[];
 }
 
-export interface CreateCommentRequest extends CommentAnchor {
-	fileId: string;
-	contentRevision: string;
-	body: string;
-}
-
-export interface UpdateCommentRequest {
-	id: string;
-	body: string;
-}
-
-export interface DeleteCommentRequest {
-	id: string;
-}
-
-export interface CommentResponse {
-	comment: ReviewComment;
-}
-
-export interface DeleteCommentResponse {
-	deletedId: string;
-}
-
 export interface StageFileTarget {
 	fileId: string;
 	contentRevision: string;
@@ -634,21 +487,21 @@ export interface StageFilesRequest {
 	operationRevision: string;
 }
 
-export interface ChangeFileDelta {
-	upserted: ChangeFile[];
+export interface FileChangeDelta {
+	upserted: FileChange[];
 	removedFileIds: string[];
 	orderedFileIds: string[];
 }
 
 export interface StageFileResponse {
-	file: ChangeFile | null;
-	changes: ChangeFileDelta;
+	file: FileChange | null;
+	changes: FileChangeDelta;
 	operationRevision: string;
 }
 
 export interface StageFilesResponse {
-	files: ChangeFile[];
-	changes: ChangeFileDelta;
+	files: FileChange[];
+	changes: FileChangeDelta;
 	operationRevision: string;
 }
 

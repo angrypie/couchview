@@ -23,7 +23,7 @@ Treat a responding Couchview server as user-owned: do not stop it or start a com
 
 ## Coding Style & Naming Conventions
 
-Write strict TypeScript and React function components. Biome defines the adopted style: tabs for indentation, double quotes, semicolons, trailing commas, LF endings, and 100-column lines. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `commentExport.ts`. Keep client/server boundaries explicit through shared contracts.
+Write strict TypeScript and React function components. Biome defines the adopted style: tabs for indentation, double quotes, semicolons, trailing commas, LF endings, and 100-column lines. Use `PascalCase` for components and types and `camelCase` for functions, variables, and utility files such as `diffAdapter.ts`. Keep client/server boundaries explicit through shared contracts.
 
 ## Architecture Invariants
 

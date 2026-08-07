@@ -6,10 +6,8 @@ import {
 	createAppTestHarness,
 	EventSourceStub,
 	fireEvent,
-	fixtureComment,
 	render,
 	screen,
-	viewerCommentJumps,
 	viewerHunkJumps,
 	waitFor,
 	within,
@@ -232,9 +230,9 @@ describe("Couchview app review and delivery workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		expect(screen.queryByRole("button", { name: "Select old line 1" })).toBeNull();
+		expect(screen.queryByTestId("old-line-1")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
-		expect(await screen.findByRole("button", { name: "Select old line 1" })).toBeTruthy();
+		expect(await screen.findByTestId("old-line-1")).toBeTruthy();
 		await waitFor(() =>
 			expect(fixture.settingsProfiles[0]?.data.display.lineNumbersVisible).toBe(true),
 		);
@@ -243,7 +241,7 @@ describe("Couchview app review and delivery workflows", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 		expect(screen.getByRole("button", { name: "Hide line numbers" })).toBeTruthy();
-		expect(await screen.findByRole("button", { name: "Select new line 1" })).toBeTruthy();
+		expect(await screen.findByTestId("new-line-1")).toBeTruthy();
 	});
 
 	test("wraps long lines on request and remembers the display preference", async () => {
@@ -334,119 +332,5 @@ describe("Couchview app review and delivery workflows", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Current file (1)" }));
 		fireEvent.click(await screen.findByRole("button", { name: /src\/first\.ts:1:15/ }));
 		expect(await screen.findByText("return value;")).toBeTruthy();
-	});
-
-	test("creates a mixed replacement comment and exposes the manual copy fallback", async () => {
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: "Show line numbers" }));
-		fireEvent.click(await screen.findByRole("button", { name: "Select old line 1" }));
-		fireEvent.click(await screen.findByRole("button", { name: "Select new line 1" }));
-		await screen.findByText(/Old lines 1 \/ new lines 1/);
-		fireEvent.click(screen.getByRole("button", { name: "Comment" }));
-		fireEvent.change(screen.getByPlaceholderText(/Describe the issue/), {
-			target: { value: "Use the safe loader." },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
-		await waitFor(() => expect(fixture.comments).toHaveLength(1));
-		expect(fixture.comments[0]).toMatchObject({
-			side: "mixed",
-			oldStartLine: 1,
-			newStartLine: 1,
-		});
-
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		expect(await screen.findAllByText("Use the safe loader.")).not.toHaveLength(0);
-		fireEvent.click(screen.getByRole("button", { name: /Copy 1 for Codex/ }));
-		await screen.findByRole("dialog", { name: "Copy comments manually" });
-		const copyField = screen.getByRole("textbox") as HTMLTextAreaElement;
-		expect(copyField.value).toContain("src/first.ts:old L1 / new L1");
-		expect(copyField.value).toContain("Use the safe loader.");
-	});
-
-	test("replaces the review comments tray when opening Send to Codex", async () => {
-		fixture.comments = [fixtureComment("comment-1", "Send this to Codex")];
-		fixture.files[0]!.commentCount = 1;
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		expect(await screen.findByRole("dialog", { name: "Review comments" })).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "Send to Codex" }));
-
-		expect(await screen.findByRole("dialog", { name: "Send comments to Codex" })).toBeTruthy();
-		expect(screen.queryByRole("dialog", { name: "Review comments" })).toBeNull();
-	});
-
-	test("opens an inline comment chip and focuses its tray card", async () => {
-		fixture.comments = [fixtureComment("comment-1", "Inline correction")];
-		fixture.files[0]!.commentCount = 1;
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(await screen.findByRole("button", { name: /Open comment at/ }));
-		await screen.findByRole("dialog", { name: "Review comments" });
-		await waitFor(() => {
-			expect((document.activeElement as HTMLElement | null)?.dataset.commentId).toBe("comment-1");
-		});
-	});
-
-	test("jumps from the comment tray through the viewer handle", async () => {
-		fixture.comments = [fixtureComment("comment-1", "Jump target")];
-		fixture.files[0]!.commentCount = 1;
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		const tray = await screen.findByRole("dialog", { name: "Review comments" });
-		fireEvent.click(
-			within(tray).getByRole("button", {
-				name: "src/first.ts:old L1 / new L1",
-			}),
-		);
-		await waitFor(() => expect(viewerCommentJumps).toEqual(["comment-1"]));
-		expect(await screen.findByText(/Old lines 1 \/ new lines 1/)).toBeTruthy();
-	});
-
-	test("edits and deletes an existing comment", async () => {
-		fixture.comments = [fixtureComment("comment-1", "Original correction")];
-		fixture.files[0]!.commentCount = 1;
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		expect(await screen.findAllByText("Original correction")).not.toHaveLength(0);
-		fireEvent.click(screen.getByRole("button", { name: /Edit comment at/ }));
-		const editor = screen.getByPlaceholderText(/Describe the issue/) as HTMLTextAreaElement;
-		expect(editor.value).toBe("Original correction");
-		fireEvent.change(editor, { target: { value: "Updated correction" } });
-		fireEvent.click(screen.getByRole("button", { name: "Save comment" }));
-		await waitFor(() => expect(fixture.comments[0]?.body).toBe("Updated correction"));
-
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		expect(await screen.findAllByText("Updated correction")).not.toHaveLength(0);
-		fireEvent.click(screen.getByRole("button", { name: /Delete comment at/ }));
-		await waitFor(() => expect(fixture.comments).toHaveLength(0));
-		expect(await screen.findByText(/Tap a line number/)).toBeTruthy();
-	});
-
-	test("keeps stale comments visible while excluding them from export", async () => {
-		fixture.comments = [
-			fixtureComment("comment-1", "Current correction"),
-			fixtureComment("stale-comment", "Outdated correction", true),
-		];
-		fixture.files[0]!.commentCount = 2;
-		render(<App />);
-
-		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: /Open comments/ }));
-		expect(await screen.findByText("Outdated correction")).toBeTruthy();
-		expect(screen.getByText(/· stale/)).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: /Copy 1 for Codex/ }));
-		await screen.findByRole("dialog", { name: "Copy comments manually" });
-		const copyField = screen.getByRole("textbox") as HTMLTextAreaElement;
-		expect(copyField.value).toContain("Current correction");
-		expect(copyField.value).not.toContain("Outdated correction");
 	});
 });

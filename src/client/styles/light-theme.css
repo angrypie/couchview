@@ -42,8 +42,7 @@
 		.codex-generation-fields select,
 		.nav-pair,
 		.font-controls,
-		.comment-input,
-		.copy-field,
+		.composer-input,
 		.drawer-tabs,
 		.drawer-filter-selects select,
 		.repository-add-form input,
@@ -92,13 +91,10 @@
 
 .light
 	:is(
-		.comment-card,
-		.comment-card.focused,
 		.drawer-tabs button.active,
 		.drawer-filter-selects select,
 		.chip,
 		.run-status,
-		.progress-track,
 		.repository-directory-row,
 		.repository-row,
 		.repository-row.unavailable,
@@ -117,8 +113,7 @@
 		.theme-preference-picker label.active,
 		.wrap-toggle.active,
 		.chip.active,
-		.git-ref-list span,
-		.selection-banner
+		.git-ref-list span
 	) {
 	border-color: var(--accent);
 	color: var(--accent);
@@ -152,7 +147,6 @@
 	:is(
 		.command-shortcut.unassigned,
 		.settings-control output,
-		.typography-column-ruler,
 		.diff-preview-lines i,
 		.diff-preview-lines b,
 		.artifact-proposal-result small,

@@ -3,7 +3,7 @@ import {
 	remoteBridgeOriginAccessIdIsValid,
 } from "../shared/contracts.ts";
 
-export interface RemoteBridgeOriginAccessRequestOptions {
+interface RemoteBridgeOriginAccessRequestOptions {
 	interactive?: boolean;
 	refresh?: boolean;
 }

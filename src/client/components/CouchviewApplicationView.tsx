@@ -1,5 +1,4 @@
 import type {
-	CodexCapability,
 	CommitMessageCapability,
 	RemoteBridgeCapability,
 	TerminalCapability,
@@ -36,7 +35,6 @@ import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
 
 interface CouchviewApplicationViewProps {
 	artifacts: ArtifactsController;
-	codexCapability: CodexCapability;
 	commitMessageCapability: CommitMessageCapability;
 	compactLandscape: boolean;
 	display: ReturnType<typeof useDisplayPreferences>;
@@ -67,7 +65,6 @@ interface CouchviewApplicationViewProps {
 
 export function CouchviewApplicationView({
 	artifacts,
-	codexCapability,
 	commitMessageCapability,
 	compactLandscape,
 	display,
@@ -221,7 +218,6 @@ export function CouchviewApplicationView({
 					repositoryId={workspace.repositoryId}
 				/>
 				<ReviewWorkspaceOverlays
-					codexCapability={codexCapability}
 					commitMessageCapability={commitMessageCapability}
 					failureReporting={failure}
 					management={management}
@@ -260,7 +256,6 @@ export function CouchviewApplicationView({
 					onDrawerOpenChange={onDrawerOpenChange}
 					onDrawerViewChange={onDrawerViewChange}
 					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
-					onOpenComments={shellCommands.openComments}
 					onOpenFailure={() => failure.setDetailsOpen(true)}
 					onOpenGitHistory={navigation.openGitHistory}
 					onOpenArtifacts={navigation.openArtifacts}
@@ -277,7 +272,6 @@ export function CouchviewApplicationView({
 					workspaceMode={navigation.mode}
 				/>
 				<ReviewWorkspaceOverlays
-					codexCapability={codexCapability}
 					commitMessageCapability={commitMessageCapability}
 					failureReporting={failure}
 					management={management}

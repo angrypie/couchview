@@ -15,7 +15,6 @@ import {
 } from "./artifactProposal.ts";
 import { ArtifactService } from "./artifactService.ts";
 import { ArtifactStore } from "./artifactStore.ts";
-import { CodexAppServerService } from "./codexAppServer.ts";
 import { CodexCommitMessageService, type CommitMessageGenerator } from "./commitMessage.ts";
 import { resolveStateDatabasePath, StateDatabase } from "./database.ts";
 import { HttpError } from "./errors.ts";
@@ -39,7 +38,7 @@ import {
 
 const _encoder = new TextEncoder();
 export const INSTANCE_PROTOCOL_VERSION = 5;
-export const APP_VERSION = packageJson.version;
+const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
 	root: string;
@@ -57,7 +56,6 @@ export interface CouchviewAppOptions {
 	};
 	commitMessages?: CommitMessageGenerator;
 	artifactProposals?: ArtifactProposalGenerator;
-	codex?: CodexAppServerService;
 	terminal?: {
 		enabled: boolean;
 		disabledReason?: string;
@@ -88,7 +86,6 @@ export interface CouchviewApp {
 	artifacts: ArtifactService;
 	artifactProposals: ArtifactProposalGenerator;
 	commitMessages: CommitMessageGenerator;
-	codex: CodexAppServerService;
 	terminalSessions: TerminalSessionService;
 	remoteBridge: RemoteBridgeService;
 	nativeClients: NativeClientService;
@@ -185,7 +182,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	});
 	const commitMessages = options.commitMessages ?? new CodexCommitMessageService();
 	const artifactProposals = options.artifactProposals ?? new CodexArtifactProposalService();
-	const codex = options.codex ?? new CodexAppServerService();
 	let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
 	let initialBackend: GitRepository;
 	try {
@@ -194,7 +190,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	} catch (error) {
 		artifactProposals.close();
 		commitMessages.close();
-		codex.close();
 		packageCommands.close();
 		artifacts.close();
 		commandRunner.close();
@@ -247,7 +242,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		terminalSessions.close();
 		artifactProposals.close();
 		commitMessages.close();
-		codex.close();
 		packageCommands.close();
 		artifacts.close();
 		commandRunner.close();
@@ -302,7 +296,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				artifactProposals,
 				repositories,
 				commitMessages,
-				codex,
 				terminalSessions,
 				remoteBridge,
 				restart,
@@ -323,7 +316,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				repositories,
 				packageCommands,
 				commitMessages,
-				codex,
 				terminalSessions,
 				remoteBridge,
 				remoteBridgeOriginAccess,
@@ -403,7 +395,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		artifacts,
 		artifactProposals,
 		commitMessages,
-		codex,
 		terminalSessions,
 		remoteBridge,
 		nativeClients,
@@ -461,7 +452,6 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 			remoteBridge.close();
 			artifactProposals.close();
 			commitMessages.close();
-			codex.close();
 			packageCommands.close();
 			artifacts.close();
 			commandRunner.close();

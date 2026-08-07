@@ -1,10 +1,8 @@
 import type {
 	CommitRequest,
 	CommitResponse,
-	CreateCommentRequest,
 	GenerateCommitMessageRequest,
 	GenerateCommitMessageResponse,
-	ReviewComment,
 	ReviewRecord,
 	SetReviewRequest,
 	SetReviewsRequest,
@@ -13,7 +11,7 @@ import type {
 	StageFilesRequest,
 } from "../src/shared/contracts.ts";
 import type { GitActionRequest, GitActionResponse } from "../src/shared/git/index.ts";
-import { comments, files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
+import { files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
 import { fixtureJson } from "./e2eFixtureHttp.ts";
 import type { FixtureMutableState, FixtureRequestContext } from "./e2eFixtureRouteTypes.ts";
 
@@ -25,7 +23,7 @@ export async function handleFixtureReviewMutation(
 	state: FixtureMutableState,
 	context: FixtureRequestContext,
 ): Promise<Response | null> {
-	const { request, nestedPath, fileRoute, commentRoute } = context;
+	const { request, nestedPath, fileRoute } = context;
 	if (request.method === "GET") return null;
 	if (nestedPath === "git/actions" && request.method === "POST") {
 		const body = (await request.json()) as GitActionRequest;
@@ -243,50 +241,6 @@ export async function handleFixtureReviewMutation(
 			message: "feat(review): generate commit messages with Codex",
 			operationRevision: state.operationRevision,
 		} satisfies GenerateCommitMessageResponse);
-	}
-	if (fileRoute?.[2] === "comments" && request.method === "POST") {
-		const body = (await request.json()) as CreateCommentRequest;
-		const file = files.find((candidate) => candidate.id === body.fileId);
-		if (!file) return missingFile();
-		const now = new Date().toISOString();
-		const comment: ReviewComment = {
-			id: `fixture-comment-${comments.length + 1}`,
-			path: file.path,
-			stale: false,
-			createdAt: now,
-			updatedAt: now,
-			...body,
-		};
-		comments.push(comment);
-		file.commentCount += 1;
-		return fixtureJson({ comment }, 201);
-	}
-	if (commentRoute && request.method === "PUT") {
-		const body = (await request.json()) as { id: string; body: string };
-		const comment = comments.find((candidate) => candidate.id === body.id);
-		if (!comment) {
-			return fixtureJson(
-				{ error: { code: "not_found", message: "Fixture comment not found" } },
-				404,
-			);
-		}
-		comment.body = body.body;
-		comment.updatedAt = new Date().toISOString();
-		return fixtureJson({ comment });
-	}
-	if (commentRoute && request.method === "DELETE") {
-		const body = (await request.json()) as { id: string };
-		const index = comments.findIndex((candidate) => candidate.id === body.id);
-		if (index < 0) {
-			return fixtureJson(
-				{ error: { code: "not_found", message: "Fixture comment not found" } },
-				404,
-			);
-		}
-		const [comment] = comments.splice(index, 1);
-		const file = files.find((candidate) => candidate.id === comment?.fileId);
-		if (file) file.commentCount = Math.max(0, file.commentCount - 1);
-		return fixtureJson({ deletedId: body.id });
 	}
 	return null;
 }

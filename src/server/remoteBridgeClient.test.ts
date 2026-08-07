@@ -264,24 +264,6 @@ describe("native bridge client configuration", () => {
 		);
 	});
 
-	test("migrates Cloudflare-specific version-one profiles to origin-access providers", async () => {
-		const { paths } = await fixturePaths();
-		await mkdir(paths.configDirectory, { recursive: true });
-		const { originAccess: _originAccess, ...legacyProfile } = profile();
-		await writeFile(
-			paths.configFile,
-			JSON.stringify({
-				version: 1,
-				profiles: [{ ...legacyProfile, cloudflareAccess: true }],
-			}),
-		);
-
-		expect(await readRemoteBridgeConfig(paths)).toEqual({
-			version: 2,
-			profiles: [profile()],
-		});
-	});
-
 	test("pairs directly over a LAN origin without any origin-access adapter", async () => {
 		const { paths } = await fixturePaths();
 		const requests: Request[] = [];

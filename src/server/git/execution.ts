@@ -1,6 +1,6 @@
 import { GitCommandError, type GitResult, type RunGitOptions, runGit } from "./command.ts";
 
-export interface GitExecutionFailure extends Error {
+interface GitExecutionFailure extends Error {
 	readonly stderr: string;
 }
 

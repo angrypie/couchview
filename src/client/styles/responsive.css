@@ -26,7 +26,7 @@
 	}
 
 	.bottom-bar {
-		grid-template-columns: auto auto minmax(94px, 420px) auto auto;
+		grid-template-columns: auto auto minmax(94px, 420px) auto;
 		justify-content: center;
 		grid-row: 4;
 		padding-left: 7px;
@@ -105,7 +105,7 @@
 	}
 
 	.bottom-bar {
-		grid-template-columns: auto auto minmax(74px, 1fr) auto auto;
+		grid-template-columns: auto auto minmax(74px, 1fr) auto;
 	}
 
 	.action-button {
@@ -124,7 +124,7 @@
 
 @media (max-width: 350px) {
 	.bottom-bar {
-		grid-template-columns: auto auto minmax(50px, 1fr) 40px 40px;
+		grid-template-columns: auto auto minmax(50px, 1fr) 40px;
 	}
 
 	.bottom-bar .nav-pair .icon-button {
@@ -181,10 +181,6 @@
 		background: var(--surface-overlay);
 		box-shadow: var(--shadow);
 		transform: translateX(-50%);
-	}
-
-	.app-shell:not(.compact-landscape) .selection-banner {
-		bottom: 70px;
 	}
 }
 
@@ -309,8 +305,7 @@
 	.compact-landscape .top-bar .artifacts-launch-button,
 	.compact-landscape .top-bar .git-history-launch-button,
 	.compact-landscape .top-bar .terminal-launch-button,
-	.compact-landscape .top-bar .settings-launch-button,
-	.compact-landscape .compact-comments-button {
+	.compact-landscape .top-bar .settings-launch-button {
 		width: 34px;
 		height: 34px;
 		border-radius: 7px;
@@ -399,15 +394,13 @@
 		overflow: hidden;
 	}
 
-	.compact-hunk-nav .icon-button,
-	.landscape-tools .compact-comments-button {
+	.compact-hunk-nav .icon-button {
 		width: 32px;
 		height: 32px;
 		border-radius: 0;
 	}
 
-	.compact-hunk-nav .icon-button + .icon-button,
-	.landscape-tools .compact-comments-button {
+	.compact-hunk-nav .icon-button + .icon-button {
 		border-left: 1px solid var(--line);
 	}
 
@@ -450,16 +443,12 @@
 		border: 1px solid var(--line);
 		border-radius: 12px;
 		display: grid;
-		grid-template-columns: auto auto minmax(94px, 1fr) auto auto;
+		grid-template-columns: auto auto minmax(94px, 1fr) auto;
 		align-items: center;
 		gap: 2px;
 		background: var(--surface-overlay);
 		box-shadow: var(--shadow);
 		transform: translateX(-50%);
-	}
-
-	.compact-landscape .selection-banner {
-		bottom: 70px;
 	}
 }
 

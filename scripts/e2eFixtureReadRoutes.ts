@@ -8,7 +8,6 @@ import type {
 import { API_ROUTES, ARTIFACT_EXECUTABLE_HEADER } from "../src/shared/contracts.ts";
 import type { GitCommitChangesResponse, GitHistoryResponse } from "../src/shared/git/index.ts";
 import {
-	comments,
 	diffs,
 	files,
 	historyCommits,
@@ -132,10 +131,6 @@ export function handleFixtureReadRoute(
 			},
 			commitMessage: { available: true, reason: null },
 			artifactProposal: { available: true, reason: null },
-			codex: {
-				available: false,
-				reason: "Codex is not available in the browser test fixture.",
-			},
 			terminal: {
 				available: true,
 				reason: null,
@@ -222,8 +217,8 @@ export function handleFixtureReadRoute(
 				})
 			: fixtureJson({ error: { code: "not_found", message: "Fixture file not found" } }, 404);
 	}
-	if (nestedPath === "comments") {
-		return fixtureJson({ reviews, comments } satisfies ReviewStateResponse);
+	if (nestedPath === "files/review") {
+		return fixtureJson({ reviews } satisfies ReviewStateResponse);
 	}
 	if (nestedPath === "package-scripts") return fixtureJson(packageScripts);
 	if (nestedPath === "package-runs") {
@@ -341,7 +336,7 @@ export function handleFixtureReadRoute(
 			type: "ready",
 			repositoryId,
 			operationRevision: state.operationRevision,
-			stateRevision: reviews.length + comments.length,
+			stateRevision: reviews.length,
 			catalogRevision: 1,
 			at: new Date().toISOString(),
 		});

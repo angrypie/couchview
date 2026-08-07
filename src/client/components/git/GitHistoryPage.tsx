@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
-import type { ChangeFile, RepositorySummary } from "../../../shared/contracts.ts";
+import type { FileChange, RepositorySummary } from "../../../shared/contracts.ts";
 import type { GitHistoryFile } from "../../../shared/git/index.ts";
 import type { ResolvedTheme } from "../../../shared/theme.ts";
 import { DiffViewer } from "../../DiffViewer.tsx";
@@ -28,7 +28,7 @@ interface GitHistoryPageProps {
 	commandPaletteShortcut: string;
 	controller: GitWorkspaceController;
 	display: ReturnType<typeof useDisplayPreferences>;
-	files: ChangeFile[];
+	files: FileChange[];
 	onBack(): void;
 	onOpenCommandPalette(): void;
 	repository: RepositorySummary | null;
@@ -90,7 +90,6 @@ function HistoricalDiff({
 	return (
 		<div className="git-diff-viewer">
 			<DiffViewer
-				comments={[]}
 				diff={controller.diff}
 				fontFamily={codeFontStack(display.typography.diff.fontFamily)}
 				fontSize={display.fontSize}
@@ -98,11 +97,8 @@ function HistoricalDiff({
 				lineHeightAdjustment={display.typography.diff.lineHeightAdjustment}
 				lineNumbersVisible={display.lineNumbersVisible}
 				lineWrapEnabled={display.lineWrapEnabled}
-				onCommentClick={() => undefined}
 				onIdentifierClick={() => undefined}
-				onLineNumberClick={() => undefined}
 				onVisibleLineChange={() => undefined}
-				selectedRange={null}
 				themeType={themeType}
 				widthAdjustment={display.typography.diff.widthAdjustment}
 			/>

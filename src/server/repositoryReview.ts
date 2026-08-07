@@ -1,8 +1,4 @@
 import type {
-	CommentResponse,
-	CreateCommentRequest,
-	DeleteCommentResponse,
-	DiffResponse,
 	GenerateCommitMessageRequest,
 	ReviewStateResponse,
 	SetReviewRequest,
@@ -36,7 +32,6 @@ export class RepositoryReview {
 		private readonly store: ReviewStore,
 		private readonly content: RepositoryContent,
 		private readonly snapshots: RepositorySnapshotService,
-		private readonly diff: (fileId: string) => Promise<DiffResponse>,
 	) {}
 
 	async commitMessageContext(input: GenerateCommitMessageRequest): Promise<string> {
@@ -135,10 +130,6 @@ export class RepositoryReview {
 				...review,
 				reviewed: review.reviewed && revisions.get(review.fileId) === review.contentRevision,
 			})),
-			comments: state.comments.map((comment) => ({
-				...comment,
-				stale: revisions.get(comment.fileId) !== comment.contentRevision,
-			})),
 		};
 	}
 
@@ -201,172 +192,6 @@ export class RepositoryReview {
 			};
 		});
 		return { reviews: await this.store.setReviews(records) };
-	}
-
-	async createComment(input: CreateCommentRequest): Promise<CommentResponse> {
-		if (!input || typeof input !== "object" || Array.isArray(input)) {
-			throw new HttpError(400, "invalid_request", "Comment request is invalid");
-		}
-		assertNonEmptyString(input.fileId, "file id", 100);
-		assertNonEmptyString(input.contentRevision, "content revision", 200);
-		assertNonEmptyString(input.hunkHeader, "hunk header", 1_000);
-		const snapshot = await this.snapshots.getSnapshot();
-		const file = this.content.requireCurrentContent(snapshot, input.fileId, input.contentRevision);
-		if (input.side !== "new" && input.side !== "old" && input.side !== "mixed") {
-			throw new HttpError(400, "invalid_comment", "Comment side is invalid");
-		}
-		if (
-			!Number.isSafeInteger(input.startLine) ||
-			!Number.isSafeInteger(input.endLine) ||
-			input.startLine < 1 ||
-			input.endLine < input.startLine
-		) {
-			throw new HttpError(400, "invalid_comment", "Comment line range is invalid");
-		}
-		const validOptionalRange = (start: number | undefined, end: number | undefined) =>
-			start === undefined && end === undefined
-				? true
-				: Number.isSafeInteger(start) &&
-					Number.isSafeInteger(end) &&
-					(start ?? 0) >= 1 &&
-					(end ?? 0) >= (start ?? 0);
-		if (
-			!validOptionalRange(input.oldStartLine, input.oldEndLine) ||
-			!validOptionalRange(input.newStartLine, input.newEndLine) ||
-			(input.side === "mixed" &&
-				(input.oldStartLine === undefined || input.newStartLine === undefined))
-		) {
-			throw new HttpError(400, "invalid_comment", "Comment side ranges are invalid");
-		}
-		assertNonEmptyString(input.body, "comment body", 20_000);
-		const currentDiff = (await this.diff(file.id)).diff;
-		if (currentDiff.contentRevision !== file.contentRevision) {
-			throw new HttpError(409, "content_changed", "File content changed; refresh the diff first");
-		}
-		if (currentDiff.binary || currentDiff.hunks.length === 0) {
-			throw new HttpError(
-				400,
-				"comment_not_supported",
-				"Line comments require a textual diff hunk",
-			);
-		}
-
-		const oldStart = input.side === "new" ? undefined : (input.oldStartLine ?? input.startLine);
-		const oldEnd = input.side === "new" ? undefined : (input.oldEndLine ?? input.endLine);
-		const newStart = input.side === "old" ? undefined : (input.newStartLine ?? input.startLine);
-		const newEnd = input.side === "old" ? undefined : (input.newEndLine ?? input.endLine);
-		const rangeContains = (
-			value: number | null,
-			start: number | undefined,
-			end: number | undefined,
-		) =>
-			value !== null && start !== undefined && end !== undefined && value >= start && value <= end;
-		const hasBoundary = (
-			hunk: (typeof currentDiff.hunks)[number],
-			side: "old" | "new",
-			boundary: number | undefined,
-		) =>
-			boundary === undefined ||
-			hunk.lines.some((line) => (side === "old" ? line.oldLine : line.newLine) === boundary);
-
-		let selected:
-			| {
-					hunk: (typeof currentDiff.hunks)[number];
-					lines: (typeof currentDiff.hunks)[number]["lines"];
-			  }
-			| undefined;
-		for (const hunk of currentDiff.hunks) {
-			if (hunk.header !== input.hunkHeader) continue;
-			if (
-				!hasBoundary(hunk, "old", oldStart) ||
-				!hasBoundary(hunk, "old", oldEnd) ||
-				!hasBoundary(hunk, "new", newStart) ||
-				!hasBoundary(hunk, "new", newEnd)
-			) {
-				continue;
-			}
-			const indexedLines = hunk.lines.flatMap((line, index) => {
-				if (line.kind === "metadata") return [];
-				const matches =
-					rangeContains(line.oldLine, oldStart, oldEnd) ||
-					rangeContains(line.newLine, newStart, newEnd);
-				return matches ? [{ line, index }] : [];
-			});
-			if (indexedLines.length === 0) continue;
-			if (input.side === "mixed") {
-				const first = indexedLines[0]?.index ?? -1;
-				const last = indexedLines.at(-1)?.index ?? -1;
-				const contiguous = hunk.lines
-					.slice(first, last + 1)
-					.every(
-						(line) =>
-							line.kind !== "metadata" &&
-							(rangeContains(line.oldLine, oldStart, oldEnd) ||
-								rangeContains(line.newLine, newStart, newEnd)),
-					);
-				if (!contiguous) continue;
-			}
-			selected = { hunk, lines: indexedLines.map(({ line }) => line) };
-			break;
-		}
-		if (!selected) {
-			throw new HttpError(
-				400,
-				"invalid_comment_anchor",
-				"Comment lines must belong to one visible diff hunk",
-			);
-		}
-
-		const excerpt = selected.lines
-			.slice(0, 200)
-			.map((line) =>
-				input.side === "mixed"
-					? `${line.kind === "addition" ? "+" : line.kind === "deletion" ? "-" : " "} ${line.text}`
-					: line.text,
-			);
-		const normalizedStart = newStart ?? oldStart;
-		const normalizedEnd = newEnd ?? oldEnd;
-		if (normalizedStart === undefined || normalizedEnd === undefined) {
-			throw new HttpError(400, "invalid_comment_anchor", "Comment line range is invalid");
-		}
-		const comment = await this.store.createComment(
-			{
-				...input,
-				startLine: normalizedStart,
-				endLine: normalizedEnd,
-				...(oldStart === undefined
-					? { oldStartLine: undefined, oldEndLine: undefined }
-					: { oldStartLine: oldStart, oldEndLine: oldEnd }),
-				...(newStart === undefined
-					? { newStartLine: undefined, newEndLine: undefined }
-					: { newStartLine: newStart, newEndLine: newEnd }),
-				body: input.body.trim(),
-				hunkHeader: selected.hunk.header,
-				excerpt,
-			},
-			file.path,
-		);
-		return { comment };
-	}
-
-	async updateComment(id: string, body: string): Promise<CommentResponse> {
-		assertNonEmptyString(id, "comment id", 100);
-		assertNonEmptyString(body, "comment body", 20_000);
-		const comment = await this.store.updateComment(id, body.trim());
-		const snapshot = await this.snapshots.getSnapshot();
-		const current = snapshot.files.find((file) => file.id === comment.fileId);
-		return {
-			comment: {
-				...comment,
-				stale: current?.contentRevision !== comment.contentRevision,
-			},
-		};
-	}
-
-	async deleteComment(id: string): Promise<DeleteCommentResponse> {
-		assertNonEmptyString(id, "comment id", 100);
-		await this.store.deleteComment(id);
-		return { deletedId: id };
 	}
 
 	private validateCommitMessageSnapshot(snapshot: Snapshot, operationRevision: string): void {

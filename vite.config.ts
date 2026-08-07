@@ -49,7 +49,7 @@ export default defineConfig(({ mode }) => {
 					id: "/",
 					name: "Couchview",
 					short_name: "Couchview",
-					description: "Review, comment on, and stage local Git changes from any screen.",
+					description: "Review and stage local Git changes from any screen.",
 					start_url: "/",
 					scope: "/",
 					display: "standalone",

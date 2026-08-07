@@ -5,7 +5,6 @@ import {
 	GitBranch,
 	GitGraph,
 	Menu,
-	MessageSquareText,
 	Minus,
 	MonitorUp,
 	Plus,
@@ -15,7 +14,7 @@ import {
 	WrapText,
 } from "lucide-react";
 import type {
-	ChangeFile,
+	FileChange,
 	FileDiff,
 	RemoteBridgeCapability,
 	RepositorySummary,
@@ -26,7 +25,7 @@ import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
 import { TYPOGRAPHY_LIMITS } from "../typographyPreferences.ts";
 
 interface ReviewTopBarProps {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	canNavigateNextHunk: boolean;
 	canNavigatePreviousHunk: boolean;
 	commandPaletteShortcut: string;
@@ -37,7 +36,6 @@ interface ReviewTopBarProps {
 	fontSize: number;
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
-	onComments: () => void;
 	onFontSizeChange: (fontSize: number) => void;
 	onLineNumbersChange: (visible: boolean) => void;
 	onLineWrapChange: (enabled: boolean) => void;
@@ -57,7 +55,6 @@ interface ReviewTopBarProps {
 	splitView: boolean;
 	terminalActive: boolean;
 	terminalCapability: TerminalCapability;
-	totalCommentCount: number;
 }
 
 function connectionTitle(connectionState: RepositoryConnectionState): string {
@@ -78,7 +75,6 @@ export function ReviewTopBar({
 	fontSize,
 	lineNumbersVisible,
 	lineWrapEnabled,
-	onComments,
 	onFontSizeChange,
 	onLineNumbersChange,
 	onLineWrapChange,
@@ -98,7 +94,6 @@ export function ReviewTopBar({
 	splitView,
 	terminalActive,
 	terminalCapability,
-	totalCommentCount,
 }: ReviewTopBarProps) {
 	return (
 		<header className="top-bar">
@@ -197,16 +192,6 @@ export function ReviewTopBar({
 							<ChevronDown size={16} />
 						</button>
 					</div>
-					<button
-						aria-label={`Open comments (${totalCommentCount})`}
-						className="icon-button compact-comments-button"
-						onClick={onComments}
-						title="Review comments"
-						type="button"
-					>
-						<MessageSquareText size={17} />
-						{totalCommentCount > 0 && <span className="badge">{totalCommentCount}</span>}
-					</button>
 				</div>
 			)}
 			<button

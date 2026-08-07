@@ -113,7 +113,7 @@ describe("GitRepository advanced behavior", () => {
 		}
 	});
 
-	test("renders and comments on an untracked file containing one empty line", async () => {
+	test("renders an untracked file containing one empty line", async () => {
 		const directory = await committedRepository({ "base.txt": "base\n" });
 		await writeFile(path.join(directory, "blank.txt"), "\n");
 		const repository = await GitRepository.open(directory);
@@ -126,17 +126,6 @@ describe("GitRepository advanced behavior", () => {
 			expect(response.diff.hunks[0]?.lines).toContainEqual(
 				expect.objectContaining({ kind: "addition", text: "", newLine: 1 }),
 			);
-			const comment = await repository.createComment({
-				fileId: file.id,
-				contentRevision: file.contentRevision,
-				side: "new",
-				startLine: 1,
-				endLine: 1,
-				hunkHeader: response.diff.hunks[0]?.header ?? "",
-				excerpt: [],
-				body: "Decide whether this empty line is intentional.",
-			});
-			expect(comment.comment.excerpt).toEqual([""]);
 		} finally {
 			repository.close();
 		}
@@ -221,18 +210,6 @@ describe("GitRepository advanced behavior", () => {
 			expect((await repository.diff(link.id)).diff.header.join("\n")).toContain(
 				"new file mode 120000",
 			);
-			await expect(
-				repository.createComment({
-					fileId: binary.id,
-					contentRevision: binary.contentRevision,
-					side: "new",
-					startLine: 1,
-					endLine: 1,
-					hunkHeader: "@@ -1 +1 @@",
-					excerpt: [],
-					body: "Invalid binary anchor",
-				}),
-			).rejects.toMatchObject({ status: 400 });
 			const stagePath = async (pathName: string) => {
 				const current = await repository.changes();
 				const file = current.files.find((candidate) => candidate.path === pathName);
@@ -319,28 +296,15 @@ describe("GitRepository advanced behavior", () => {
 			const changes = await first.changes();
 			const file = changes.files[0];
 			if (!file) throw new Error("state fixture missing");
-			const diff = await first.diff(file.id);
 			await first.setReview({
 				fileId: file.id,
 				contentRevision: file.contentRevision,
 				reviewed: true,
 			});
-			await second.createComment({
-				fileId: file.id,
-				contentRevision: file.contentRevision,
-				side: "new",
-				startLine: 1,
-				endLine: 1,
-				hunkHeader: diff.diff.hunks[0]?.header ?? "",
-				excerpt: [],
-				body: "Keep both writes.",
-			});
-			const state = await first.reviewState();
+			const state = await second.reviewState();
 			expect(state.reviews).toHaveLength(1);
-			expect(state.comments).toHaveLength(1);
 			const stored = database.reviewState(first.id);
 			expect(stored.reviews).toHaveLength(1);
-			expect(stored.comments).toHaveLength(1);
 			expect(await Bun.file(path.join(directory, ".git", "couchview", "state.json")).exists()).toBe(
 				false,
 			);
@@ -726,34 +690,20 @@ describe("GitRepository advanced behavior", () => {
 			const before = await repository.changes();
 			const file = before.files.find((candidate) => candidate.path === "review.sh");
 			if (!file) throw new Error("mode revision fixture missing");
-			const diff = await repository.diff(file.id);
 			await repository.setReview({
 				fileId: file.id,
 				contentRevision: file.contentRevision,
 				reviewed: true,
 			});
-			await repository.createComment({
-				fileId: file.id,
-				contentRevision: file.contentRevision,
-				side: "new",
-				startLine: 1,
-				endLine: 1,
-				hunkHeader: diff.diff.hunks[0]?.header ?? "",
-				excerpt: [],
-				body: "Keep the changed command.",
-			});
-
 			await chmod(path.join(directory, "review.sh"), 0o600);
 			const permissionOnly = await repository.changes();
 			expect(permissionOnly.files[0]?.contentRevision).toBe(file.contentRevision);
 			expect(permissionOnly.files[0]?.reviewed).toBe(true);
-			expect((await repository.reviewState()).comments[0]?.stale).toBe(false);
 
 			await chmod(path.join(directory, "review.sh"), 0o700);
 			const executable = await repository.changes();
 			expect(executable.files[0]?.contentRevision).not.toBe(file.contentRevision);
 			expect(executable.files[0]?.reviewed).toBe(false);
-			expect((await repository.reviewState()).comments[0]?.stale).toBe(true);
 		} finally {
 			repository.close();
 		}

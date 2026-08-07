@@ -82,9 +82,6 @@ export async function authenticatedRemoteBridgeFetch(
 		)) {
 			headers.set(name, value);
 		}
-		if (!headers.has("authorization")) {
-			headers.set("authorization", `Bearer ${profile.deviceToken}`);
-		}
 		headers.set(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER, profile.deviceToken);
 		return fetchWithTimeout(runtime.fetch, `${profile.origin}${pathname}`, {
 			...init,
@@ -234,11 +231,6 @@ async function authenticatedBridgeRequest(
 ): Promise<Response> {
 	const perform = async (forceAccessRefresh: boolean): Promise<Response> => {
 		const headers = new Headers(await originAccess.requestHeaders({ refresh: forceAccessRefresh }));
-		// Version-one servers read the device credential from Authorization. Keep
-		// that fallback when a gateway provider does not own the header itself.
-		if (!headers.has("authorization")) {
-			headers.set("authorization", `Bearer ${profile.deviceToken}`);
-		}
 		headers.set(REMOTE_BRIDGE_DEVICE_TOKEN_HEADER, profile.deviceToken);
 		headers.set("content-type", "application/json");
 		return fetchWithTimeout(runtime.fetch, `${profile.origin}${pathname}`, {

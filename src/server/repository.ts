@@ -18,15 +18,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type {
-	ChangeFile,
-	ChangeFileDelta,
 	ChangesResponse,
-	CommentResponse,
 	CommitRequest,
 	CommitResponse,
-	CreateCommentRequest,
-	DeleteCommentResponse,
 	DiffResponse,
+	FileChange,
+	FileChangeDelta,
 	GenerateCommitMessageRequest,
 	ReviewStateResponse,
 	SearchResponse,
@@ -70,9 +67,9 @@ function basePathForEntry(entry: ParsedStatusEntry): string {
 }
 
 function changeFileDelta(
-	before: readonly ChangeFile[],
-	after: readonly ChangeFile[],
-): ChangeFileDelta {
+	before: readonly FileChange[],
+	after: readonly FileChange[],
+): FileChangeDelta {
 	const beforeById = new Map(before.map((file) => [file.id, file]));
 	const afterIds = new Set(after.map((file) => file.id));
 	return {
@@ -154,9 +151,7 @@ export class GitRepository {
 			emptyTree,
 			getSnapshot: (fresh) => this.snapshots.getSnapshot(fresh),
 		});
-		this.reviews = new RepositoryReview(root, this.store, this.content, this.snapshots, (fileId) =>
-			this.diffs.diff(fileId),
-		);
+		this.reviews = new RepositoryReview(root, this.store, this.content, this.snapshots);
 	}
 
 	static async open(candidate: string, database?: StateDatabase): Promise<GitRepository> {
@@ -332,7 +327,7 @@ export class GitRepository {
 					);
 				}
 				const targetsById = new Map(targets.map((target) => [target.fileId, target]));
-				const selectedById = new Map<string, { file: ChangeFile; entry: ParsedStatusEntry }>();
+				const selectedById = new Map<string, { file: FileChange; entry: ParsedStatusEntry }>();
 				for (const target of targets) {
 					const file = this.content.requireCurrentContent(
 						locked,
@@ -560,18 +555,6 @@ export class GitRepository {
 		return this.reviews.setReviews(input);
 	}
 
-	async createComment(input: CreateCommentRequest): Promise<CommentResponse> {
-		return this.reviews.createComment(input);
-	}
-
-	async updateComment(id: string, body: string): Promise<CommentResponse> {
-		return this.reviews.updateComment(id, body);
-	}
-
-	async deleteComment(id: string): Promise<DeleteCommentResponse> {
-		return this.reviews.deleteComment(id);
-	}
-
 	startWatching(onChange: (operationRevision: string) => void): void {
 		this.snapshots.startWatching(onChange);
 	}
@@ -649,7 +632,7 @@ export class GitRepository {
 
 	private async unstageExactPath(
 		indexPath: string,
-		file: ChangeFile,
+		file: FileChange,
 		head: string | null,
 	): Promise<void> {
 		const paths = [

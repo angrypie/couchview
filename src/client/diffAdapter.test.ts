@@ -1,15 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type { FileDiff } from "../shared/contracts.ts";
 import {
 	adaptFileDiff,
-	annotationsForFile,
-	commentAnnotation,
-	commentAnnotationsVersion,
 	fromPierreSide,
 	preloadFileDiffRendering,
 	reconstructUnifiedPatch,
-	selectedRangeFromEndpoints,
 	toPierreSide,
 } from "./diffAdapter.ts";
 
@@ -62,29 +58,6 @@ function fixtureDiff(overrides: Partial<FileDiff> = {}): FileDiff {
 				],
 			},
 		],
-		...overrides,
-	};
-}
-
-function fixtureComment(overrides: Partial<ReviewComment> = {}): ReviewComment {
-	return {
-		id: "comment-1",
-		fileId: "file-1",
-		path: "src/example.ts",
-		side: "mixed",
-		startLine: 1,
-		endLine: 2,
-		oldStartLine: 1,
-		oldEndLine: 2,
-		newStartLine: 1,
-		newEndLine: 2,
-		hunkHeader: "@@ -1,2 +1,2 @@",
-		excerpt: ["-old", "+new"],
-		body: "Keep this safe.",
-		contentRevision: "revision-1",
-		stale: false,
-		createdAt: "2026-07-21T10:00:00.000Z",
-		updatedAt: "2026-07-21T10:00:00.000Z",
 		...overrides,
 	};
 }
@@ -302,37 +275,8 @@ describe("Pierre diff adapter", () => {
 		expect(adapted.fileDiff.unifiedLineCount).toBe(2);
 	});
 
-	test("anchors current comments after their range and prefers the new side for mixed ranges", () => {
-		const mixed = fixtureComment();
-		expect(commentAnnotation(mixed)).toMatchObject({
-			side: "additions",
-			lineNumber: 2,
-		});
-		expect(
-			commentAnnotation(fixtureComment({ side: "old", oldEndLine: 7, endLine: 7 })),
-		).toMatchObject({ side: "deletions", lineNumber: 7 });
-		expect(commentAnnotation(fixtureComment({ stale: true }))).toBeNull();
-		expect(
-			annotationsForFile([mixed, fixtureComment({ id: "other", fileId: "other-file" })], "file-1"),
-		).toHaveLength(1);
-		expect(commentAnnotationsVersion([mixed], "file-1", "revision-1")).not.toBe(
-			commentAnnotationsVersion([mixed], "file-1", "revision-2"),
-		);
-	});
-
-	test("round-trips sides and orders mixed selection endpoints by rendered row", () => {
+	test("round-trips diff sides", () => {
 		expect(fromPierreSide(toPierreSide("old"))).toBe("old");
 		expect(fromPierreSide(toPierreSide("new"))).toBe("new");
-		expect(
-			selectedRangeFromEndpoints(
-				{ lineNumber: 12, rowIndex: 9, side: "new" },
-				{ lineNumber: 8, rowIndex: 3, side: "old" },
-			),
-		).toEqual({
-			start: 8,
-			side: "deletions",
-			end: 12,
-			endSide: "additions",
-		});
 	});
 });

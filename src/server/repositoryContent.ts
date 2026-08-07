@@ -3,14 +3,14 @@ import { constants } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import path from "node:path";
 
-import type { ChangeFile, RepositorySummary } from "../shared/contracts.ts";
+import type { FileChange, RepositorySummary } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
 import type { ParsedStatusEntry } from "./git/index.ts";
 import { decodeGitOutput, runGit } from "./git/index.ts";
 
 export interface RepositorySnapshot {
 	repository: RepositorySummary;
-	files: ChangeFile[];
+	files: FileChange[];
 	operationRevision: string;
 	entries: Map<string, ParsedStatusEntry>;
 }
@@ -59,7 +59,7 @@ export class RepositoryContent {
 
 	constructor(private readonly root: string) {}
 
-	requireFile(snapshot: RepositorySnapshot, fileId: string): ChangeFile {
+	requireFile(snapshot: RepositorySnapshot, fileId: string): FileChange {
 		assertNonEmptyString(fileId, "file id", 100);
 		const file = snapshot.files.find((candidate) => candidate.id === fileId);
 		if (!file) throw new HttpError(404, "file_not_found", "Changed file not found");
@@ -70,7 +70,7 @@ export class RepositoryContent {
 		snapshot: RepositorySnapshot,
 		fileId: string,
 		revision: string,
-	): ChangeFile {
+	): FileChange {
 		const file = this.requireFile(snapshot, fileId);
 		if (file.contentRevision !== revision) {
 			throw new HttpError(409, "content_changed", "File content changed; refresh the diff first");

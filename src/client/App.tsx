@@ -51,10 +51,6 @@ export function App() {
 		available: false,
 		reason: "Commit message generation is unavailable from this Couchview server.",
 	};
-	const codexCapability = bootstrap?.codex ?? {
-		available: false,
-		reason: "Codex integration is unavailable from this Couchview server.",
-	};
 	const terminalCapability = bootstrap?.terminal ?? {
 		available: false,
 		reason: "The browser tmux terminal is unavailable from this Couchview server.",
@@ -140,7 +136,7 @@ export function App() {
 		stagedCount,
 		workspace,
 	});
-	const { comments, commit, review, staging } = workflow;
+	const { commit, review, staging } = workflow;
 
 	useEffect(() => {
 		resetForRepository();
@@ -154,9 +150,7 @@ export function App() {
 
 	const pwaUpdateSafe =
 		!(navigation.mode === "settings" && navigation.settingsDirty) &&
-		!comments.composerOpen &&
 		!commit.open &&
-		!comments.busy &&
 		!review.busy &&
 		!staging.busy &&
 		staging.bulkBusy === null &&
@@ -167,8 +161,7 @@ export function App() {
 		!artifactWorkflow.hasActiveRuns &&
 		!repositoryManagement.addBusy &&
 		repositoryManagement.forgetBusy === null &&
-		repositoryManagement.restartPhase === null &&
-		!comments.copyFallbackText;
+		repositoryManagement.restartPhase === null;
 	const gitUpdateSafe = navigation.mode !== "history" && gitWorkspace.actionBusy === null;
 	const pwa = usePwaUpdate({ updateSafe: pwaUpdateSafe && gitUpdateSafe });
 
@@ -192,7 +185,6 @@ export function App() {
 	return (
 		<CouchviewApplicationView
 			artifacts={artifactWorkflow}
-			codexCapability={codexCapability}
 			commitMessageCapability={commitMessageCapability}
 			compactLandscape={compactLandscape}
 			display={displayPreferences}

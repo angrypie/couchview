@@ -287,17 +287,6 @@ describe("GitRepository", () => {
 				contentRevision: file.contentRevision,
 				reviewed: true,
 			});
-			await repository.createComment({
-				fileId: file.id,
-				contentRevision: file.contentRevision,
-				side: "new",
-				startLine: 2,
-				endLine: 2,
-				hunkHeader: diff.diff.hunks[0]?.header ?? "",
-				excerpt: ["beta token"],
-				body: "Please rename this.",
-			});
-
 			const staged = await repository.stage({
 				fileId: file.id,
 				operationRevision: before.operationRevision,
@@ -307,7 +296,6 @@ describe("GitRepository", () => {
 				staged: true,
 				unstaged: false,
 				reviewed: true,
-				commentCount: 1,
 				binary: false,
 				additions: 2,
 				deletions: 0,
@@ -330,7 +318,6 @@ describe("GitRepository", () => {
 				staged: false,
 				unstaged: true,
 				reviewed: true,
-				commentCount: 1,
 				binary: false,
 				additions: 2,
 				deletions: 0,
@@ -705,24 +692,6 @@ describe("GitRepository", () => {
 				contentRevision: file.contentRevision,
 				reviewed: true,
 			});
-			const replacementHunk = diff.diff.hunks[0];
-			if (!replacementHunk) throw new Error("target hunk missing");
-			const created = await repository.createComment({
-				fileId: file.id,
-				contentRevision: file.contentRevision,
-				side: "mixed",
-				startLine: 1,
-				endLine: 3,
-				oldStartLine: 1,
-				oldEndLine: 3,
-				newStartLine: 1,
-				newEndLine: 3,
-				hunkHeader: replacementHunk.header,
-				excerpt: ["forged excerpt"],
-				body: "Keep both replacement ranges.",
-			});
-			expect(created.comment.excerpt).not.toContain("forged excerpt");
-
 			const staged = await repository.stage({
 				fileId: file.id,
 				operationRevision: before.operationRevision,
@@ -744,11 +713,6 @@ describe("GitRepository", () => {
 			await writeFile(path.join(directory, "target.ts"), "ONE\n\nchanged token\n");
 			const staleState = await repository.reviewState();
 			expect(staleState.reviews.find((review) => review.fileId === file.id)?.reviewed).toBe(false);
-			expect(staleState.comments.find((comment) => comment.id === created.comment.id)?.stale).toBe(
-				true,
-			);
-			const edited = await repository.updateComment(created.comment.id, "Still needs attention.");
-			expect(edited.comment.stale).toBe(true);
 		} finally {
 			repository.close();
 		}

@@ -1,23 +1,12 @@
-import type { SelectedLineRange } from "@pierre/diffs";
-import {
-	AlertTriangle,
-	CheckCircle2,
-	FileCode2,
-	LoaderCircle,
-	MessageSquareText,
-	RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileCode2, LoaderCircle, RefreshCw } from "lucide-react";
 import type { RefObject } from "react";
-import type { FileDiff, ReviewComment } from "../../shared/contracts.ts";
+import type { FileDiff } from "../../shared/contracts.ts";
 import type { TypographyPreferences } from "../../shared/settings.ts";
 import type { ResolvedTheme } from "../../shared/theme.ts";
 import { DiffViewer, type DiffViewerHandle } from "../DiffViewer.tsx";
-import type { CommentSelection } from "../features/review/diffModel.ts";
 import { codeFontStack } from "../typographyPreferences.ts";
 
 interface DiffWorkspaceProps {
-	commentComposerOpen: boolean;
-	comments: ReviewComment[];
 	diff: FileDiff | null;
 	diffError: string;
 	diffLoading: boolean;
@@ -26,44 +15,18 @@ interface DiffWorkspaceProps {
 	fontSize: number;
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
-	onClearSelection: () => void;
-	onCommentClick: (comment: ReviewComment) => void;
 	onIdentifierClick: (identifier: string) => void;
-	onLineNumberClick: (lineNumber: number, side: "old" | "new") => void;
-	onOpenCommentComposer: () => void;
 	onOpenFailure: () => void;
 	onRetry: () => void;
 	onVisibleLineChange: (lineNumber: number, side: "old" | "new") => void;
 	rowCount: number;
 	retryAvailable: boolean;
-	selection: CommentSelection | null;
 	themeType: ResolvedTheme;
 	typography: TypographyPreferences["diff"];
 	viewerRef: RefObject<DiffViewerHandle | null>;
-	viewerSelection: SelectedLineRange | null;
-}
-
-function selectionLabel(selection: CommentSelection) {
-	if (
-		selection.side === "mixed" &&
-		selection.oldStartLine !== undefined &&
-		selection.oldEndLine !== undefined &&
-		selection.newStartLine !== undefined &&
-		selection.newEndLine !== undefined
-	) {
-		const oldEnd =
-			selection.oldEndLine === selection.oldStartLine ? "" : `–${selection.oldEndLine}`;
-		const newEnd =
-			selection.newEndLine === selection.newStartLine ? "" : `–${selection.newEndLine}`;
-		return `Old lines ${selection.oldStartLine}${oldEnd} / new lines ${selection.newStartLine}${newEnd}`;
-	}
-	const end = selection.end === selection.start ? "" : `–${selection.end}`;
-	return `${selection.side === "old" ? "Old" : "New"} lines ${selection.start}${end}`;
 }
 
 export function DiffWorkspace({
-	commentComposerOpen,
-	comments,
 	diff,
 	diffError,
 	diffLoading,
@@ -72,21 +35,15 @@ export function DiffWorkspace({
 	fontSize,
 	lineNumbersVisible,
 	lineWrapEnabled,
-	onClearSelection,
-	onCommentClick,
 	onIdentifierClick,
-	onLineNumberClick,
-	onOpenCommentComposer,
 	onOpenFailure,
 	onRetry,
 	onVisibleLineChange,
 	rowCount,
 	retryAvailable,
-	selection,
 	themeType,
 	typography,
 	viewerRef,
-	viewerSelection,
 }: DiffWorkspaceProps) {
 	return (
 		<section className="workspace" aria-label="Unified diff">
@@ -143,19 +100,15 @@ export function DiffWorkspace({
 				</div>
 			) : diff ? (
 				<DiffViewer
-					comments={comments}
 					diff={diff}
 					fontFamily={codeFontStack(typography.fontFamily)}
 					fontSize={fontSize}
 					lineHeightAdjustment={typography.lineHeightAdjustment}
 					lineNumbersVisible={lineNumbersVisible}
 					lineWrapEnabled={lineWrapEnabled}
-					onCommentClick={onCommentClick}
 					onIdentifierClick={onIdentifierClick}
-					onLineNumberClick={onLineNumberClick}
 					onVisibleLineChange={onVisibleLineChange}
 					ref={viewerRef}
-					selectedRange={viewerSelection}
 					themeType={themeType}
 					widthAdjustment={typography.widthAdjustment}
 				/>
@@ -165,20 +118,6 @@ export function DiffWorkspace({
 				<div className="diff-refresh-indicator" role="status">
 					<LoaderCircle className="spinner" size={14} />
 					<span>Refreshing diff…</span>
-				</div>
-			)}
-
-			{selection && !commentComposerOpen && (
-				<div className="selection-banner" role="status">
-					<div className="selection-copy">{selectionLabel(selection)}</div>
-					<div className="selection-actions">
-						<button className="text-button" onClick={onClearSelection} type="button">
-							Clear
-						</button>
-						<button className="text-button" onClick={onOpenCommentComposer} type="button">
-							<MessageSquareText size={14} /> Comment
-						</button>
-					</div>
 				</div>
 			)}
 		</section>

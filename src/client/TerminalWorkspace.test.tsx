@@ -23,7 +23,7 @@ mock.module("./ghosttyTerminal.ts", () => ({
 }));
 
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
-const { TerminalWorkspace } = await import("./TerminalWorkspace.tsx");
+const { TerminalWorkspace } = await import("./components/TerminalWorkspace.tsx");
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;

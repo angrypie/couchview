@@ -228,16 +228,10 @@ test.describe("production PWA", () => {
 		await expect(page.getByRole("button", { name: "Install", exact: true })).toBeVisible();
 		await page.getByRole("button", { name: "Not now" }).click();
 
-		await page.getByRole("button", { name: "Show line numbers" }).click();
-		await page.getByRole("button", { name: "Select old line 2" }).click();
-		await page.getByRole("button", { name: "Select new line 2" }).click();
-		const selection = page.getByRole("status").filter({
-			hasText: "Old lines 2 / new lines 2",
-		});
-		await selection.getByRole("button", { name: "Comment" }).click();
-		await page
-			.getByPlaceholder("Describe the issue and the expected correction…")
-			.fill("Unsaved update-guard draft");
+		await page.getByRole("button", { name: "Stage current file" }).click();
+		await page.getByRole("button", { name: "Open changed files" }).click();
+		await page.getByRole("button", { name: "Commit 1 staged file" }).click();
+		await page.getByPlaceholder("Commit message…").fill("Unsaved update-guard draft");
 
 		await page.evaluate(async () => {
 			const registration = await navigator.serviceWorker.register(
@@ -269,9 +263,9 @@ test.describe("production PWA", () => {
 			.toContain("e2e-update=");
 		await expect(page.getByText("An app update is ready.")).toHaveCount(0);
 		await expect(page.getByRole("button", { name: "Reload" })).toHaveCount(0);
-		await expect(
-			page.getByPlaceholder("Describe the issue and the expected correction…"),
-		).toHaveValue("Unsaved update-guard draft");
+		await expect(page.getByPlaceholder("Commit message…")).toHaveValue(
+			"Unsaved update-guard draft",
+		);
 
 		await context.setOffline(true);
 		try {

@@ -24,7 +24,7 @@ const bunCommand = JSON.stringify(bunExecutable);
 
 export default defineConfig({
 	testDir: "./tests/e2e",
-	// The local fixture models mutations (comments, reviews, and staging) in
+	// The local fixture models review and staging mutations in
 	// memory. Run the mobile projects serially so every test can reset to the
 	// same repository revision without another worker racing that reset.
 	fullyParallel: false,

@@ -3,24 +3,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	codeFontStack,
 	DEFAULT_TYPOGRAPHY_PREFERENCES,
-	loadTypographyPreferences,
 	normalizeTypographyPreferences,
-	TYPOGRAPHY_STORAGE_KEY,
-	type TypographyPreferences,
 	terminalRendererConfig,
 } from "./typographyPreferences.ts";
-
-class MemoryStorage {
-	readonly values = new Map<string, string>();
-
-	getItem(key: string): string | null {
-		return this.values.get(key) ?? null;
-	}
-
-	setItem(key: string, value: string): void {
-		this.values.set(key, value);
-	}
-}
 
 describe("browser typography preferences", () => {
 	test("uses zero height and width adjustments by default", () => {
@@ -64,37 +49,6 @@ describe("browser typography preferences", () => {
 				cellWidthAdjustment: -5,
 			},
 		});
-	});
-
-	test("migrates multiplier and letter-spacing diff preferences to adjustments", () => {
-		expect(
-			normalizeTypographyPreferences({
-				diff: {
-					fontFamily: "system",
-					fontSize: 14,
-					lineHeight: 1.8,
-					letterSpacing: 0.4,
-				},
-			}).diff,
-		).toEqual({
-			fontFamily: "system",
-			fontSize: 14,
-			lineHeightAdjustment: 3.5,
-			widthAdjustment: 0.4,
-		});
-	});
-
-	test("migrates the previous diff font size without coupling terminal defaults", () => {
-		const storage = new MemoryStorage();
-		storage.setItem("couchview:font-size", "13");
-
-		const preferences = loadTypographyPreferences(storage);
-
-		expect(preferences.diff.fontSize).toBe(13);
-		expect(preferences.terminal).toEqual(DEFAULT_TYPOGRAPHY_PREFERENCES.terminal);
-		expect(JSON.parse(storage.getItem(TYPOGRAPHY_STORAGE_KEY)!) as TypographyPreferences).toEqual(
-			preferences,
-		);
 	});
 
 	test("uses a true system monospace stack and creates a client-only terminal config", () => {

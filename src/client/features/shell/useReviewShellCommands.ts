@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import type { ChangeFile } from "../../../shared/contracts.ts";
+import type { FileChange } from "../../../shared/contracts.ts";
 import type { useAppCommands } from "../commands/useAppCommands.ts";
 import { useAppCommands as useCommands } from "../commands/useAppCommands.ts";
 import type { useFailureReporting } from "../errors/useFailureReporting.ts";
@@ -47,10 +47,8 @@ export function useReviewShellCommands({
 	stagedCount,
 	workflow,
 	workspace,
-}: UseReviewShellCommandsOptions): ReturnType<typeof useAppCommands> & {
-	openComments: () => void;
-} {
-	const { comments, commit, diff, review, search, staging } = workflow;
+}: UseReviewShellCommandsOptions): ReturnType<typeof useAppCommands> {
+	const { commit, diff, review, search, staging } = workflow;
 	const overlayVisible =
 		management.pickerOpen ||
 		remoteBridgeOpen ||
@@ -58,9 +56,6 @@ export function useReviewShellCommands({
 		failure.detailsOpen ||
 		commit.open ||
 		Boolean(packages.selectedRunId) ||
-		comments.composerOpen ||
-		comments.trayOpen ||
-		Boolean(comments.copyFallbackText) ||
 		Boolean(git.pendingAction) ||
 		(!splitView && drawerOpen);
 
@@ -71,13 +66,9 @@ export function useReviewShellCommands({
 		failure.setDetailsOpen(false);
 		commit.closeComposer();
 		packages.setSelectedRunId(null);
-		comments.setComposerOpen(false);
-		comments.setTrayOpen(false);
-		comments.setCopyFallbackText("");
 		git.requestAction(null);
 		onDrawerOpenChange(false);
 	}, [
-		comments,
 		commit,
 		failure,
 		git,
@@ -102,12 +93,8 @@ export function useReviewShellCommands({
 		search.setOpen(true);
 		window.setTimeout(() => search.inputRef.current?.focus(), 30);
 	}, [search]);
-	const openComments = useCallback(() => {
-		comments.setFocusedCommentId(null);
-		comments.setTrayOpen(true);
-	}, [comments]);
 	const reviewFile = useCallback(
-		(file: ChangeFile) => {
+		(file: FileChange) => {
 			void review.setReviewed(file, !file.reviewed, false);
 		},
 		[review],
@@ -123,7 +110,6 @@ export function useReviewShellCommands({
 		commandBindings: display.commandBindings,
 		commitBusy: commit.busy,
 		fileCount: workspace.files.length,
-		onComments: openComments,
 		onDismissOverlays: dismissAll,
 		onNavigateFile: diff.navigateFile,
 		onNavigateHunk: diff.navigateHunk,
@@ -155,18 +141,14 @@ export function useReviewShellCommands({
 
 	const dismissTop = useCallback(() => {
 		if (git.pendingAction) git.requestAction(null);
-		else if (comments.copyFallbackText) comments.setCopyFallbackText("");
 		else if (failure.detailsOpen) failure.setDetailsOpen(false);
 		else if (management.pickerOpen) management.setPickerOpen(false);
 		else if (remoteBridgeOpen) onRemoteBridgeOpenChange(false);
 		else if (commit.open) commit.closeComposer();
 		else if (packages.selectedRunId) packages.setSelectedRunId(null);
-		else if (comments.composerOpen) comments.setComposerOpen(false);
-		else if (comments.trayOpen) comments.setTrayOpen(false);
 		else if (search.open) search.setOpen(false);
 		else onDrawerOpenChange(false);
 	}, [
-		comments,
 		commit,
 		failure,
 		git,
@@ -183,5 +165,5 @@ export function useReviewShellCommands({
 		visible: overlayVisible,
 	});
 
-	return { ...commands, openComments };
+	return commands;
 }

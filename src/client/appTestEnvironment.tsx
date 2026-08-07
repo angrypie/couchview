@@ -1,6 +1,6 @@
 import { mock } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import type { FileDiff, ReviewComment } from "../shared/contracts.ts";
+import type { FileDiff } from "../shared/contracts.ts";
 import type { ResolvedTheme } from "../shared/theme.ts";
 import { terminalPreviewRendererFactory, terminalRendererFactory } from "./terminalTestFakes.ts";
 import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
@@ -97,7 +97,6 @@ mock.module("uniwind", () => ({
 	useUniwind: useTestUniwind,
 }));
 
-export const viewerCommentJumps: string[] = [];
 export const viewerHunkJumps: number[] = [];
 export const viewerState: {
 	visibleLineChange: ((lineNumber: number, side: "old" | "new") => void) | null;
@@ -105,7 +104,6 @@ export const viewerState: {
 	visibleLineChange: null,
 };
 interface MockDiffViewerProps {
-	comments: readonly ReviewComment[];
 	diff: FileDiff;
 	fontFamily: string;
 	fontSize: number;
@@ -114,15 +112,12 @@ interface MockDiffViewerProps {
 	lineNumbersVisible: boolean;
 	lineWrapEnabled: boolean;
 	themeType?: ResolvedTheme;
-	onCommentClick(comment: ReviewComment): void;
 	onIdentifierClick(identifier: string): void;
-	onLineNumberClick(lineNumber: number, side: "old" | "new"): void;
 	onVisibleLineChange(lineNumber: number, side: "old" | "new"): void;
 }
 mock.module("./DiffViewer.tsx", () => ({
 	DiffViewer: React.forwardRef(function MockDiffViewer(
 		{
-			comments,
 			diff,
 			fontFamily,
 			fontSize,
@@ -131,9 +126,7 @@ mock.module("./DiffViewer.tsx", () => ({
 			lineNumbersVisible,
 			lineWrapEnabled,
 			themeType,
-			onCommentClick,
 			onIdentifierClick,
-			onLineNumberClick,
 			onVisibleLineChange,
 		}: MockDiffViewerProps,
 		ref: React.ForwardedRef<unknown>,
@@ -143,9 +136,6 @@ mock.module("./DiffViewer.tsx", () => ({
 			scrollToLine() {},
 			scrollToHunk(hunkIndex: number) {
 				viewerHunkJumps.push(hunkIndex);
-			},
-			scrollToComment(comment: ReviewComment) {
-				viewerCommentJumps.push(comment.id);
 			},
 			scrollToTop() {},
 		}));
@@ -166,22 +156,10 @@ mock.module("./DiffViewer.tsx", () => ({
 					hunk.lines.map((line) => (
 						<div data-kind={line.kind} key={`${hunk.id}:${line.id}`}>
 							{lineNumbersVisible && line.oldLine !== null && (
-								<button
-									aria-label={`Select old line ${line.oldLine}`}
-									onClick={() => onLineNumberClick(line.oldLine!, "old")}
-									type="button"
-								>
-									{line.oldLine}
-								</button>
+								<span data-testid={`old-line-${line.oldLine}`}>{line.oldLine}</span>
 							)}
 							{lineNumbersVisible && line.newLine !== null && (
-								<button
-									aria-label={`Select new line ${line.newLine}`}
-									onClick={() => onLineNumberClick(line.newLine!, "new")}
-									type="button"
-								>
-									{line.newLine}
-								</button>
+								<span data-testid={`new-line-${line.newLine}`}>{line.newLine}</span>
 							)}
 							{line.text.split(/([A-Za-z_$][\w$-]*)/g).map((token, index) =>
 								/^[A-Za-z_$][\w$-]*$/.test(token) ? (
@@ -200,18 +178,6 @@ mock.module("./DiffViewer.tsx", () => ({
 						</div>
 					)),
 				)}
-				{comments
-					.filter((comment) => comment.fileId === diff.fileId && !comment.stale)
-					.map((comment) => (
-						<button
-							aria-label={`Open comment at ${comment.path}`}
-							key={comment.id}
-							onClick={() => onCommentClick(comment)}
-							type="button"
-						>
-							{comment.body}
-						</button>
-					))}
 			</div>
 		);
 	}),
@@ -288,26 +254,4 @@ export class EventSourceStub {
 		EventSourceStub.instances.push(this);
 	}
 	close() {}
-}
-
-export function fixtureComment(id: string, body: string, stale = false): Record<string, unknown> {
-	return {
-		id,
-		fileId: "first",
-		path: "src/first.ts",
-		side: "mixed",
-		startLine: 1,
-		endLine: 1,
-		oldStartLine: 1,
-		oldEndLine: 1,
-		newStartLine: 1,
-		newEndLine: 1,
-		hunkHeader: "@@ -1,2 +1,2 @@",
-		excerpt: ["- const value = load(oldPath);", "+ const value = load(newPath);"],
-		body,
-		contentRevision: "first-v1",
-		stale,
-		createdAt: "2026-07-20T10:00:00.000Z",
-		updatedAt: "2026-07-20T10:00:00.000Z",
-	};
 }

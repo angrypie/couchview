@@ -1,24 +1,6 @@
-import type {
-	DiffHunk,
-	DiffLine,
-	DiffSide,
-	FileDiff,
-	ReviewComment,
-} from "../../../shared/contracts.ts";
+import type { DiffHunk, DiffLine, DiffSide, FileDiff } from "../../../shared/contracts.ts";
 
-export interface CommentSelection {
-	side: DiffSide;
-	start: number;
-	end: number;
-	oldStartLine?: number;
-	oldEndLine?: number;
-	newStartLine?: number;
-	newEndLine?: number;
-	hunk?: DiffHunk;
-	excerpt: string[];
-}
-
-export interface HunkRow {
+interface HunkRow {
 	type: "hunk";
 	key: string;
 	hunk: DiffHunk;
@@ -35,15 +17,6 @@ export interface LineRow {
 
 export type DisplayRow = HunkRow | LineRow;
 export type SelectableSide = Exclude<DiffSide, "mixed">;
-
-export interface LineSelection {
-	side: DiffSide;
-	hunkId: string;
-	anchorIndex: number;
-	focusIndex: number;
-	anchorSide: SelectableSide;
-	focusSide: SelectableSide;
-}
 
 export interface HunkNavigation {
 	previous: number | null;
@@ -118,70 +91,4 @@ export function navigationAtVisibleLine(
 		previous: hunks.length > 0 ? hunks.length - 1 : null,
 		next: null,
 	};
-}
-
-export function workingTreeLineAtRow(rows: readonly DisplayRow[], rowIndex: number): number {
-	const target = rows[rowIndex];
-	if (target?.type !== "line") return 1;
-	if (target.line.newLine !== null) return Math.max(1, target.line.newLine);
-	for (let distance = 1; distance < rows.length; distance += 1) {
-		for (const candidateIndex of [rowIndex + distance, rowIndex - distance]) {
-			const candidate = rows[candidateIndex];
-			if (
-				candidate?.type === "line" &&
-				candidate.hunk.id === target.hunk.id &&
-				candidate.line.newLine !== null
-			) {
-				return Math.max(1, candidate.line.newLine);
-			}
-		}
-	}
-	return Math.max(1, target.hunk.newStart);
-}
-
-export function lineMatchesComment(line: DiffLine, comment: ReviewComment): boolean {
-	if (comment.side === "mixed") {
-		const oldMatches =
-			line.oldLine !== null &&
-			comment.oldStartLine !== undefined &&
-			comment.oldEndLine !== undefined &&
-			line.oldLine >= comment.oldStartLine &&
-			line.oldLine <= comment.oldEndLine;
-		const newMatches =
-			line.newLine !== null &&
-			comment.newStartLine !== undefined &&
-			comment.newEndLine !== undefined &&
-			line.newLine >= comment.newStartLine &&
-			line.newLine <= comment.newEndLine;
-		return oldMatches || newMatches;
-	}
-	const lineNumber = sideLine(line, comment.side);
-	return lineNumber !== null && lineNumber >= comment.startLine && lineNumber <= comment.endLine;
-}
-
-export function formatSelectionReference(
-	path: string,
-	selection: {
-		side: DiffSide;
-		start: number;
-		end: number;
-		oldStartLine?: number;
-		oldEndLine?: number;
-		newStartLine?: number;
-		newEndLine?: number;
-	},
-): string {
-	const formatRange = (start: number, end: number) =>
-		start === end ? `L${start}` : `L${start}-L${end}`;
-	if (
-		selection.side === "mixed" &&
-		selection.oldStartLine !== undefined &&
-		selection.oldEndLine !== undefined &&
-		selection.newStartLine !== undefined &&
-		selection.newEndLine !== undefined
-	) {
-		return `${path}:old ${formatRange(selection.oldStartLine, selection.oldEndLine)} / new ${formatRange(selection.newStartLine, selection.newEndLine)}`;
-	}
-	const side = selection.side === "old" ? " (old)" : "";
-	return `${path}:${formatRange(selection.start, selection.end)}${side}`;
 }

@@ -1,26 +1,17 @@
-import type {
-	CodexCapability,
-	CommitMessageCapability,
-	RemoteBridgeCapability,
-} from "../../shared/contracts.ts";
-import { CodexCommentsPanel } from "../CodexCommentsPanel.tsx";
+import type { CommitMessageCapability, RemoteBridgeCapability } from "../../shared/contracts.ts";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
 import { RemoteBridgeSheet } from "../RemoteBridgeSheet.tsx";
-import { CommentComposerSheet } from "./CommentComposerSheet.tsx";
-import { CommentsTray } from "./CommentsTray.tsx";
 import { CommitComposerSheet } from "./CommitComposerSheet.tsx";
 import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
-import { ManualCopySheet } from "./ManualCopySheet.tsx";
 import { PackageRunSheet } from "./PackageRunSheet.tsx";
 import { RepositoryPickerSheet } from "./RepositoryPickerSheet.tsx";
 import { SearchSheet } from "./SearchSheet.tsx";
 
 interface ReviewWorkspaceOverlaysProps {
-	codexCapability: CodexCapability;
 	commitMessageCapability: CommitMessageCapability;
 	failureReporting: ReturnType<typeof useFailureReporting>;
 	management: ReturnType<typeof useRepositoryManagement>;
@@ -34,7 +25,6 @@ interface ReviewWorkspaceOverlaysProps {
 }
 
 export function ReviewWorkspaceOverlays({
-	codexCapability,
 	commitMessageCapability,
 	failureReporting,
 	management,
@@ -46,7 +36,7 @@ export function ReviewWorkspaceOverlays({
 	workflow,
 	workspace,
 }: ReviewWorkspaceOverlaysProps) {
-	const { comments, commit, diff, search } = workflow;
+	const { commit, search } = workflow;
 	return (
 		<>
 			<RepositoryPickerSheet
@@ -108,18 +98,6 @@ export function ReviewWorkspaceOverlays({
 				sourcePreview={search.sourcePreview}
 			/>
 
-			<CommentComposerSheet
-				activeFile={diff.activeFile}
-				body={comments.body}
-				busy={comments.busy}
-				editingComment={comments.editingComment}
-				onBodyChange={comments.setBody}
-				onClose={() => comments.setComposerOpen(false)}
-				onSubmit={(event) => void comments.saveComment(event)}
-				open={comments.composerOpen}
-				selection={diff.commentSelection}
-			/>
-
 			<CommitComposerSheet
 				busy={commit.busy}
 				capability={commitMessageCapability}
@@ -144,45 +122,11 @@ export function ReviewWorkspaceOverlays({
 				snapshot={packages.snapshot}
 			/>
 
-			<CommentsTray
-				activeCommentCount={comments.activeComments.length}
-				capability={codexCapability}
-				comments={comments.comments}
-				currentCommentCount={comments.currentCommentCount}
-				focusedCommentId={comments.focusedCommentId}
-				onClose={() => comments.setTrayOpen(false)}
-				onCopy={() => void comments.copyComments()}
-				onDelete={(comment) => void comments.deleteComment(comment)}
-				onEdit={comments.editComment}
-				onJump={comments.jumpToComment}
-				onSendToCodex={() => {
-					comments.setTrayOpen(false);
-					comments.setCodexPanelOpen(true);
-				}}
-				open={comments.trayOpen}
-			/>
-
-			{comments.codexPanelOpen && workspace.repositoryId && workspace.bootstrap && (
-				<CodexCommentsPanel
-					capability={codexCapability}
-					csrfToken={workspace.bootstrap.csrfToken}
-					currentCommentCount={comments.currentCommentCount}
-					onClose={() => comments.setCodexPanelOpen(false)}
-					repositoryId={workspace.repositoryId}
-					showToast={showToast}
-				/>
-			)}
-
 			<FailureDetailsSheet
 				failure={failureReporting.failure}
 				onClose={() => failureReporting.setDetailsOpen(false)}
 				onCopy={() => void failureReporting.copyDiagnostics()}
 				open={failureReporting.detailsOpen}
-			/>
-
-			<ManualCopySheet
-				onClose={() => comments.setCopyFallbackText("")}
-				text={comments.copyFallbackText}
 			/>
 		</>
 	);

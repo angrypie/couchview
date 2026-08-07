@@ -12,8 +12,6 @@ import type {
 	PackageRunResponse,
 	PackageRunsResponse,
 	PackageScriptsResponse,
-	RemoteBridgeLeaseRequest,
-	RemoteBridgeTicketRequest,
 	StageFileRequest,
 	StageFilesRequest,
 	StartPackageRunRequest,
@@ -38,7 +36,6 @@ import {
 	normalizeOrigin,
 	normalizeRequestHost,
 	readJsonObject,
-	remoteBridgeDeviceToken,
 } from "./serverHttp.ts";
 import { openPackageRunEvents } from "./serverPackageRunEvents.ts";
 import { handleRepositoryCollaborationRoutes } from "./serverRepositoryCollaborationRoutes.ts";
@@ -88,7 +85,7 @@ export async function handleRepositoryApi(
 	}
 
 	const repository = await repositories.get(repositoryId);
-	const fileRoute = /^files\/([^/]+)\/(diff|stage|review|comments)$/.exec(nestedPath);
+	const fileRoute = /^files\/([^/]+)\/(diff|stage|review)$/.exec(nestedPath);
 	const packageRunRoute = /^package-runs\/([^/]+)(?:\/(stop|events))?$/.exec(nestedPath);
 	const artifactRoute = /^artifacts\/([^/]+)$/.exec(nestedPath);
 	const artifactRunRoute = /^artifacts\/([^/]+)\/runs(?:\/([^/]+)\/(stop|events))?$/.exec(
@@ -185,9 +182,6 @@ export async function handleRepositoryApi(
 	if (nestedPath === "files" && request.method === "GET") {
 		return json(await repository.changes());
 	}
-	if (nestedPath === "terminal" && request.method === "GET") {
-		return json(await terminalSessions.status(repositoryId));
-	}
 	if (nestedPath === "terminal/attachments" && request.method === "POST") {
 		const input = await readJsonObject<TerminalAttachmentRequest>(request);
 		const origin = request.headers.get("origin");
@@ -275,23 +269,6 @@ export async function handleRepositoryApi(
 	if (remoteBridgePairingRoute && request.method === "DELETE") {
 		remoteBridge.revokeDevice(decodeSegment(remoteBridgePairingRoute[1] ?? ""));
 		return new Response(null, { status: 204 });
-	}
-	if (nestedPath === "remote-bridge/tickets" && request.method === "POST") {
-		const input = await readJsonObject<RemoteBridgeTicketRequest>(request);
-		return json(
-			remoteBridge.issueTicket(remoteBridgeDeviceToken(request), input, {
-				host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
-			}),
-			{ status: 201 },
-		);
-	}
-	if (nestedPath === "remote-bridge/lease" && request.method === "POST") {
-		const input = await readJsonObject<RemoteBridgeLeaseRequest>(request);
-		return json(
-			remoteBridge.renewLease(remoteBridgeDeviceToken(request), input, {
-				host: normalizeRequestHost(request.headers.get("host") ?? new URL(request.url).host),
-			}),
-		);
 	}
 	if (fileRoute?.[2] === "diff" && request.method === "GET") {
 		return json(await repository.diff(decodeSegment(fileRoute[1] ?? "")));

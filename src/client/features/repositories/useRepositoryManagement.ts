@@ -176,7 +176,7 @@ export function useRepositoryManagement({
 				!bootstrap ||
 				forgetBusy ||
 				!window.confirm(
-					`Forget ${entry.name}? Its saved reviews and comments will be deleted, and any running tmux session—including running programs and unsaved work—will be terminated.`,
+					`Forget ${entry.name}? Its saved review state will be deleted, and any running tmux session—including running programs and unsaved work—will be terminated.`,
 				)
 			) {
 				return;

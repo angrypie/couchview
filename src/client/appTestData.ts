@@ -64,7 +64,6 @@ export const initialFiles = [
 		deletions: 1,
 		contentRevision: "first-v1",
 		reviewed: false,
-		commentCount: 0,
 	},
 	{
 		id: "second",
@@ -81,7 +80,6 @@ export const initialFiles = [
 		deletions: 0,
 		contentRevision: "second-v1",
 		reviewed: false,
-		commentCount: 0,
 	},
 ];
 

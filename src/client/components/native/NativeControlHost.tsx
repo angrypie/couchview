@@ -4,7 +4,7 @@ import { useResolveClassNames } from "uniwind";
 
 import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 
-export function NativeControlHost({ children }: { children: ReactNode }) {
+function NativeControlHost({ children }: { children: ReactNode }) {
 	const { resolvedTheme } = useNativePreferences();
 	const { color: seedColor } = useResolveClassNames("text-primary");
 

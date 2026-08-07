@@ -27,7 +27,6 @@ interface ReviewWorkspaceChromeProps {
 	onDrawerOpenChange: (open: boolean) => void;
 	onDrawerViewChange: (view: DrawerView) => void;
 	onOpenCommandPalette: () => void;
-	onOpenComments: () => void;
 	onOpenFailure: () => void;
 	onOpenArtifacts: () => void;
 	onOpenGitHistory: () => void;
@@ -56,7 +55,6 @@ export function ReviewWorkspaceChrome({
 	onDrawerOpenChange,
 	onDrawerViewChange,
 	onOpenCommandPalette,
-	onOpenComments,
 	onOpenFailure,
 	onOpenArtifacts,
 	onOpenGitHistory,
@@ -72,7 +70,7 @@ export function ReviewWorkspaceChrome({
 	workspace,
 	workspaceMode,
 }: ReviewWorkspaceChromeProps) {
-	const { comments, diff, review, search, staging } = workflow;
+	const { diff, review, search, staging } = workflow;
 	const commandsAvailable =
 		packages.scripts.packages.length > 0 ||
 		packages.scripts.warnings.length > 0 ||
@@ -130,7 +128,6 @@ export function ReviewWorkspaceChrome({
 				fontSize={display.fontSize}
 				lineNumbersVisible={display.lineNumbersVisible}
 				lineWrapEnabled={display.lineWrapEnabled}
-				onComments={onOpenComments}
 				onFontSizeChange={display.setFontSize}
 				onLineNumbersChange={display.setLineNumbersVisible}
 				onLineWrapChange={display.setLineWrapEnabled}
@@ -150,7 +147,6 @@ export function ReviewWorkspaceChrome({
 				splitView={splitView}
 				terminalActive={workspaceMode === "terminal"}
 				terminalCapability={terminalCapability}
-				totalCommentCount={comments.comments.length}
 			/>
 
 			{workspace.connectionState === "offline" && !compactLandscape && (
@@ -167,8 +163,6 @@ export function ReviewWorkspaceChrome({
 			/>
 
 			<DiffWorkspace
-				commentComposerOpen={comments.composerOpen}
-				comments={comments.comments}
 				diff={diff.diff}
 				diffError={diff.error}
 				diffLoading={diff.loading}
@@ -177,11 +171,7 @@ export function ReviewWorkspaceChrome({
 				fontSize={display.fontSize}
 				lineNumbersVisible={display.lineNumbersVisible}
 				lineWrapEnabled={display.lineWrapEnabled}
-				onClearSelection={() => diff.setSelection(null)}
-				onCommentClick={comments.openInlineComment}
 				onIdentifierClick={search.openWithQuery}
-				onLineNumberClick={diff.handleViewerLineNumberClick}
-				onOpenCommentComposer={comments.openComposer}
 				onOpenFailure={onOpenFailure}
 				onRetry={() => {
 					if (!diff.currentFileId) return;
@@ -192,11 +182,9 @@ export function ReviewWorkspaceChrome({
 				onVisibleLineChange={diff.handleVisibleLineChange}
 				retryAvailable={Boolean(diff.currentFileId)}
 				rowCount={diff.rows.length}
-				selection={diff.commentSelection}
 				typography={display.typography.diff}
 				themeType={themeType}
 				viewerRef={diff.viewerRef}
-				viewerSelection={diff.viewerSelection}
 			/>
 
 			<ReviewBottomBar
@@ -207,7 +195,6 @@ export function ReviewWorkspaceChrome({
 				canNavigateNextHunk={diff.canNavigateNextHunk}
 				canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
 				fileCount={workspace.files.length}
-				onComments={onOpenComments}
 				onNavigateFile={diff.navigateFile}
 				onNavigateHunk={diff.navigateHunk}
 				onReview={() =>
@@ -217,7 +204,6 @@ export function ReviewWorkspaceChrome({
 				onToggleStage={() => void staging.toggleActiveFile()}
 				reviewBusy={review.busy}
 				stageBusy={staging.busy}
-				totalCommentCount={comments.comments.length}
 			/>
 		</>
 	);

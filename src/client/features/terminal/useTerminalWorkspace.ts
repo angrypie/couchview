@@ -466,5 +466,3 @@ export function useTerminalWorkspace({
 		virtualControlActive,
 	};
 }
-
-export type TerminalWorkspaceController = ReturnType<typeof useTerminalWorkspace>;

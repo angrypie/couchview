@@ -2,7 +2,7 @@ import type { RemoteBridgeOriginAccessProvider } from "./remoteBridgeOriginAcces
 
 export const CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID = "cloudflare-access";
 
-export interface CloudflareAccessTokenOptions {
+interface CloudflareAccessTokenOptions {
 	allowLogin?: boolean;
 }
 
@@ -34,7 +34,7 @@ async function readCloudflareAccessToken(
 	};
 }
 
-export async function cloudflareAccessToken(
+async function cloudflareAccessToken(
 	origin: string,
 	options: CloudflareAccessTokenOptions = {},
 ): Promise<string> {

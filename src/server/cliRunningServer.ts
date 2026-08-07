@@ -1,8 +1,6 @@
 import {
 	API_ROUTES,
 	type ApiErrorBody,
-	type BootstrapResponse,
-	CSRF_HEADER,
 	type InstanceResponse,
 	type RegisterRepositoryResponse,
 	type RestartResponse,
@@ -121,20 +119,6 @@ async function responseError(response: Response): Promise<string> {
 	}
 }
 
-async function responseErrorDetails(
-	response: Response,
-): Promise<{ code: string | null; message: string }> {
-	try {
-		const body = (await response.json()) as ApiErrorBody;
-		return {
-			code: body.error.code,
-			message: body.error.message,
-		};
-	} catch {
-		return { code: null, message: `HTTP ${response.status}` };
-	}
-}
-
 function isRestartResponse(value: unknown): value is RestartResponse {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Partial<RestartResponse>;
@@ -147,7 +131,7 @@ async function requestRunningRestart(
 	fetchImplementation: typeof globalThis.fetch,
 ): Promise<RestartResponse> {
 	const requestTimeoutMs = 5 * 60_000 + 10_000;
-	let response = await fetchWithTimeout(
+	const response = await fetchWithTimeout(
 		`${origin}${API_ROUTES.controlRestart}`,
 		fetchImplementation,
 		{
@@ -157,43 +141,6 @@ async function requestRunningRestart(
 		requestTimeoutMs,
 	);
 	if (!response) throw new Error("The running Couchview server stopped responding");
-
-	if (!response.ok) {
-		const error = await responseErrorDetails(response);
-		const legacyControlRoute =
-			response.status === 404 ||
-			error.code === "route_not_found" ||
-			error.code === "origin_required";
-		if (!legacyControlRoute) throw new Error(error.message);
-
-		const bootstrapResponse = await fetchWithTimeout(
-			`${origin}${API_ROUTES.bootstrap}`,
-			fetchImplementation,
-		);
-		if (!bootstrapResponse?.ok) {
-			throw new Error("The running Couchview server stopped responding");
-		}
-		const bootstrap = (await bootstrapResponse
-			.json()
-			.catch(() => null)) as Partial<BootstrapResponse> | null;
-		if (!bootstrap || typeof bootstrap.csrfToken !== "string") {
-			throw new Error("The running Couchview server returned invalid control data");
-		}
-		response = await fetchWithTimeout(
-			`${origin}${API_ROUTES.restart}`,
-			fetchImplementation,
-			{
-				method: "POST",
-				headers: {
-					origin,
-					[CSRF_HEADER]: bootstrap.csrfToken,
-				},
-			},
-			requestTimeoutMs,
-		);
-		if (!response) throw new Error("The running Couchview server stopped responding");
-	}
-
 	if (!response.ok) throw new Error(await responseError(response));
 	const result: unknown = await response.json().catch(() => null);
 	if (!isRestartResponse(result)) {

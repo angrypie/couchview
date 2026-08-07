@@ -6,7 +6,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import type { ChangeFile, ChangesResponse, FileDiff } from "../../../shared/contracts.ts";
+import type { ChangesResponse, FileChange, FileDiff } from "../../../shared/contracts.ts";
 import { ApiError, api } from "../../api.ts";
 import type { FailureState } from "../../lib/failures.ts";
 import { applyChangeFileDelta, withDiffFileMetadata } from "./changeFiles.ts";
@@ -18,12 +18,12 @@ interface PendingStageMutation {
 }
 
 interface UseStagingWorkflowOptions {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	activeFileIndex: number;
 	csrfToken?: string;
 	currentFileId: string | null;
 	diff: FileDiff | null;
-	files: ChangeFile[];
+	files: FileChange[];
 	loadDiff: (fileId: string, resetPosition?: boolean) => Promise<unknown>;
 	onOperationRevision: (operationRevision: string) => void;
 	operationRevision: string;
@@ -32,7 +32,7 @@ interface UseStagingWorkflowOptions {
 	repositoryId: string | null;
 	setCurrentFileId: Dispatch<SetStateAction<string | null>>;
 	setDiff: (diff: FileDiff | null) => void;
-	setFiles: Dispatch<SetStateAction<ChangeFile[]>>;
+	setFiles: Dispatch<SetStateAction<FileChange[]>>;
 	showToast: (message: string) => void;
 }
 

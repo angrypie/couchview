@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-	ChangeFile,
+	FileChange,
 	SearchMatch,
 	SearchResponse,
 	SourcePreviewResponse,
@@ -11,7 +11,7 @@ import { messageOf } from "../../lib/failures.ts";
 export type SearchScope = "current" | "other";
 
 interface UseRepositorySearchOptions {
-	activeFile: ChangeFile | null;
+	activeFile: FileChange | null;
 	repositoryId: string | null;
 	showToast: (message: string) => void;
 }

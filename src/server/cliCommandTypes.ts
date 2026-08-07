@@ -4,7 +4,7 @@ export const CLI_VERSION = packageJson.version;
 
 export type CliCommandName = "serve" | "restart" | "completion" | "bridge" | "artifacts";
 export type CompletionShell = "zsh" | "bash" | "fish";
-export type ArtifactCliAction = "list" | "build" | "download" | "pull";
+type ArtifactCliAction = "list" | "build" | "download" | "pull";
 
 export interface ParsedArtifactArguments {
 	action: ArtifactCliAction;
