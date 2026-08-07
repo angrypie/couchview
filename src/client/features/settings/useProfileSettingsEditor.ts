@@ -11,8 +11,7 @@ import {
 	type SettingsProfileData,
 	type ShortcutSequence,
 } from "../../../shared/settings.ts";
-import { COMMAND_DEFINITIONS } from "../../commands.ts";
-import { shortcutStrokeFromEvent } from "../../shortcutEngine.ts";
+import { formatShortcutInput, parseShortcutInput } from "./shortcutInput.ts";
 
 export interface ProfileSettingsEditorOptions {
 	onBack(): void;
@@ -31,6 +30,26 @@ export interface ProfileSettingsEditorOptions {
 	profile: SettingsProfile;
 }
 
+export type ProfileSettingsDialog =
+	| { kind: "create"; value: string }
+	| { kind: "delete" }
+	| { kind: "discard-close" }
+	| { kind: "discard-switch"; profileId: string }
+	| { kind: "duplicate"; value: string }
+	| { kind: "error"; message: string }
+	| {
+			kind: "shortcut";
+			commandId: CommandId;
+			value: string;
+			error: string | null;
+	  }
+	| {
+			kind: "shortcut-conflict";
+			commandId: CommandId;
+			binding: ShortcutSequence;
+			conflictingIds: CommandId[];
+	  };
+
 function cloneData(data: SettingsProfileData): SettingsProfileData {
 	return structuredClone(data);
 }
@@ -39,8 +58,8 @@ function dataEqual(left: SettingsProfileData, right: SettingsProfileData): boole
 	return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function commandName(commandId: CommandId): string {
-	return COMMAND_DEFINITIONS[commandId].title;
+function errorMessage(error: unknown, fallback: string): string {
+	return error instanceof Error ? error.message : fallback;
 }
 
 export function useProfileSettingsEditor({
@@ -56,16 +75,11 @@ export function useProfileSettingsEditor({
 }: ProfileSettingsEditorOptions) {
 	const [draft, setDraft] = useState(() => cloneData(profile.data));
 	const [name, setName] = useState(profile.name);
-	const [recordingId, setRecordingId] = useState<CommandId | null>(null);
-	const [recorded, setRecorded] = useState<ShortcutSequence>([]);
-	const recordingTimerRef = useRef<number | null>(null);
-	const recordedRef = useRef<ShortcutSequence>([]);
+	const [dialog, setDialog] = useState<ProfileSettingsDialog | null>(null);
 	const profileBaseRef = useRef(profile);
-	const applyRecordedRef = useRef<(commandId: CommandId, binding: ShortcutSequence) => void>(
-		() => undefined,
-	);
 	const dirty = name !== profile.name || !dataEqual(draft, profile.data);
 	const effectiveBindings = useMemo(() => effectiveKeybindings(draft.keyboard), [draft.keyboard]);
+	const editingShortcut = dialog?.kind === "shortcut" || dialog?.kind === "shortcut-conflict";
 
 	useEffect(() => {
 		const previous = profileBaseRef.current;
@@ -73,8 +87,7 @@ export function useProfileSettingsEditor({
 		if (profile.id !== previous.id || !hadLocalChanges) {
 			setDraft(cloneData(profile.data));
 			setName(profile.name);
-			setRecordingId(null);
-			setRecorded([]);
+			setDialog(null);
 		}
 		profileBaseRef.current = profile;
 	}, [profile.id, profile.revision]);
@@ -83,158 +96,157 @@ export function useProfileSettingsEditor({
 	}, [dirty, onDirtyChange]);
 	useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 	useEffect(() => {
-		onRecordingChange(recordingId !== null);
+		onRecordingChange(editingShortcut);
 		return () => onRecordingChange(false);
-	}, [onRecordingChange, recordingId]);
+	}, [editingShortcut, onRecordingChange]);
 
 	const updateDraft = (update: (current: SettingsProfileData) => SettingsProfileData) => {
 		setDraft((current) => update(cloneData(current)));
 	};
 
-	const applyRecorded = (commandId: CommandId, binding: ShortcutSequence) => {
-		if (commandId === "palette.open" && !paletteShortcutHasRequiredModifier(binding)) {
-			window.alert("The command palette shortcut must begin with a modifier.");
-			return;
-		}
+	const applyShortcut = (
+		commandId: CommandId,
+		binding: ShortcutSequence,
+		replaceConflicts = false,
+	) => {
 		const next = cloneData(draft);
 		next.keyboard.bindings[commandId] = binding;
 		const conflicts = keybindingConflicts(effectiveKeybindings(next.keyboard)).filter(
 			(conflict) => conflict.first === commandId || conflict.second === commandId,
 		);
-		if (conflicts.length > 0) {
-			const conflictingIds = [
-				...new Set(
-					conflicts.flatMap((conflict) =>
-						[conflict.first, conflict.second].filter((id) => id !== commandId),
-					),
+		const conflictingIds = [
+			...new Set(
+				conflicts.flatMap((conflict) =>
+					[conflict.first, conflict.second].filter((id) => id !== commandId),
 				),
-			];
-			const replace = window.confirm(
-				`This conflicts with ${conflictingIds.map(commandName).join(", ")}. Replace the existing binding?`,
-			);
-			if (!replace) return;
-			for (const conflictingId of conflictingIds) {
-				next.keyboard.bindings[conflictingId] = null;
-			}
+			),
+		];
+		if (conflictingIds.length > 0 && !replaceConflicts) {
+			setDialog({ kind: "shortcut-conflict", commandId, binding, conflictingIds });
+			return;
 		}
+		for (const conflictingId of conflictingIds) next.keyboard.bindings[conflictingId] = null;
 		setDraft(next);
+		setDialog(null);
 	};
-	applyRecordedRef.current = applyRecorded;
 
-	useEffect(() => {
-		if (!recordingId) return;
-		const finish = (binding: ShortcutSequence) => {
-			if (recordingTimerRef.current !== null) {
-				window.clearTimeout(recordingTimerRef.current);
-				recordingTimerRef.current = null;
-			}
-			if (binding.length > 0) applyRecordedRef.current(recordingId, binding);
-			setRecordingId(null);
-			recordedRef.current = [];
-			setRecorded([]);
-		};
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === "Escape") {
-				event.preventDefault();
-				setRecordingId(null);
-				recordedRef.current = [];
-				setRecorded([]);
+	const confirmDialog = async () => {
+		if (!dialog) return;
+		try {
+			if (dialog.kind === "create") {
+				const value = dialog.value.trim();
+				if (!value) return;
+				await onCreate(value);
+				setDialog(null);
 				return;
 			}
-			const stroke = shortcutStrokeFromEvent(event);
-			if (!stroke || event.repeat) return;
-			event.preventDefault();
-			event.stopImmediatePropagation();
-			const next = [...recordedRef.current, stroke].slice(0, 4);
-			recordedRef.current = next;
-			setRecorded(next);
-			if (recordingTimerRef.current !== null) window.clearTimeout(recordingTimerRef.current);
-			if (next.length === 4) {
-				finish(next);
-			} else {
-				recordingTimerRef.current = window.setTimeout(() => finish(next), 1_000);
+			if (dialog.kind === "duplicate") {
+				const value = dialog.value.trim();
+				if (!value) return;
+				await onDuplicate(profile.id, value);
+				setDialog(null);
+				return;
 			}
-		};
-		window.addEventListener("keydown", onKeyDown, true);
-		return () => {
-			window.removeEventListener("keydown", onKeyDown, true);
-			if (recordingTimerRef.current !== null) window.clearTimeout(recordingTimerRef.current);
-			recordingTimerRef.current = null;
-		};
-	}, [recordingId]);
+			if (dialog.kind === "delete") {
+				await onDelete(profile.id);
+				setDialog(null);
+				return;
+			}
+			if (dialog.kind === "discard-close") {
+				setDialog(null);
+				onDirtyChange(false);
+				onBack();
+				return;
+			}
+			if (dialog.kind === "discard-switch") {
+				setDialog(null);
+				onSelect(dialog.profileId);
+				return;
+			}
+			if (dialog.kind === "shortcut") {
+				let binding: ShortcutSequence;
+				try {
+					binding = parseShortcutInput(dialog.value);
+				} catch (error) {
+					setDialog({ ...dialog, error: errorMessage(error, "Enter a valid shortcut.") });
+					return;
+				}
+				if (dialog.commandId === "palette.open" && !paletteShortcutHasRequiredModifier(binding)) {
+					setDialog({ ...dialog, error: "The command palette shortcut must begin with Mod." });
+					return;
+				}
+				applyShortcut(dialog.commandId, binding);
+				return;
+			}
+			if (dialog.kind === "shortcut-conflict") {
+				applyShortcut(dialog.commandId, dialog.binding, true);
+				return;
+			}
+			setDialog(null);
+		} catch (error) {
+			setDialog({ kind: "error", message: errorMessage(error, "Settings could not be updated.") });
+		}
+	};
 
 	const switchProfile = (profileId: string) => {
 		if (profileId === profile.id) return;
-		if (dirty && !window.confirm("Discard unsaved profile changes?")) return;
-		onSelect(profileId);
+		if (dirty) setDialog({ kind: "discard-switch", profileId });
+		else onSelect(profileId);
 	};
 	const close = () => {
-		if (dirty && !window.confirm("Discard unsaved profile changes?")) return;
-		onBack();
+		if (dirty) setDialog({ kind: "discard-close" });
+		else onBack();
 	};
 	const save = async () => {
 		try {
 			await onSave(profile.id, name, parseSettingsProfileData(draft), profile.revision);
 		} catch (error) {
-			window.alert(error instanceof Error ? error.message : "Settings could not be saved.");
+			setDialog({ kind: "error", message: errorMessage(error, "Settings could not be saved.") });
 		}
-	};
-	const createProfile = async () => {
-		const createdName = window.prompt("New profile name", "New profile");
-		if (!createdName?.trim()) return;
-		try {
-			await onCreate(createdName);
-		} catch (error) {
-			window.alert(error instanceof Error ? error.message : "Profile could not be created.");
-		}
-	};
-	const duplicateProfile = async () => {
-		const duplicatedName = window.prompt("Duplicate profile name", `${profile.name} copy`);
-		if (!duplicatedName?.trim()) return;
-		try {
-			await onDuplicate(profile.id, duplicatedName);
-		} catch (error) {
-			window.alert(error instanceof Error ? error.message : "Profile could not be duplicated.");
-		}
-	};
-	const deleteProfile = async () => {
-		if (
-			profile.id !== DEFAULT_SETTINGS_PROFILE_ID &&
-			window.confirm(`Delete the “${profile.name}” profile?`)
-		) {
-			try {
-				await onDelete(profile.id);
-			} catch (error) {
-				window.alert(error instanceof Error ? error.message : "Profile could not be deleted.");
-			}
-		}
-	};
-	const toggleRecording = (commandId: CommandId) => {
-		recordedRef.current = [];
-		setRecorded([]);
-		setRecordingId(recordingId === commandId ? null : commandId);
 	};
 
 	return {
 		close,
-		createProfile,
-		deleteProfile,
+		confirmDialog,
+		createProfile: () => setDialog({ kind: "create", value: "New profile" }),
+		deleteProfile: () => {
+			if (profile.id !== DEFAULT_SETTINGS_PROFILE_ID) setDialog({ kind: "delete" });
+		},
+		dialog,
 		dirty,
 		discard: () => {
 			setDraft(cloneData(profile.data));
 			setName(profile.name);
+			setDialog(null);
 		},
+		dismissDialog: () => setDialog(null),
 		draft,
-		duplicateProfile,
+		duplicateProfile: () => setDialog({ kind: "duplicate", value: `${profile.name} copy` }),
+		editShortcut: (commandId: CommandId) =>
+			setDialog({
+				kind: "shortcut",
+				commandId,
+				value:
+					effectiveBindings[commandId] === null
+						? ""
+						: formatShortcutInput(effectiveBindings[commandId]),
+				error: null,
+			}),
 		effectiveBindings,
 		name,
-		recorded,
-		recordingId,
 		resetProfile: (data: SettingsProfileData) => setDraft(cloneData(data)),
 		save,
+		setDialogValue: (value: string) =>
+			setDialog((current) => {
+				if (!current) return null;
+				if (current.kind === "create" || current.kind === "duplicate") {
+					return { ...current, value };
+				}
+				if (current.kind === "shortcut") return { ...current, value, error: null };
+				return current;
+			}),
 		setName,
 		switchProfile,
-		toggleRecording,
 		updateDraft,
 	};
 }

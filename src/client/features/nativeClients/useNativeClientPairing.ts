@@ -54,7 +54,7 @@ export function useNativeClientPairing({
 
 	useEffect(() => {
 		if (!active || !pairing) return;
-		const interval = window.setInterval(() => {
+		const interval = setInterval(() => {
 			if (Date.now() >= new Date(pairing.payload.expiresAt).getTime()) {
 				setPairing(null);
 				setError("That app pairing expired. Generate a new link to continue.");
@@ -67,7 +67,7 @@ export function useNativeClientPairing({
 				}
 			});
 		}, 2_000);
-		return () => window.clearInterval(interval);
+		return () => clearInterval(interval);
 	}, [active, onNotice, pairing, refresh]);
 
 	useEffect(

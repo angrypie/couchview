@@ -1,5 +1,8 @@
-import { ArrowLeft, ChevronRight, Folder, LoaderCircle, MoveUp, Plus, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Folder, MoveUp, Plus } from "lucide-react-native";
+import { ScrollView, View } from "react-native";
+
 import type { useRepositoryDirectoryBrowser } from "../features/repositories/useRepositoryDirectoryBrowser.ts";
+import { Button, Icon, IconButton, ListItem, Sheet, Spinner, Text } from "./ui";
 
 interface RepositoryDirectoryPickerSheetProps {
 	addBusy: boolean;
@@ -18,81 +21,63 @@ export function RepositoryDirectoryPickerSheet({
 }: RepositoryDirectoryPickerSheetProps) {
 	const listing = browser.listing;
 	return (
-		<section
-			aria-label="Choose project folder"
-			aria-modal="true"
-			className="bottom-sheet repository-directory-picker"
-			role="dialog"
-		>
-			<span className="sheet-grabber" />
-			<header className="sheet-header">
-				<button
-					aria-label="Back to add project"
-					className="icon-button"
-					onClick={onBack}
-					type="button"
-				>
-					<ArrowLeft size={19} />
-				</button>
-				<div className="repository-directory-heading">
-					<h2 className="sheet-title">Choose project folder</h2>
-					<div className="repo-meta">Folders on the Couchview server</div>
-				</div>
-				{browser.busy && <LoaderCircle className="spinner" size={17} />}
-				<button
-					aria-label="Close project folder picker"
-					className="icon-button"
-					onClick={onClose}
-					type="button"
-				>
-					<X size={19} />
-				</button>
-			</header>
-			<div className="repository-directory-path" title={listing?.path}>
-				<code>{listing?.path ?? "Opening server folders…"}</code>
-			</div>
-			<div className="repository-directory-list">
-				{listing?.parent && (
-					<button
-						className="repository-directory-row parent"
-						disabled={browser.busy}
-						onClick={() => void browser.browse(listing.parent ?? undefined)}
-						type="button"
+		<Sheet
+			description="Folders on the Couchview server"
+			footer={
+				<View className="w-full gap-2">
+					{listing?.truncated ? (
+						<Text className="text-muted-foreground" size="xs">
+							Showing the first 500 folders.
+						</Text>
+					) : null}
+					<Button
+						disabled={!listing || browser.busy || addBusy}
+						fullWidth
+						leftIcon={Plus}
+						loading={addBusy}
+						onPress={() => listing && onChoose(listing.path)}
 					>
-						<MoveUp size={17} />
-						<span>Parent folder</span>
-						<ChevronRight size={16} />
-					</button>
-				)}
+						Add this project
+					</Button>
+				</View>
+			}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) onClose();
+			}}
+			open
+			title="Choose project folder"
+		>
+			<View className="flex-row items-center gap-2">
+				<IconButton accessibilityLabel="Back to add project" icon={ArrowLeft} onPress={onBack} />
+				<Text className="min-w-0 flex-1 font-mono" numberOfLines={1} selectable size="xs">
+					{listing?.path ?? "Opening server folders…"}
+				</Text>
+				{browser.busy ? <Spinner /> : null}
+			</View>
+			<ScrollView className="max-h-[52vh]" contentContainerClassName="gap-1">
+				{listing?.parent ? (
+					<ListItem
+						disabled={browser.busy}
+						leading={<Icon as={MoveUp} size={18} tone="muted" />}
+						onPress={() => void browser.browse(listing.parent ?? undefined)}
+						title="Parent folder"
+						trailing={<Icon as={ChevronRight} size={16} tone="muted" />}
+					/>
+				) : null}
 				{listing?.directories.map((directory) => (
-					<button
-						className="repository-directory-row"
+					<ListItem
 						disabled={browser.busy}
 						key={directory.path}
-						onClick={() => void browser.browse(directory.path)}
-						type="button"
-					>
-						<Folder size={17} />
-						<span>{directory.name}</span>
-						<ChevronRight size={16} />
-					</button>
+						leading={<Icon as={Folder} size={18} tone="muted" />}
+						onPress={() => void browser.browse(directory.path)}
+						title={directory.name}
+						trailing={<Icon as={ChevronRight} size={16} tone="muted" />}
+					/>
 				))}
-				{listing && listing.directories.length === 0 && (
-					<div className="repository-directory-empty">No subfolders</div>
-				)}
-			</div>
-			<footer className="sheet-footer repository-directory-footer">
-				{listing?.truncated && <div className="progress-label">Showing the first 500 folders.</div>}
-				<button
-					className="action-button"
-					disabled={!listing || browser.busy || addBusy}
-					onClick={() => listing && onChoose(listing.path)}
-					type="button"
-				>
-					{addBusy ? <LoaderCircle className="spinner" size={16} /> : <Plus size={16} />}
-					Add this project
-				</button>
-			</footer>
-		</section>
+				{listing && listing.directories.length === 0 ? (
+					<Text className="py-8 text-center text-muted-foreground">No subfolders</Text>
+				) : null}
+			</ScrollView>
+		</Sheet>
 	);
 }

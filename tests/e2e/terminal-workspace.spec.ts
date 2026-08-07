@@ -55,7 +55,9 @@ test.describe("desktop tmux terminal", () => {
 
 		const workspace = page.getByRole("region", { name: "tmux terminal" });
 		await expect(workspace).toBeVisible();
-		await expect(workspace.locator(".terminal-keyboard-bar")).toBeHidden();
+		await expect(
+			workspace.getByRole("toolbar", { name: "Terminal keyboard shortcuts" }),
+		).toBeHidden();
 		await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
@@ -64,7 +66,10 @@ test.describe("desktop tmux terminal", () => {
 			"false",
 		);
 		await expect(workspace.getByTestId("terminal-latency-overlay")).toHaveCount(0);
-		await expect(page.locator(".terminal-surface")).toHaveCSS("caret-color", "rgba(0, 0, 0, 0)");
+		await expect(workspace.getByTestId("terminal-surface")).toHaveCSS(
+			"caret-color",
+			"rgba(0, 0, 0, 0)",
+		);
 		await expect
 			.poll(() =>
 				loadedAssets.some((pathname) =>
@@ -75,22 +80,18 @@ test.describe("desktop tmux terminal", () => {
 		await expect
 			.poll(() =>
 				loadedAssets.some((pathname) =>
-					/\/assets\/node_modules\/ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
+					/\/assets\/.*ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
 				),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) =>
-					/\/_expo\/static\/assets\/fonts\/Iosevka-Regular-[^/]+\.woff2$/.test(pathname),
-				),
+				loadedAssets.some((pathname) => /\/assets\/.*Iosevka-Regular[^/]*\.woff2$/.test(pathname)),
 			)
 			.toBe(true);
 		await expect
 			.poll(() =>
-				loadedAssets.some((pathname) =>
-					/\/_expo\/static\/assets\/fonts\/Iosevka-Bold-[^/]+\.woff2$/.test(pathname),
-				),
+				loadedAssets.some((pathname) => /\/assets\/.*Iosevka-Bold[^/]*\.woff2$/.test(pathname)),
 			)
 			.toBe(true);
 		const state = async () =>
@@ -99,8 +100,9 @@ test.describe("desktop tmux terminal", () => {
 
 		const initialDimensions = (await state()).resizes.at(-1);
 		expect(initialDimensions).toBeDefined();
-		const previousRowContamination = await page
-			.locator(".terminal-surface canvas")
+		const previousRowContamination = await workspace
+			.getByTestId("terminal-surface")
+			.locator("canvas")
 			.evaluate((canvas, rows) => {
 				const context = (canvas as HTMLCanvasElement).getContext("2d");
 				if (!context) return -1;
@@ -140,14 +142,14 @@ test.describe("desktop tmux terminal", () => {
 		expect(bounds).not.toBeNull();
 		expect(bounds!.width).toBeGreaterThanOrEqual(1270);
 		expect(bounds!.height).toBeGreaterThanOrEqual(790);
-		const toolbarBounds = await workspace.locator(".terminal-toolbar").boundingBox();
+		const toolbarBounds = await workspace.getByTestId("terminal-toolbar").boundingBox();
 		expect(toolbarBounds).not.toBeNull();
 		expect(toolbarBounds!.height).toBeLessThanOrEqual(32);
 		const reviewBounds = await workspace.getByRole("button", { name: "Review" }).boundingBox();
 		expect(reviewBounds).not.toBeNull();
 		expect(reviewBounds!.height).toBeGreaterThanOrEqual(24);
 
-		const terminalSurface = page.locator(".terminal-surface");
+		const terminalSurface = workspace.getByTestId("terminal-surface");
 		const canvas = terminalSurface.locator("canvas");
 		const primaryModifier = await page.evaluate(() => {
 			const userAgentData = (
@@ -181,14 +183,14 @@ test.describe("desktop tmux terminal", () => {
 		await page.keyboard.press(`${primaryModifier}+k`);
 		await expect(
 			page.getByRole("dialog", {
-				name: "Couchview command palette",
+				name: "Command palette",
 			}),
 		).toBeVisible();
 		expect((await state()).inputs.join("")).toBe(inputBeforePalette);
 		await page.keyboard.press("Escape");
 		await expect(
 			page.getByRole("dialog", {
-				name: "Couchview command palette",
+				name: "Command palette",
 			}),
 		).toHaveCount(0);
 		await expect(terminalSurface).toBeFocused();
@@ -267,7 +269,7 @@ test.describe("desktop tmux terminal", () => {
 		await page.getByRole("button", { name: "Open tmux terminal" }).click();
 
 		const workspace = page.getByRole("region", { name: "tmux terminal" });
-		const surface = workspace.locator(".terminal-surface");
+		const surface = workspace.getByTestId("terminal-surface");
 		await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
@@ -280,9 +282,7 @@ test.describe("desktop tmux terminal", () => {
 		await page.keyboard.type("direct-data-channel");
 		await expect.poll(async () => (await state()).inputs.join("")).toContain("direct-data-channel");
 		const overlay = workspace.getByTestId("terminal-latency-overlay");
-		const baseline = overlay.locator(".terminal-latency-grid > div").filter({
-			hasText: "Baseline RTT",
-		});
+		const baseline = overlay.getByTestId("terminal-latency-baseline");
 		await expect(baseline.locator("strong")).toHaveText(/\d+\.\d ms/);
 
 		const failed = await request.post("/api/e2e/terminal/p2p/fail", {
@@ -323,9 +323,7 @@ test.describe("desktop tmux terminal", () => {
 		const overlay = workspace.getByTestId("terminal-latency-overlay");
 		await expect(overlay).toContainText("Key → canvas");
 		await expect(overlay).toContainText("Baseline RTT");
-		const networkMetric = overlay.locator(".terminal-latency-grid > div").filter({
-			hasText: "Baseline RTT",
-		});
+		const networkMetric = overlay.getByTestId("terminal-latency-baseline");
 		await expect(networkMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
 
 		await debug.click();
@@ -363,26 +361,28 @@ test.describe("desktop tmux terminal", () => {
 				return hash >>> 0;
 			});
 
-		await workspace.locator(".terminal-surface").click();
+		await workspace.getByTestId("terminal-surface").click();
 		await page.waitForTimeout(150);
 		const before = await canvasHash();
 		await page.keyboard.press("x");
 
-		const keyMetric = resumedOverlay.locator(".terminal-latency-grid > div").filter({
-			hasText: "Key → canvas",
-		});
+		const keyMetric = resumedOverlay.getByTestId("terminal-latency-key");
 		await expect(keyMetric.locator("strong")).toHaveText(/\d+\.\d ms/);
 		await expect(keyMetric.locator("small")).toContainText("n=1");
-		for (const label of ["Press → send", "Send → receive", "Receive → paint"]) {
-			const phase = resumedOverlay.locator(".terminal-latency-phases > div").filter({
-				hasText: label,
-			});
+		for (const testId of [
+			"terminal-latency-press-to-send",
+			"terminal-latency-send-to-receive",
+			"terminal-latency-receive-to-paint",
+		]) {
+			const phase = resumedOverlay.getByTestId(testId);
 			await expect(phase.locator("strong")).toHaveText(/\d+\.\d ms/);
 		}
-		for (const label of ["Receive → write done", "Frame wait", "Canvas render"]) {
-			const detail = resumedOverlay.locator(".terminal-latency-receive-detail > div").filter({
-				hasText: label,
-			});
+		for (const testId of [
+			"terminal-latency-receive-to-write",
+			"terminal-latency-frame-wait",
+			"terminal-latency-canvas-render",
+		]) {
+			const detail = resumedOverlay.getByTestId(testId);
 			await expect(detail.locator("strong")).toHaveText(/\d+\.\d ms/);
 		}
 		expect(await canvasHash()).not.toBe(before);
@@ -432,14 +432,12 @@ test.describe("desktop tmux terminal", () => {
 		await expect
 			.poll(() =>
 				loadedAssets.some((pathname) =>
-					/\/assets\/node_modules\/ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
+					/\/assets\/.*ghostty-web\/ghostty-vt\.[^/]+\.wasm$/.test(pathname),
 				),
 			)
 			.toBe(true);
 		expect(
-			loadedAssets.some((pathname) =>
-				/\/_expo\/static\/assets\/fonts\/Iosevka-[^/]+\.woff2$/.test(pathname),
-			),
+			loadedAssets.some((pathname) => /\/assets\/.*Iosevka-[^/]*\.woff2$/.test(pathname)),
 		).toBe(false);
 
 		const state = (await (await request.get("/api/e2e/terminal")).json()) as TerminalFixtureState;
@@ -464,10 +462,20 @@ test.describe("desktop tmux terminal", () => {
 		await page.getByRole("button", { name: "Open settings" }).click();
 
 		const settings = page.getByRole("region", { name: "Settings" });
-		const fontSize = settings.locator("#terminal-font-size");
-		await fontSize.fill("16");
-		await fontSize.fill("17");
-		await fontSize.fill("18");
+		const fontSize = settings.getByRole("slider", { name: "Terminal font size" });
+		await expect(fontSize).toHaveAttribute("aria-valuenow", "15");
+		for (const expectedValue of ["16", "17", "18"]) {
+			const bounds = await fontSize.boundingBox();
+			expect(bounds).not.toBeNull();
+			const target = Number(expectedValue);
+			const thumbSize = 20;
+			const valueOffset = ((target - 8) / (32 - 8)) * (bounds!.width - thumbSize);
+			await page.mouse.click(
+				bounds!.x + thumbSize / 2 + valueOffset,
+				bounds!.y + bounds!.height / 2,
+			);
+			await expect(fontSize).toHaveAttribute("aria-valuenow", expectedValue);
+		}
 		expect((await state()).attachmentCount).toBe(1);
 		expect((await state()).socketConnections).toBe(1);
 
@@ -485,6 +493,8 @@ test.describe("desktop tmux terminal", () => {
 		await expect(workspace.getByText("Connected", { exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
+		await expect.poll(async () => (await state()).attachmentCount).toBe(2);
+		await expect.poll(async () => (await state()).socketConnections).toBe(2);
 		await expect(workspace.getByText("Loading terminal", { exact: true })).toHaveCount(0);
 		expect((await state()).attachmentCount).toBe(2);
 		expect((await state()).socketConnections).toBe(2);

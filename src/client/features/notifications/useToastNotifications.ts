@@ -20,8 +20,8 @@ export function useToastNotifications() {
 
 	useEffect(() => {
 		if (!toast) return;
-		const timeout = window.setTimeout(dismissToast, toast.details ? 12_000 : 5_200);
-		return () => window.clearTimeout(timeout);
+		const timeout = setTimeout(dismissToast, toast.details ? 12_000 : 5_200);
+		return () => clearTimeout(timeout);
 	}, [dismissToast, toast]);
 
 	return {

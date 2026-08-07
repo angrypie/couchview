@@ -1,8 +1,24 @@
-import { Archive, ArrowLeft, Plus, RefreshCw, Search, Sparkles } from "lucide-react";
+import { Archive, ArrowLeft, Plus, RefreshCw, Search, Sparkles } from "lucide-react-native";
 import { useState } from "react";
+import { ScrollView, View } from "react-native";
 
 import type { RepositorySummary } from "../../../shared/contracts.ts";
 import type { ArtifactsController } from "../../features/artifacts/index.ts";
+import {
+	Button,
+	Card,
+	CardContent,
+	EmptyState,
+	Heading,
+	HStack,
+	Icon,
+	IconButton,
+	Select,
+	Spinner,
+	Text,
+	Toolbar,
+	VStack,
+} from "../ui/index.ts";
 import { ArtifactCard } from "./ArtifactCard.tsx";
 import { ArtifactDefinitionForm } from "./ArtifactDefinitionForm.tsx";
 
@@ -34,106 +50,114 @@ export function ArtifactsPage({
 		setCreationMode(null);
 		setEditingId(null);
 	};
+	const startCreation = (mode: "manual" | "suggest") => {
+		setEditingId(null);
+		setCreationMode(mode);
+	};
 
 	return (
-		<main aria-label="Repository artifacts" className="artifacts-page">
-			<header className="artifacts-toolbar">
-				<button
-					aria-label="Review"
-					className="terminal-toolbar-button"
-					onClick={onBack}
-					type="button"
+		<View
+			accessibilityLabel="Repository artifacts"
+			className="min-h-0 flex-1 bg-background"
+			role="main"
+		>
+			<Toolbar className="min-h-14" placement="top">
+				<Button leftIcon={ArrowLeft} onPress={onBack} size="sm" variant="outline">
+					Review
+				</Button>
+				<HStack align="center" className="min-w-0 flex-1" space="sm">
+					<Icon as={Archive} size={18} tone="primary" />
+					<VStack className="min-w-0" space="xs">
+						<Heading className="text-base" level={1} numberOfLines={1}>
+							Artifacts
+						</Heading>
+						<Text numberOfLines={1} size="xs" tone="muted">
+							{repository?.name ?? "Repository"}
+						</Text>
+					</VStack>
+				</HStack>
+				<IconButton
+					accessibilityHint={`Shortcut: ${commandPaletteShortcut}`}
+					accessibilityLabel="Open command palette"
+					icon={Search}
+					onPress={onOpenCommandPalette}
+				/>
+				<IconButton
+					accessibilityHint={controller.proposalCapability.reason ?? "Suggest artifact with Codex"}
+					accessibilityLabel="Suggest artifact with Codex"
+					disabled={!repositoryId || creating || !controller.proposalCapability.available}
+					icon={Sparkles}
+					onPress={() => startCreation("suggest")}
+				/>
+				<Button
+					disabled={!repositoryId || creating}
+					leftIcon={Plus}
+					onPress={() => startCreation("manual")}
+					size="sm"
 				>
-					<ArrowLeft size={16} /> <span>Review</span>
-				</button>
-				<div className="artifacts-heading">
-					<Archive size={16} />
-					<div>
-						<strong>Artifacts</strong>
-						<span>{repository?.name ?? "Repository"}</span>
-					</div>
-				</div>
-				<div className="artifacts-toolbar-actions">
-					<button
-						aria-label="Open command palette"
-						className="terminal-toolbar-button command-palette-trigger"
-						onClick={onOpenCommandPalette}
-						title={`Open command palette (${commandPaletteShortcut})`}
-						type="button"
-					>
-						<Search size={15} />
-						<span className="workspace-command-label">Commands</span>
-						<kbd className="workspace-command-shortcut">{commandPaletteShortcut}</kbd>
-					</button>
-					<button
-						className="action-button artifacts-new-button"
-						disabled={!repositoryId || creating}
-						onClick={() => {
-							setEditingId(null);
-							setCreationMode("manual");
-						}}
-						type="button"
-					>
-						<Plus size={15} /> New artifact
-					</button>
-					<button
-						aria-label="Suggest artifact with Codex"
-						className="terminal-toolbar-button artifacts-suggest-button"
-						disabled={!repositoryId || creating || !controller.proposalCapability.available}
-						onClick={() => {
-							setEditingId(null);
-							setCreationMode("suggest");
-						}}
-						title={controller.proposalCapability.reason ?? "Suggest artifact with Codex"}
-						type="button"
-					>
-						<Sparkles size={15} /> <span>Suggest</span>
-					</button>
-				</div>
-			</header>
-			<div className="artifacts-scroll">
-				<section className="artifacts-intro">
-					<div>
-						<h1>Build once, download anywhere</h1>
-						<p>
-							Couchview runs an exact command in this repository, snapshots one output, and retains
-							the latest two successful builds. Installation remains up to the downloader.
-						</p>
-					</div>
-					<div className="artifact-device-picker">
-						{controller.devices.length ? (
-							<>
-								<label htmlFor="artifact-cli-device">CLI device</label>
-								<select
-									id="artifact-cli-device"
-									onChange={(event) => controller.setSelectedDeviceId(event.target.value)}
-									value={controller.selectedDeviceId ?? ""}
-								>
-									{controller.devices.map((device) => (
-										<option key={device.id} value={device.id}>
-											{device.label} · {device.sshAlias}
-										</option>
-									))}
-								</select>
-							</>
-						) : (
-							<button className="text-button" onClick={onOpenPairing} type="button">
-								Pair a device for CLI pulls
-							</button>
-						)}
-					</div>
-				</section>
+					New
+				</Button>
+			</Toolbar>
 
-				{controller.error && (
-					<div className="artifact-error" role="alert">
-						<span>{controller.error}</span>
-						<button className="text-button" onClick={() => void controller.refresh()} type="button">
-							<RefreshCw size={13} /> Retry
-						</button>
-					</div>
-				)}
+			<ScrollView
+				className="min-h-0 flex-1"
+				contentContainerClassName="mx-auto w-full max-w-5xl gap-4 p-4 pb-safe"
+				contentInsetAdjustmentBehavior="automatic"
+			>
+				<Card>
+					<CardContent>
+						<View className="gap-4 md:flex-row md:items-center md:justify-between">
+							<VStack className="min-w-0 flex-1" space="sm">
+								<Heading level={2}>Build once, download anywhere</Heading>
+								<Text className="leading-5" tone="muted">
+									Couchview runs an exact command in this repository, snapshots one output, and
+									retains the latest two successful builds. Installation remains up to the
+									downloader.
+								</Text>
+							</VStack>
+							<View className="min-w-64">
+								{controller.devices.length ? (
+									<Select
+										label="CLI device"
+										onValueChange={controller.setSelectedDeviceId}
+										options={controller.devices.map((device) => ({
+											label: `${device.label} · ${device.sshAlias}`,
+											value: device.id,
+										}))}
+										value={controller.selectedDeviceId ?? undefined}
+									/>
+								) : (
+									<Button onPress={onOpenPairing} variant="outline">
+										Pair a device for CLI pulls
+									</Button>
+								)}
+							</View>
+						</View>
+					</CardContent>
+				</Card>
 
-				{creating && (
+				{controller.error ? (
+					<HStack
+						accessibilityRole="alert"
+						align="center"
+						className="rounded-xl border border-destructive bg-destructive/10 p-3"
+						space="sm"
+					>
+						<Text className="min-w-0 flex-1" tone="destructive">
+							{controller.error}
+						</Text>
+						<Button
+							leftIcon={RefreshCw}
+							onPress={() => void controller.refresh()}
+							size="sm"
+							variant="outline"
+						>
+							Retry
+						</Button>
+					</HStack>
+				) : null}
+
+				{creating ? (
 					<ArtifactDefinitionForm
 						busy={controller.busy.new === "create"}
 						onCancel={closeEditor}
@@ -147,14 +171,21 @@ export function ArtifactsPage({
 						proposalCapability={controller.proposalCapability}
 						suggestOnOpen={creationMode === "suggest"}
 					/>
-				)}
+				) : null}
 
 				{controller.loading && !controller.artifacts.length ? (
-					<div className="artifacts-state" role="status">
-						<span className="spinner" /> Loading artifact definitions…
-					</div>
+					<VStack
+						accessibilityRole="progressbar"
+						align="center"
+						className="min-h-40"
+						justify="center"
+						space="sm"
+					>
+						<Spinner />
+						<Text tone="muted">Loading artifact definitions…</Text>
+					</VStack>
 				) : controller.artifacts.length ? (
-					<div className="artifact-list">
+					<VStack space="md">
 						{controller.artifacts.map((item) =>
 							editingId === item.definition.id ? (
 								<ArtifactDefinitionForm
@@ -191,32 +222,30 @@ export function ArtifactsPage({
 								/>
 							),
 						)}
-					</div>
+					</VStack>
 				) : !creating && !controller.error ? (
-					<div className="artifacts-state empty">
-						<Archive size={28} />
-						<h2>No artifacts yet</h2>
-						<p>Define a build command and the exact file or directory it produces.</p>
-						<div className="artifacts-empty-actions">
-							<button
-								className="action-button"
-								onClick={() => setCreationMode("manual")}
-								type="button"
-							>
-								<Plus size={15} /> Create artifact
-							</button>
-							<button
-								className="action-button secondary"
-								disabled={!controller.proposalCapability.available}
-								onClick={() => setCreationMode("suggest")}
-								type="button"
-							>
-								<Sparkles size={15} /> Suggest with Codex
-							</button>
-						</div>
-					</div>
+					<EmptyState
+						action={
+							<HStack space="sm" wrap>
+								<Button leftIcon={Plus} onPress={() => startCreation("manual")}>
+									Create artifact
+								</Button>
+								<Button
+									disabled={!controller.proposalCapability.available}
+									leftIcon={Sparkles}
+									onPress={() => startCreation("suggest")}
+									variant="outline"
+								>
+									Suggest with Codex
+								</Button>
+							</HStack>
+						}
+						description="Define a build command and the exact file or directory it produces."
+						icon={Archive}
+						title="No artifacts yet"
+					/>
 				) : null}
-			</div>
-		</main>
+			</ScrollView>
+		</View>
 	);
 }

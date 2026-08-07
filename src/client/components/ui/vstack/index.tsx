@@ -5,6 +5,20 @@ import { View, type ViewProps } from "react-native";
 const vstackStyle = tva({
 	base: "flex-col",
 	variants: {
+		align: {
+			center: "items-center",
+			end: "items-end",
+			start: "items-start",
+			stretch: "items-stretch",
+		},
+		justify: {
+			around: "justify-around",
+			between: "justify-between",
+			center: "justify-center",
+			end: "justify-end",
+			evenly: "justify-evenly",
+			start: "justify-start",
+		},
 		reversed: {
 			true: "flex-col-reverse",
 		},
@@ -24,12 +38,18 @@ const vstackStyle = tva({
 type VStackProps = ViewProps & VariantProps<typeof vstackStyle>;
 
 const VStack = React.forwardRef<React.ComponentRef<typeof View>, VStackProps>(function VStack(
-	{ className, reversed, space, ...props },
+	{ align, className, justify, reversed, space, ...props },
 	ref,
 ) {
 	return (
 		<View
-			className={vstackStyle({ class: className, reversed: reversed as boolean, space })}
+			className={vstackStyle({
+				align,
+				class: className,
+				justify,
+				reversed: reversed as boolean,
+				space,
+			})}
 			ref={ref}
 			{...props}
 		/>
@@ -38,4 +58,4 @@ const VStack = React.forwardRef<React.ComponentRef<typeof View>, VStackProps>(fu
 
 VStack.displayName = "VStack";
 
-export { VStack };
+export { VStack, type VStackProps };

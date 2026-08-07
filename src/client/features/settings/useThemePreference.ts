@@ -1,108 +1,68 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useAtom, useAtomValue } from "jotai/react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AccessibilityInfo } from "react-native";
 import { ThemeTransitionPreset, Uniwind, useUniwind } from "uniwind";
 
-import {
-	normalizeThemePreference,
-	type ResolvedTheme,
-	THEME_METADATA_COLORS,
-	THEME_PREFERENCE_ATTRIBUTE,
-	THEME_PREFERENCE_STORAGE_KEY,
-	type ThemePreference,
-} from "../../../shared/theme.ts";
+import type { ResolvedTheme, ThemePreference } from "../../../shared/theme.ts";
+import type { PersistedAtom } from "../../lib/store/persistedAtom.ts";
+import { useHydratePersistedAtom } from "../../lib/store/persistedAtom.ts";
+import { themePreferenceState } from "./themePreferenceState.ts";
 
-type ThemeStorageReader = Pick<Storage, "getItem">;
-type ThemeStorageWriter = Pick<Storage, "setItem">;
-
-function browserStorage(): Storage | null {
-	try {
-		return typeof localStorage === "undefined" ? null : localStorage;
-	} catch {
-		return null;
-	}
-}
-
-export function loadThemePreference(storage: ThemeStorageReader | null = browserStorage()) {
-	if (!storage) return normalizeThemePreference(null);
-	try {
-		return normalizeThemePreference(storage.getItem(THEME_PREFERENCE_STORAGE_KEY));
-	} catch {
-		return normalizeThemePreference(null);
-	}
-}
-
-export function saveThemePreference(
-	preference: ThemePreference,
-	storage: ThemeStorageWriter | null = browserStorage(),
-): void {
-	try {
-		storage?.setItem(THEME_PREFERENCE_STORAGE_KEY, preference);
-	} catch {
-		// The live theme remains usable when browser storage is unavailable.
-	}
-}
-
-function exposeThemePreference(preference: ThemePreference, resolvedTheme: ResolvedTheme): void {
-	if (typeof document !== "undefined") {
-		document.documentElement.classList.remove("light", "dark");
-		document.documentElement.classList.add(resolvedTheme);
-		document.documentElement.setAttribute(THEME_PREFERENCE_ATTRIBUTE, preference);
-		document.documentElement.style.colorScheme = resolvedTheme;
-		let themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-		if (!themeColor) {
-			themeColor = document.createElement("meta");
-			themeColor.name = "theme-color";
-			document.head.append(themeColor);
-		}
-		themeColor.content = THEME_METADATA_COLORS[resolvedTheme];
-	}
-}
-
-function prefersReducedMotion(): boolean {
-	return (
-		typeof window !== "undefined" &&
-		typeof window.matchMedia === "function" &&
-		window.matchMedia("(prefers-reduced-motion: reduce)").matches
-	);
-}
-
-export function useThemePreference() {
-	const [preference, setPreference] = useState(loadThemePreference);
-	const preferenceRef = useRef(preference);
-	const pendingUserPreferenceRef = useRef<ThemePreference | null>(null);
-	const { theme } = useUniwind();
-	const resolvedTheme: ResolvedTheme = theme === "dark" ? "dark" : "light";
-
-	useLayoutEffect(() => {
-		const animate = pendingUserPreferenceRef.current === preference && !prefersReducedMotion();
-		pendingUserPreferenceRef.current = null;
-		Uniwind.setTheme(preference, animate ? { preset: ThemeTransitionPreset.Fade } : undefined);
-	}, [preference]);
-
-	useLayoutEffect(() => {
-		exposeThemePreference(preference, resolvedTheme);
-	}, [preference, resolvedTheme]);
+function useReducedMotionEnabled(): boolean {
+	const [enabled, setEnabled] = useState(true);
 
 	useEffect(() => {
-		const onStorage = (event: StorageEvent) => {
-			if (event.key !== null && event.key !== THEME_PREFERENCE_STORAGE_KEY) return;
-			const nextPreference = normalizeThemePreference(event.newValue);
-			pendingUserPreferenceRef.current = null;
-			preferenceRef.current = nextPreference;
-			setPreference(nextPreference);
+		let active = true;
+		void AccessibilityInfo.isReduceMotionEnabled().then(
+			(nextEnabled) => {
+				if (active) setEnabled(nextEnabled);
+			},
+			() => undefined,
+		);
+		const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setEnabled);
+		return () => {
+			active = false;
+			subscription.remove();
 		};
-		window.addEventListener("storage", onStorage);
-		return () => window.removeEventListener("storage", onStorage);
 	}, []);
 
-	const updatePreference = useCallback((nextPreference: ThemePreference) => {
-		if (nextPreference === preferenceRef.current) return;
-		pendingUserPreferenceRef.current = nextPreference;
-		preferenceRef.current = nextPreference;
-		saveThemePreference(nextPreference);
-		setPreference(nextPreference);
-	}, []);
+	return enabled;
+}
+
+export function useThemePreference(
+	persistedState: PersistedAtom<ThemePreference> = themePreferenceState,
+) {
+	const [preference, setPersistedPreference] = useAtom(persistedState.valueAtom);
+	const hydrated = useAtomValue(persistedState.hydratedAtom);
+	const preferenceRef = useRef(preference);
+	const appliedPreferenceRef = useRef<ThemePreference | null>(null);
+	const pendingUserPreferenceRef = useRef<ThemePreference | null>(null);
+	const reducedMotionEnabled = useReducedMotionEnabled();
+	const { theme } = useUniwind();
+	const resolvedTheme: ResolvedTheme = theme === "dark" ? "dark" : "light";
+	useHydratePersistedAtom(persistedState);
+	preferenceRef.current = preference;
+
+	useEffect(() => {
+		if (!hydrated || appliedPreferenceRef.current === preference) return;
+		const animate = pendingUserPreferenceRef.current === preference && !reducedMotionEnabled;
+		pendingUserPreferenceRef.current = null;
+		appliedPreferenceRef.current = preference;
+		Uniwind.setTheme(preference, animate ? { preset: ThemeTransitionPreset.Fade } : undefined);
+	}, [hydrated, preference, reducedMotionEnabled]);
+
+	const updatePreference = useCallback(
+		(nextPreference: ThemePreference) => {
+			if (nextPreference === preferenceRef.current) return;
+			pendingUserPreferenceRef.current = hydrated ? nextPreference : null;
+			preferenceRef.current = nextPreference;
+			void setPersistedPreference(nextPreference).catch(() => undefined);
+		},
+		[hydrated, setPersistedPreference],
+	);
 
 	return {
+		hydrated,
 		preference,
 		resolvedTheme,
 		setPreference: updatePreference,

@@ -110,6 +110,7 @@ const sharedEnv = {
 	PORT: String(apiPort),
 	ALLOWED_ORIGINS: allowedOrigins,
 	COUCHVIEW_API_ORIGIN: apiOrigin,
+	EXPO_PUBLIC_COUCHVIEW_API_ORIGIN: apiOrigin,
 	COUCHVIEW_WEB_HOST: webHost,
 	COUCHVIEW_WEB_PORT: String(webPort),
 	COUCHVIEW_DISABLE_REUSE: "1",
@@ -132,10 +133,19 @@ const backend = Bun.spawn([process.execPath, "run", "src/server/cli.ts"], {
 });
 
 const frontend = Bun.spawn(
-	[process.execPath, "x", "vite", "--host", webHost, "--port", String(webPort), "--strictPort"],
+	[
+		process.execPath,
+		"x",
+		"expo",
+		"start",
+		"--web",
+		webHost === "127.0.0.1" || webHost === "localhost" ? "--localhost" : "--lan",
+		"--port",
+		String(webPort),
+	],
 	{
 		cwd: appRoot,
-		env: sharedEnv,
+		env: { ...sharedEnv, BROWSER: "none" },
 		stdin: "inherit",
 		stdout: "inherit",
 		stderr: "inherit",

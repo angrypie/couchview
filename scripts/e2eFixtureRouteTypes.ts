@@ -20,6 +20,8 @@ export interface FixtureMutableState {
 	gitHead: string;
 	gitStashCount: number;
 	nativeClients: NativeClientDevice[];
+	nativeClientTokens: Map<string, string>;
+	nativePairings: Map<string, { expiresAt: number; sequence: number }>;
 	nativePairingCounter: number;
 	operationRevision: string;
 	packageRuns: PackageRunSummary[];

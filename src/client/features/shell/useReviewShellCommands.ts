@@ -10,7 +10,7 @@ import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorksp
 import type { useReviewWorkflow } from "../review/useReviewWorkflow.ts";
 import type { useDisplayPreferences } from "../settings/useDisplayPreferences.ts";
 import type { DrawerView } from "../staging/types.ts";
-import { useOverlayAccessibility } from "./useOverlayAccessibility.ts";
+import { useOverlayAccessibility } from "./useOverlayAccessibility";
 import type { useWorkspaceNavigation } from "./useWorkspaceNavigation.ts";
 
 interface UseReviewShellCommandsOptions {
@@ -91,7 +91,6 @@ export function useReviewShellCommands({
 		search.setScope("current");
 		search.setSourcePreview(null);
 		search.setOpen(true);
-		window.setTimeout(() => search.inputRef.current?.focus(), 30);
 	}, [search]);
 	const reviewFile = useCallback(
 		(file: FileChange) => {

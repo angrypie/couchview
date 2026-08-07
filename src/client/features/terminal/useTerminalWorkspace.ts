@@ -10,7 +10,6 @@ import {
 	type TerminalCapability,
 	type TerminalWebRtcConfiguration,
 } from "../../../shared/contracts.ts";
-import { api } from "../../api.ts";
 import { type BrowserTerminalRenderer, createBrowserTerminal } from "../../ghosttyTerminal.ts";
 import type { TerminalKeyInput } from "../../terminalKeyboard.ts";
 import {
@@ -25,16 +24,18 @@ import {
 	SAFE_TERMINAL_RENDERER_CONFIG,
 	type TerminalRendererConfig,
 } from "../../typographyPreferences.ts";
+import { type TerminalDomHostActions, unwrapTerminalDomResult } from "./terminalDomContract.ts";
 import { type ConnectionState, useTerminalAttachment } from "./useTerminalAttachment.ts";
 
-export interface TerminalWorkspaceControllerOptions {
+export interface TerminalWorkspaceControllerOptions extends TerminalDomHostActions {
 	active: boolean;
 	capability: TerminalCapability;
-	csrfToken: string;
+	latencyProfilerEnabled?: boolean;
 	rendererConfig: TerminalRendererConfig;
 	repositoryId: string;
-	onEnded(): void;
-	onNotice(message: string): void;
+	onLatencyProfilerChange?(enabled: boolean): Promise<void>;
+	onEnded(): void | Promise<void>;
+	onNotice(message: string): void | Promise<void>;
 }
 
 const clientStorageKey = "couchview:terminal-client-id";
@@ -81,16 +82,39 @@ function rendererLayoutRevision(config: TerminalRendererConfig): string {
 	].join(":");
 }
 
+function useSyncedTerminalLatency(requested: boolean | undefined) {
+	const [enabled, setEnabled] = useState(
+		() => requested ?? terminalLatencyEnabled(window.location.search),
+	);
+	useEffect(() => {
+		if (requested !== undefined) setEnabled(requested);
+	}, [requested]);
+	return [enabled, setEnabled] as const;
+}
+
+function useRendererSafeMode(revision: string) {
+	const [safeMode, setSafeMode] = useState(false);
+	useEffect(() => setSafeMode(false), [revision]);
+	return [safeMode, setSafeMode] as const;
+}
+
 export function useTerminalWorkspace({
 	active,
 	capability,
-	csrfToken,
+	confirm,
+	createAttachment,
+	endTerminal: requestTerminalEnd,
+	latencyProfilerEnabled,
 	rendererConfig,
 	repositoryId,
+	renewLease,
+	terminalWebSocketUrl,
 	onEnded,
+	onLatencyProfilerChange,
 	onNotice,
 }: TerminalWorkspaceControllerOptions) {
-	const [safeMode, setSafeMode] = useState(false);
+	const requestedRendererLayoutRevision = rendererLayoutRevision(rendererConfig);
+	const [safeMode, setSafeMode] = useRendererSafeMode(requestedRendererLayoutRevision);
 	const [rendererReady, setRendererReady] = useState(false);
 	const [rendererGeneration, setRendererGeneration] = useState(0);
 	const [connectionState, setConnectionState] = useState<ConnectionState>("loading");
@@ -100,9 +124,7 @@ export function useTerminalWorkspace({
 	const [rendererRetryNonce, setRendererRetryNonce] = useState(0);
 	const [ending, setEnding] = useState(false);
 	const [virtualControlActive, setVirtualControlActive] = useState(false);
-	const [latencyEnabled, setLatencyEnabled] = useState(
-		terminalLatencyEnabled(window.location.search),
-	);
+	const [latencyEnabled, setLatencyEnabled] = useSyncedTerminalLatency(latencyProfilerEnabled);
 	const [latencySummary, setLatencySummary] = useState<TerminalKeyLatencySummary | null>(null);
 	const [roundTripSummary, setRoundTripSummary] = useState<TerminalLatencySummary | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -137,11 +159,6 @@ export function useTerminalWorkspace({
 	const activeRendererConfigRef = useRef(activeRendererConfig);
 	activeRendererConfigRef.current = activeRendererConfig;
 	const activeRendererLayoutRevision = `${safeMode}:${rendererLayoutRevision(activeRendererConfig)}`;
-	const requestedRendererLayoutRevision = rendererLayoutRevision(rendererConfig);
-
-	useEffect(() => {
-		setSafeMode(false);
-	}, [requestedRendererLayoutRevision]);
 
 	useEffect(() => {
 		suppressAutomaticP2pRef.current = false;
@@ -194,9 +211,8 @@ export function useTerminalWorkspace({
 			return;
 		}
 		let disposed = false;
-		// A renderer configuration change disposes the current renderer and its
-		// socket below. Move readiness back through false so the replacement
-		// renderer can trigger a fresh terminal attachment when it becomes ready.
+		// Move readiness through false so a replacement renderer can request a fresh
+		// terminal attachment when its configuration changes.
 		setRendererReady(false);
 		setVirtualControlActive(false);
 		setConnectionState("loading");
@@ -281,7 +297,8 @@ export function useTerminalWorkspace({
 		activeRef,
 		available: capability.available,
 		clientIdRef,
-		csrfToken,
+		confirm,
+		createAttachment,
 		expectedCloseRef,
 		latencyEnabledRef,
 		latencyTrackerRef,
@@ -291,6 +308,7 @@ export function useTerminalWorkspace({
 		rendererGeneration,
 		rendererReady,
 		rendererRef,
+		renewLease,
 		repositoryId,
 		requestReconnect,
 		retryP2pRef,
@@ -302,6 +320,7 @@ export function useTerminalWorkspace({
 		setTransportStatus,
 		socketRef,
 		suppressAutomaticP2pRef,
+		terminalWebSocketUrl,
 		webRtcConfigurationRef,
 		webRtcRef,
 	});
@@ -342,14 +361,14 @@ export function useTerminalWorkspace({
 
 	const endSession = useCallback(async () => {
 		if (
-			!window.confirm(
+			!(await confirm(
 				"End this persistent tmux session? Running programs and unsaved work will be terminated.",
-			)
+			))
 		)
 			return;
 		setEnding(true);
 		try {
-			await api.endTerminal(repositoryId, csrfToken);
+			unwrapTerminalDomResult(await requestTerminalEnd());
 		} catch (error) {
 			onNotice(error instanceof Error ? error.message : "The tmux session could not be ended.");
 			setEnding(false);
@@ -370,7 +389,7 @@ export function useTerminalWorkspace({
 		setConnectionError(null);
 		setEnding(false);
 		onEnded();
-	}, [csrfToken, onEnded, onNotice, repositoryId]);
+	}, [confirm, onEnded, onNotice, requestTerminalEnd]);
 
 	const retry = useCallback(() => {
 		reconnectAttemptRef.current = 0;
@@ -410,18 +429,22 @@ export function useTerminalWorkspace({
 	const retryP2p = useCallback(() => {
 		retryP2pRef.current?.();
 	}, []);
+	const focusTerminal = useCallback(() => {
+		rendererRef.current?.focus();
+	}, []);
 
 	const toggleLatencyProfiler = useCallback(() => {
 		const nextEnabled = !latencyEnabled;
-		const url = new URL(window.location.href);
-		if (nextEnabled) {
-			url.searchParams.set("terminalLatency", "1");
+		if (onLatencyProfilerChange) {
+			void onLatencyProfilerChange(nextEnabled);
 		} else {
-			url.searchParams.delete("terminalLatency");
+			const url = new URL(window.location.href);
+			if (nextEnabled) url.searchParams.set("terminalLatency", "1");
+			else url.searchParams.delete("terminalLatency");
+			window.history.replaceState(window.history.state, "", url);
 		}
-		window.history.replaceState(window.history.state, "", url);
 		setLatencyEnabled(nextEnabled);
-	}, [latencyEnabled]);
+	}, [latencyEnabled, onLatencyProfilerChange]);
 
 	const preserveTerminalFocus = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
 		event.preventDefault();
@@ -450,6 +473,7 @@ export function useTerminalWorkspace({
 		enableSafeMode,
 		endSession,
 		ending,
+		focusTerminal,
 		keyboardHelpersDisabled,
 		latencyEnabled,
 		latencySummary,

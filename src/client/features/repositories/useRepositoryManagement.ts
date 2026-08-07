@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BootstrapResponse, RepositoryCatalogEntry } from "../../../shared/contracts.ts";
 import { api } from "../../api.ts";
+import { confirmAction } from "../../lib/confirmAction";
 import { messageOf } from "../../lib/failures.ts";
 import { waitForDelay } from "../../lib/waitForDelay.ts";
-import { clearPwaStorage } from "../../offlineApp.ts";
+import { clearPwaStorage } from "../../offlineApp";
 import type { RestartPhase } from "./types.ts";
 import { useRepositoryDirectoryBrowser } from "./useRepositoryDirectoryBrowser.ts";
 import type { RepositoryHistoryMode } from "./useRepositoryWorkspace.ts";
@@ -13,6 +14,7 @@ interface UseRepositoryManagementOptions {
 	clearRepositorySelection: () => void;
 	getRepositoryId: () => string | null;
 	loadRepository: (repositoryId: string, historyMode: RepositoryHistoryMode) => Promise<void>;
+	reloadApplication: () => void | Promise<void>;
 	refreshRepositories: () => Promise<{
 		repositories: RepositoryCatalogEntry[];
 	}>;
@@ -28,6 +30,7 @@ export function useRepositoryManagement({
 	clearRepositorySelection,
 	getRepositoryId,
 	loadRepository,
+	reloadApplication,
 	refreshRepositories,
 	showToast,
 }: UseRepositoryManagementOptions) {
@@ -94,7 +97,7 @@ export function useRepositoryManagement({
 			} catch {
 				// A network reload still refreshes non-PWA and restricted browser sessions.
 			}
-			window.location.reload();
+			await reloadApplication();
 		} catch (error) {
 			if (controller.signal.aborted) return;
 			setRestartPhase(null);
@@ -102,7 +105,7 @@ export function useRepositoryManagement({
 		} finally {
 			if (restartRequestRef.current === controller) restartRequestRef.current = null;
 		}
-	}, [bootstrap, restartPhase, showToast]);
+	}, [bootstrap, reloadApplication, restartPhase, showToast]);
 
 	const selectRepository = useCallback(
 		(entry: RepositoryCatalogEntry) => {
@@ -175,9 +178,9 @@ export function useRepositoryManagement({
 			if (
 				!bootstrap ||
 				forgetBusy ||
-				!window.confirm(
+				!(await confirmAction(
 					`Forget ${entry.name}? Its saved review state will be deleted, and any running tmux session—including running programs and unsaved work—will be terminated.`,
-				)
+				))
 			) {
 				return;
 			}

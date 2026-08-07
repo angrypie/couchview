@@ -1,17 +1,4 @@
-import {
-	ArrowLeft,
-	Copy,
-	Keyboard,
-	Plus,
-	RotateCcw,
-	Save,
-	Search,
-	Server,
-	Settings2,
-	SquareTerminal,
-	Trash2,
-	Type,
-} from "lucide-react";
+import * as Linking from "expo-linking";
 
 import {
 	COMMAND_IDS,
@@ -23,15 +10,36 @@ import {
 	TYPOGRAPHY_LIMITS,
 } from "../../shared/settings.ts";
 import { COMMAND_DEFINITIONS } from "../commands.ts";
+import { formatShortcutInput } from "../features/settings/shortcutInput.ts";
 import {
 	type ProfileSettingsEditor,
 	useProfileSettingsEditor,
 } from "../features/settings/useProfileSettingsEditor.ts";
 import type { ThemePreferenceController } from "../features/settings/useThemePreference.ts";
 import { GhosttyTerminalPreview } from "../GhosttyTerminalPreview.tsx";
-import { formatShortcut } from "../shortcutEngine.ts";
-import { codeFontStack, DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "../typographyPreferences.ts";
+import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "../typographyPreferences.ts";
 import { CodexGenerationSettingsCard } from "./CodexGenerationSettingsCard.tsx";
+import { SettingsEditorDialog } from "./settings/SettingsEditorDialog.tsx";
+import { SettingsField, SettingsSection } from "./settings/SettingsSection.tsx";
+import {
+	Badge,
+	Button,
+	Divider,
+	Heading,
+	HStack,
+	Input,
+	InputField,
+	Radio,
+	RadioGroup,
+	ScrollScreen,
+	Select,
+	Slider,
+	Switch,
+	Text,
+	Toolbar,
+	ToolbarSpacer,
+	VStack,
+} from "./ui";
 
 interface ProfileSettingsPageProps {
 	busy: boolean;
@@ -59,7 +67,6 @@ interface ProfileSettingsPageProps {
 interface TypographySliderProps {
 	description: string;
 	format(value: number): string;
-	id: string;
 	label: string;
 	max: number;
 	min: number;
@@ -71,7 +78,6 @@ interface TypographySliderProps {
 function TypographySlider({
 	description,
 	format,
-	id,
 	label,
 	max,
 	min,
@@ -80,23 +86,16 @@ function TypographySlider({
 	value,
 }: TypographySliderProps) {
 	return (
-		<div className="settings-control">
-			<div className="settings-control-heading">
-				<label htmlFor={id}>{label}</label>
-				<output htmlFor={id}>{format(value)}</output>
-			</div>
-			<input
-				aria-describedby={`${id}-description`}
-				id={id}
-				max={max}
-				min={min}
-				onChange={(event) => onChange(Number(event.target.value))}
+		<SettingsField description={description} label={label} value={format(value)}>
+			<Slider
+				accessibilityLabel={label}
+				maximumValue={max}
+				minimumValue={min}
+				onValueChange={onChange}
 				step={step}
-				type="range"
 				value={value}
 			/>
-			<p id={`${id}-description`}>{description}</p>
-		</div>
+		</SettingsField>
 	);
 }
 
@@ -110,29 +109,20 @@ function FontFamilyPicker({
 	value: CodeFontFamily;
 }) {
 	return (
-		<fieldset className="settings-fieldset">
-			<legend>{label}</legend>
-			<div className="font-family-picker">
-				<button
-					aria-pressed={value === "iosevka"}
-					className={value === "iosevka" ? "active" : ""}
-					onClick={() => onChange("iosevka")}
-					type="button"
-				>
-					<strong>Iosevka</strong>
-					<span>Bundled and identical on every device</span>
-				</button>
-				<button
-					aria-pressed={value === "system"}
-					className={value === "system" ? "active" : ""}
-					onClick={() => onChange("system")}
-					type="button"
-				>
-					<strong>System monospace</strong>
-					<span>Uses ui-monospace from this browser and OS</span>
-				</button>
-			</div>
-		</fieldset>
+		<SettingsField label={label}>
+			<RadioGroup onValueChange={(next) => onChange(next as CodeFontFamily)} value={value}>
+				<Radio
+					description="Bundled and consistent on every device."
+					label="Iosevka"
+					value="iosevka"
+				/>
+				<Radio
+					description="Uses the device’s native monospace typeface."
+					label="System monospace"
+					value="system"
+				/>
+			</RadioGroup>
+		</SettingsField>
 	);
 }
 
@@ -153,53 +143,39 @@ function SettingsToolbar({
 	editor: ProfileSettingsEditor;
 }) {
 	return (
-		<header className="settings-toolbar">
-			<button className="terminal-toolbar-button" onClick={editor.close} type="button">
-				<ArrowLeft size={16} /> Review
-			</button>
-			<div className="settings-heading">
-				<Settings2 size={16} />
-				<span>Settings</span>
-			</div>
-			<div className="settings-toolbar-actions">
-				{nativeServerManagerUrl ? (
-					<a
-						aria-label="Manage paired servers"
-						className="terminal-toolbar-button command-palette-trigger"
-						href={nativeServerManagerUrl}
-					>
-						<Server size={15} />
-						<span className="workspace-command-label">Servers</span>
-					</a>
-				) : null}
-				<button
-					aria-label="Open command palette"
-					className="terminal-toolbar-button command-palette-trigger"
-					onClick={onOpenCommandPalette}
-					type="button"
+		<Toolbar className="flex-wrap" placement="inline">
+			<Button onPress={editor.close} size="sm" variant="ghost">
+				Review
+			</Button>
+			<Heading className="px-1" level={2}>
+				Settings
+			</Heading>
+			<ToolbarSpacer className="min-w-2" />
+			{nativeServerManagerUrl ? (
+				<Button
+					accessibilityLabel="Manage paired servers"
+					onPress={() => void Linking.openURL(nativeServerManagerUrl).catch(() => undefined)}
+					size="sm"
+					variant="ghost"
 				>
-					<Search size={15} />
-					<span className="workspace-command-label">Commands</span>
-					<kbd className="workspace-command-shortcut">{commandPaletteShortcut}</kbd>
-				</button>
-				<button
-					className="terminal-toolbar-button"
-					disabled={!editor.dirty || busy}
-					onClick={editor.discard}
-					type="button"
-				>
-					Discard
-				</button>
-				<button
-					className="action-button settings-save-button"
-					disabled={!editor.dirty || busy}
-					onClick={() => void editor.save()}
-					type="button"
-				>
-					<Save size={15} /> {busy ? "Saving…" : "Save changes"}
-				</button>
-			</div>
-		</header>
+					Servers
+				</Button>
+			) : null}
+			<Button
+				accessibilityLabel={`Open command palette, ${commandPaletteShortcut}`}
+				onPress={onOpenCommandPalette}
+				size="sm"
+				variant="ghost"
+			>
+				Commands · {commandPaletteShortcut}
+			</Button>
+			<Button disabled={!editor.dirty || busy} onPress={editor.discard} size="sm" variant="outline">
+				Discard
+			</Button>
+			<Button disabled={!editor.dirty} loading={busy} onPress={() => void editor.save()} size="sm">
+				Save changes
+			</Button>
+		</Toolbar>
 	);
 }
 
@@ -211,108 +187,117 @@ function ProfilePicker({
 	editor: ProfileSettingsEditor;
 }) {
 	return (
-		<>
-			<div className="settings-intro settings-profile-intro">
-				<div>
-					<h1>Profiles</h1>
-					<p>
-						Profile contents are shared by this Couchview host. This browser remembers only which
-						profile is selected.
-					</p>
-				</div>
-				<div className="settings-profile-actions">
-					<button className="text-button" onClick={() => void editor.createProfile()} type="button">
-						<Plus size={14} /> New
-					</button>
-					<button
-						className="text-button"
-						onClick={() => void editor.duplicateProfile()}
-						type="button"
-					>
-						<Copy size={14} /> Duplicate
-					</button>
-					<button
-						className="text-button danger"
+		<SettingsSection
+			action={
+				<HStack className="flex-wrap justify-end" space="sm">
+					<Button onPress={editor.createProfile} size="sm" variant="outline">
+						New
+					</Button>
+					<Button onPress={editor.duplicateProfile} size="sm" variant="outline">
+						Duplicate
+					</Button>
+					<Button
 						disabled={profile.id === DEFAULT_SETTINGS_PROFILE_ID}
-						onClick={() => void editor.deleteProfile()}
-						type="button"
+						onPress={editor.deleteProfile}
+						size="sm"
+						variant="destructive"
 					>
-						<Trash2 size={14} /> Delete
-					</button>
-				</div>
-			</div>
-			<div className="settings-profile-picker">
-				<label htmlFor="settings-profile">Active profile</label>
-				<select
-					id="settings-profile"
-					onChange={(event) => editor.switchProfile(event.target.value)}
+						Delete
+					</Button>
+				</HStack>
+			}
+			description="Profiles are shared by this Couchview host; the selected profile stays on this device."
+			title="Profiles"
+		>
+			<SettingsField label="Active profile">
+				<Select
+					accessibilityLabel="Active profile"
+					onValueChange={editor.switchProfile}
+					options={profiles.map((item) => ({ label: item.name, value: item.id }))}
 					value={profile.id}
-				>
-					{profiles.map((item) => (
-						<option key={item.id} value={item.id}>
-							{item.name}
-						</option>
-					))}
-				</select>
-				<label htmlFor="settings-profile-name">Profile name</label>
-				<input
-					disabled={profile.id === DEFAULT_SETTINGS_PROFILE_ID}
-					id="settings-profile-name"
-					maxLength={64}
-					onChange={(event) => editor.setName(event.target.value)}
-					value={editor.name}
 				/>
-				<button
-					className="text-button"
-					onClick={() => editor.resetProfile(createDefaultSettingsProfileData())}
-					type="button"
-				>
-					<RotateCcw size={14} /> Reset profile
-				</button>
-			</div>
-		</>
+			</SettingsField>
+			<SettingsField label="Profile name">
+				<Input isDisabled={profile.id === DEFAULT_SETTINGS_PROFILE_ID}>
+					<InputField
+						accessibilityLabel="Profile name"
+						maxLength={64}
+						onChangeText={editor.setName}
+						value={editor.name}
+					/>
+				</Input>
+			</SettingsField>
+			<Button
+				className="self-start"
+				onPress={() => editor.resetProfile(createDefaultSettingsProfileData())}
+				variant="outline"
+			>
+				Reset profile
+			</Button>
+		</SettingsSection>
 	);
 }
 
+const THEME_OPTIONS = [
+	{ description: "Follow this device’s appearance.", label: "System", value: "system" },
+	{ description: "Always use the light interface.", label: "Light", value: "light" },
+	{ description: "Always use the dark interface.", label: "Dark", value: "dark" },
+] as const;
+
 function ThemePreferencePicker({ theme }: { theme: ThemePreferenceController }) {
-	const options = [
-		{
-			description: "Follow this device’s appearance.",
-			label: "System",
-			value: "system",
-		},
-		{ description: "Always use the light interface.", label: "Light", value: "light" },
-		{ description: "Always use the dark interface.", label: "Dark", value: "dark" },
-	] as const;
 	return (
-		<fieldset
-			aria-describedby="theme-preference-description"
-			className="settings-fieldset theme-preference-fieldset"
+		<SettingsField
+			description="Applies immediately on this device, independently of the active profile."
+			label="Color theme"
 		>
-			<legend>Color theme</legend>
-			<p id="theme-preference-description">
-				This choice applies immediately and stays on this device, independently of the active
-				profile.
-			</p>
-			<div className="theme-preference-picker">
-				{options.map((option) => (
-					<label className={theme.preference === option.value ? "active" : ""} key={option.value}>
-						<input
-							aria-label={option.label}
-							checked={theme.preference === option.value}
-							name="theme-preference"
-							onChange={() => theme.setPreference(option.value)}
-							type="radio"
-							value={option.value}
-						/>
-						<span>
-							<strong>{option.label}</strong>
-							<small>{option.description}</small>
-						</span>
-					</label>
+			<RadioGroup onValueChange={theme.setPreference} value={theme.preference}>
+				{THEME_OPTIONS.map((option) => (
+					<Radio
+						description={option.description}
+						key={option.value}
+						label={option.label}
+						value={option.value}
+					/>
 				))}
-			</div>
-		</fieldset>
+			</RadioGroup>
+		</SettingsField>
+	);
+}
+
+function previewFontFamily(fontFamily: CodeFontFamily): string {
+	if (fontFamily === "iosevka") return "Iosevka";
+	return process.env.EXPO_OS === "ios" ? "Menlo" : "monospace";
+}
+
+function DiffTypographyPreview({ editor }: { editor: ProfileSettingsEditor }) {
+	const diff = editor.draft.typography.diff;
+	const lineHeight = Math.max(
+		4,
+		diff.fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER + diff.lineHeightAdjustment,
+	);
+	const textStyle = {
+		fontFamily: previewFontFamily(diff.fontFamily),
+		fontSize: diff.fontSize,
+		letterSpacing: diff.widthAdjustment,
+		lineHeight,
+	};
+	return (
+		<VStack
+			accessibilityLabel="Diff typography preview"
+			className="overflow-hidden rounded-lg border border-border bg-muted p-3"
+			space="xs"
+			testID="diff-typography-preview"
+		>
+			<Text className="text-destructive" style={textStyle}>
+				12 − const layout = browserSurface;
+			</Text>
+			<Text className="text-success" style={textStyle}>
+				12 + const layout = universalSurface;
+			</Text>
+			<Text size="xs" testID="diff-column-ruler" tone="muted">
+				Diff column ruler through 80
+			</Text>
+		</VStack>
 	);
 }
 
@@ -325,336 +310,280 @@ function AppearanceSettingsCard({
 }) {
 	const diff = editor.draft.typography.diff;
 	const terminal = editor.draft.typography.terminal;
-	const diffLineHeight = Math.max(
-		4,
-		diff.fontSize * DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER + diff.lineHeightAdjustment,
-	);
 	return (
-		<section className="settings-card" aria-labelledby="appearance-settings-title">
-			<header className="settings-card-header">
-				<div className="settings-card-heading">
-					<span className="settings-card-icon">
-						<Type size={18} />
-					</span>
-					<div>
-						<h2 id="appearance-settings-title">Appearance</h2>
-						<p>Device color theme and profile-specific typography.</p>
-					</div>
-				</div>
-			</header>
+		<SettingsSection
+			description="Device color theme and profile-specific typography."
+			testID="appearance-settings-card"
+			title="Appearance"
+		>
 			<ThemePreferencePicker theme={theme} />
-			<h3>Diff view</h3>
-			<FontFamilyPicker
-				label="Diff font family"
-				onChange={(fontFamily) =>
-					editor.updateDraft((next) => {
-						next.typography.diff.fontFamily = fontFamily;
-						return next;
-					})
-				}
-				value={diff.fontFamily}
-			/>
-			<TypographySlider
-				description="Changes glyph size without changing terminal text."
-				format={(value) => `${value}px`}
-				id="diff-font-size"
-				label="Font size"
-				onChange={(fontSize) =>
-					editor.updateDraft((next) => {
-						next.typography.diff.fontSize = fontSize;
-						return next;
-					})
-				}
-				value={diff.fontSize}
-				{...TYPOGRAPHY_LIMITS.diff.fontSize}
-			/>
-			<TypographySlider
-				description="Adds pixels to or removes pixels from the diff row height."
-				format={signedPixels}
-				id="diff-line-height-adjustment"
-				label="Line height adjustment"
-				onChange={(value) =>
-					editor.updateDraft((next) => {
-						next.typography.diff.lineHeightAdjustment = value;
-						return next;
-					})
-				}
-				value={diff.lineHeightAdjustment}
-				{...TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment}
-			/>
-			<TypographySlider
-				description="Adds pixels to or removes pixels from character width."
-				format={signedPixels}
-				id="diff-width-adjustment"
-				label="Width adjustment"
-				onChange={(value) =>
-					editor.updateDraft((next) => {
-						next.typography.diff.widthAdjustment = value;
-						return next;
-					})
-				}
-				value={diff.widthAdjustment}
-				{...TYPOGRAPHY_LIMITS.diff.widthAdjustment}
-			/>
-			<div
-				className="typography-preview diff-typography-preview"
-				data-testid="diff-typography-preview"
-				style={{
-					fontFamily: codeFontStack(diff.fontFamily),
-					fontSize: `${diff.fontSize}px`,
-					letterSpacing: `${diff.widthAdjustment}px`,
-					lineHeight: `${diffLineHeight}px`,
-				}}
-			>
-				<div className="diff-preview-lines">
-					<span>
-						<i>12</i>
-						<b>−</b> const layout = legacyBrowser;
-					</span>
-					<span>
-						<i>12</i>
-						<b>+</b> const layout = activeProfile;
-					</span>
-				</div>
-				<span className="sr-only" data-testid="diff-column-ruler">
-					Diff column ruler through 80
-				</span>
-			</div>
-			<h3>
-				<SquareTerminal size={15} /> Terminal
-			</h3>
-			<FontFamilyPicker
-				label="Terminal font family"
-				onChange={(fontFamily) =>
-					editor.updateDraft((next) => {
-						next.typography.terminal.fontFamily = fontFamily;
-						return next;
-					})
-				}
-				value={terminal.fontFamily}
-			/>
-			<TypographySlider
-				description="Sets the persistent terminal glyph size."
-				format={(value) => `${value}px`}
-				id="terminal-font-size"
-				label="Font size"
-				onChange={(fontSize) =>
-					editor.updateDraft((next) => {
-						next.typography.terminal.fontSize = fontSize;
-						return next;
-					})
-				}
-				value={terminal.fontSize}
-				{...TYPOGRAPHY_LIMITS.terminal.fontSize}
-			/>
-			<TypographySlider
-				description="Adds pixels to every measured terminal row."
-				format={signedPixels}
-				id="terminal-cell-height"
-				label="Cell height adjustment"
-				onChange={(value) =>
-					editor.updateDraft((next) => {
-						next.typography.terminal.cellHeightAdjustment = value;
-						return next;
-					})
-				}
-				value={terminal.cellHeightAdjustment}
-				{...TYPOGRAPHY_LIMITS.terminal.cellHeightAdjustment}
-			/>
-			<TypographySlider
-				description="Adds pixels to every measured terminal column."
-				format={signedPixels}
-				id="terminal-cell-width"
-				label="Cell width adjustment"
-				onChange={(value) =>
-					editor.updateDraft((next) => {
-						next.typography.terminal.cellWidthAdjustment = value;
-						return next;
-					})
-				}
-				value={terminal.cellWidthAdjustment}
-				{...TYPOGRAPHY_LIMITS.terminal.cellWidthAdjustment}
-			/>
-			<GhosttyTerminalPreview preferences={terminal} themeType={theme.resolvedTheme} />
-		</section>
+			<Divider />
+			<VStack space="lg">
+				<Heading level={3}>Diff view</Heading>
+				<FontFamilyPicker
+					label="Diff font family"
+					onChange={(fontFamily) =>
+						editor.updateDraft((next) => {
+							next.typography.diff.fontFamily = fontFamily;
+							return next;
+						})
+					}
+					value={diff.fontFamily}
+				/>
+				<TypographySlider
+					description="Changes glyph size without changing terminal text."
+					format={(value) => `${value}px`}
+					label="Diff font size"
+					onChange={(fontSize) =>
+						editor.updateDraft((next) => {
+							next.typography.diff.fontSize = fontSize;
+							return next;
+						})
+					}
+					value={diff.fontSize}
+					{...TYPOGRAPHY_LIMITS.diff.fontSize}
+				/>
+				<TypographySlider
+					description="Adds pixels to or removes pixels from the diff row height."
+					format={signedPixels}
+					label="Diff line height adjustment"
+					onChange={(value) =>
+						editor.updateDraft((next) => {
+							next.typography.diff.lineHeightAdjustment = value;
+							return next;
+						})
+					}
+					value={diff.lineHeightAdjustment}
+					{...TYPOGRAPHY_LIMITS.diff.lineHeightAdjustment}
+				/>
+				<TypographySlider
+					description="Adds pixels to or removes pixels from character width."
+					format={signedPixels}
+					label="Diff width adjustment"
+					onChange={(value) =>
+						editor.updateDraft((next) => {
+							next.typography.diff.widthAdjustment = value;
+							return next;
+						})
+					}
+					value={diff.widthAdjustment}
+					{...TYPOGRAPHY_LIMITS.diff.widthAdjustment}
+				/>
+				<DiffTypographyPreview editor={editor} />
+			</VStack>
+			<Divider />
+			<VStack space="lg">
+				<Heading level={3}>Terminal</Heading>
+				<FontFamilyPicker
+					label="Terminal font family"
+					onChange={(fontFamily) =>
+						editor.updateDraft((next) => {
+							next.typography.terminal.fontFamily = fontFamily;
+							return next;
+						})
+					}
+					value={terminal.fontFamily}
+				/>
+				<TypographySlider
+					description="Sets the persistent terminal glyph size."
+					format={(value) => `${value}px`}
+					label="Terminal font size"
+					onChange={(fontSize) =>
+						editor.updateDraft((next) => {
+							next.typography.terminal.fontSize = fontSize;
+							return next;
+						})
+					}
+					value={terminal.fontSize}
+					{...TYPOGRAPHY_LIMITS.terminal.fontSize}
+				/>
+				<TypographySlider
+					description="Adds pixels to every measured terminal row."
+					format={signedPixels}
+					label="Terminal cell height adjustment"
+					onChange={(value) =>
+						editor.updateDraft((next) => {
+							next.typography.terminal.cellHeightAdjustment = value;
+							return next;
+						})
+					}
+					value={terminal.cellHeightAdjustment}
+					{...TYPOGRAPHY_LIMITS.terminal.cellHeightAdjustment}
+				/>
+				<TypographySlider
+					description="Adds pixels to every measured terminal column."
+					format={signedPixels}
+					label="Terminal cell width adjustment"
+					onChange={(value) =>
+						editor.updateDraft((next) => {
+							next.typography.terminal.cellWidthAdjustment = value;
+							return next;
+						})
+					}
+					value={terminal.cellWidthAdjustment}
+					{...TYPOGRAPHY_LIMITS.terminal.cellWidthAdjustment}
+				/>
+				<GhosttyTerminalPreview preferences={terminal} themeType={theme.resolvedTheme} />
+			</VStack>
+		</SettingsSection>
 	);
 }
 
 function DisplaySettingsCard({ editor }: { editor: ProfileSettingsEditor }) {
 	return (
-		<section className="settings-card" aria-labelledby="display-settings-title">
-			<header className="settings-card-header">
-				<div className="settings-card-heading">
-					<span className="settings-card-icon">
-						<Settings2 size={18} />
-					</span>
-					<div>
-						<h2 id="display-settings-title">Display</h2>
-						<p>Diff presentation shared by this profile.</p>
-					</div>
-				</div>
-			</header>
-			<label className="settings-toggle-row">
-				<span>
-					<strong>Line numbers</strong>
-					<small>Show source line numbers in diffs.</small>
-				</span>
-				<input
-					checked={editor.draft.display.lineNumbersVisible}
-					onChange={(event) =>
-						editor.updateDraft((next) => {
-							next.display.lineNumbersVisible = event.target.checked;
-							return next;
-						})
-					}
-					type="checkbox"
-				/>
-			</label>
-			<label className="settings-toggle-row">
-				<span>
-					<strong>Wrap long lines</strong>
-					<small>Keep long diff lines visible without horizontal scrolling.</small>
-				</span>
-				<input
-					checked={editor.draft.display.lineWrapEnabled}
-					onChange={(event) =>
-						editor.updateDraft((next) => {
-							next.display.lineWrapEnabled = event.target.checked;
-							return next;
-						})
-					}
-					type="checkbox"
-				/>
-			</label>
-		</section>
+		<SettingsSection description="Diff presentation shared by this profile." title="Display">
+			<Switch
+				description="Show source line numbers in diffs."
+				label="Line numbers"
+				onValueChange={(lineNumbersVisible) =>
+					editor.updateDraft((next) => {
+						next.display.lineNumbersVisible = lineNumbersVisible;
+						return next;
+					})
+				}
+				value={editor.draft.display.lineNumbersVisible}
+			/>
+			<Switch
+				description="Keep long diff lines visible without horizontal scrolling."
+				label="Wrap long lines"
+				onValueChange={(lineWrapEnabled) =>
+					editor.updateDraft((next) => {
+						next.display.lineWrapEnabled = lineWrapEnabled;
+						return next;
+					})
+				}
+				value={editor.draft.display.lineWrapEnabled}
+			/>
+		</SettingsSection>
 	);
 }
 
 function KeyboardSettingsCard({ editor }: { editor: ProfileSettingsEditor }) {
 	return (
-		<section
-			className="settings-card settings-keyboard-card"
-			aria-labelledby="keyboard-settings-title"
-		>
-			<header className="settings-card-header">
-				<div className="settings-card-heading">
-					<span className="settings-card-icon">
-						<Keyboard size={18} />
-					</span>
-					<div>
-						<h2 id="keyboard-settings-title">Keyboard shortcuts</h2>
-						<p>Palette and direct shortcuts share this command registry.</p>
-					</div>
-				</div>
-				<button
-					className="text-button"
-					onClick={() =>
+		<SettingsSection
+			action={
+				<Button
+					onPress={() =>
 						editor.updateDraft((next) => {
 							next.keyboard.bindings = {};
 							return next;
 						})
 					}
-					type="button"
+					size="sm"
+					variant="outline"
 				>
 					Reset keymap
-				</button>
-			</header>
-			<fieldset className="settings-fieldset keyboard-layout-picker">
-				<legend>Navigation layout</legend>
-				{(["qwerty", "dvorak"] as const).map((layout) => (
-					<label key={layout}>
-						<input
-							checked={editor.draft.keyboard.layout === layout}
-							name="keyboard-layout"
-							onChange={() =>
-								editor.updateDraft((next) => {
-									next.keyboard.layout = layout;
-									return next;
-								})
-							}
-							type="radio"
-						/>
-						{layout === "qwerty" ? "QWERTY · H J K L" : "Dvorak · H T N S"}
-					</label>
-				))}
-			</fieldset>
-			<div className="keybinding-list">
-				{COMMAND_IDS.map((commandId) => {
+				</Button>
+			}
+			description="Portable shortcut editing for the shared command registry."
+			title="Keyboard shortcuts"
+		>
+			<SettingsField label="Navigation layout">
+				<RadioGroup
+					onValueChange={(layout) =>
+						editor.updateDraft((next) => {
+							next.keyboard.layout = layout === "dvorak" ? "dvorak" : "qwerty";
+							return next;
+						})
+					}
+					orientation="horizontal"
+					value={editor.draft.keyboard.layout}
+				>
+					<Radio label="QWERTY · H J K L" value="qwerty" />
+					<Radio label="Dvorak · H T N S" value="dvorak" />
+				</RadioGroup>
+			</SettingsField>
+			<VStack className="overflow-hidden rounded-xl border border-border" space="xs">
+				{COMMAND_IDS.map((commandId, index) => {
 					const definition = COMMAND_DEFINITIONS[commandId];
-					const isRecording = editor.recordingId === commandId;
 					return (
-						<div className="keybinding-row" key={commandId}>
-							<span className="keybinding-copy">
-								<strong>{definition.title}</strong>
-								<small>{definition.category}</small>
-							</span>
-							<kbd>
-								{isRecording
-									? editor.recorded.length > 0
-										? formatShortcut(editor.recorded)
-										: "Type shortcut…"
-									: formatShortcut(editor.effectiveBindings[commandId])}
-							</kbd>
-							<button
-								data-shortcut-capture={isRecording ? "true" : undefined}
-								onClick={() => editor.toggleRecording(commandId)}
-								type="button"
-							>
-								{isRecording ? "Cancel" : "Record"}
-							</button>
-							<button
-								aria-label={`Clear ${definition.title} shortcut`}
-								onClick={() =>
-									editor.updateDraft((next) => {
-										next.keyboard.bindings[commandId] = null;
-										return next;
-									})
-								}
-								type="button"
-							>
-								Clear
-							</button>
-							<button
-								aria-label={`Reset ${definition.title} shortcut`}
-								disabled={!Object.hasOwn(editor.draft.keyboard.bindings, commandId)}
-								onClick={() =>
-									editor.updateDraft((next) => {
-										delete next.keyboard.bindings[commandId];
-										return next;
-									})
-								}
-								type="button"
-							>
-								Default
-							</button>
-						</div>
+						<VStack
+							className={index === 0 ? "p-3" : "border-t border-border p-3"}
+							key={commandId}
+							space="sm"
+							testID={`keybinding-row-${commandId}`}
+						>
+							<HStack align="center" justify="between" space="sm">
+								<VStack className="min-w-0 flex-1" space="xs">
+									<Text bold>{definition.title}</Text>
+									<Text size="xs" tone="muted">
+										{definition.category}
+									</Text>
+								</VStack>
+								<Badge variant="outline">
+									{formatShortcutInput(editor.effectiveBindings[commandId])}
+								</Badge>
+							</HStack>
+							<HStack className="flex-wrap justify-end" space="sm">
+								<Button onPress={() => editor.editShortcut(commandId)} size="sm" variant="outline">
+									Edit
+								</Button>
+								<Button
+									accessibilityLabel={`Clear ${definition.title} shortcut`}
+									onPress={() =>
+										editor.updateDraft((next) => {
+											next.keyboard.bindings[commandId] = null;
+											return next;
+										})
+									}
+									size="sm"
+									variant="ghost"
+								>
+									Clear
+								</Button>
+								<Button
+									accessibilityLabel={`Reset ${definition.title} shortcut`}
+									disabled={!Object.hasOwn(editor.draft.keyboard.bindings, commandId)}
+									onPress={() =>
+										editor.updateDraft((next) => {
+											delete next.keyboard.bindings[commandId];
+											return next;
+										})
+									}
+									size="sm"
+									variant="ghost"
+								>
+									Default
+								</Button>
+							</HStack>
+						</VStack>
 					);
 				})}
-			</div>
-		</section>
+			</VStack>
+		</SettingsSection>
 	);
 }
 
 export function ProfileSettingsPage(props: ProfileSettingsPageProps) {
 	const editor = useProfileSettingsEditor(props);
 	return (
-		<section aria-label="Settings" className="settings-workspace">
-			<SettingsToolbar
-				busy={props.busy}
-				commandPaletteShortcut={props.commandPaletteShortcut}
-				editor={editor}
-				nativeServerManagerUrl={props.nativeServerManagerUrl}
-				onOpenCommandPalette={props.onOpenCommandPalette}
-			/>
-			<div className="settings-scroll">
+		<>
+			<ScrollScreen
+				accessibilityLabel="Settings"
+				contentContainerClassName="mx-auto w-full max-w-7xl gap-4 pb-12"
+				role="region"
+				testID="settings-workspace"
+			>
+				<SettingsToolbar
+					busy={props.busy}
+					commandPaletteShortcut={props.commandPaletteShortcut}
+					editor={editor}
+					nativeServerManagerUrl={props.nativeServerManagerUrl}
+					onOpenCommandPalette={props.onOpenCommandPalette}
+				/>
 				<ProfilePicker editor={editor} profile={props.profile} profiles={props.profiles} />
-				<div className="settings-grid settings-profile-grid">
-					<AppearanceSettingsCard editor={editor} theme={props.theme} />
-					<DisplaySettingsCard editor={editor} />
-					<CodexGenerationSettingsCard editor={editor} />
-					<KeyboardSettingsCard editor={editor} />
-				</div>
-			</div>
-		</section>
+				<VStack className="gap-4 lg:flex-row lg:items-start">
+					<VStack className="min-w-0 flex-1" space="lg">
+						<AppearanceSettingsCard editor={editor} theme={props.theme} />
+						<DisplaySettingsCard editor={editor} />
+					</VStack>
+					<VStack className="min-w-0 flex-1" space="lg">
+						<CodexGenerationSettingsCard editor={editor} />
+						<KeyboardSettingsCard editor={editor} />
+					</VStack>
+				</VStack>
+			</ScrollScreen>
+			<SettingsEditorDialog busy={props.busy} editor={editor} />
+		</>
 	);
 }

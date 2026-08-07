@@ -12,13 +12,18 @@
 		"noUncheckedIndexedAccess": true,
 		"noEmit": true,
 		"skipLibCheck": true,
-		"types": ["bun-types", "vite/client", "vite-plugin-pwa/client"]
+		"types": ["bun-types", "react", "react-native", "uniwind/types"]
 	},
-	"include": ["src", "scripts", "tests", ".codex/hooks", "vite.config.ts", "playwright.config.ts"],
-	"exclude": [
-		"src/client/components/native",
-		"src/client/expo",
-		"src/client/features/nativePreferences",
-		"src/client/features/nativeServers"
-	]
+	"include": [
+		"app",
+		"src",
+		"scripts",
+		"tests",
+		".codex/hooks",
+		"playwright.config.ts",
+		"expo-env.d.ts",
+		"uniwind-types.d.ts",
+		".expo/types/**/*.ts"
+	],
+	"extends": "expo/tsconfig.base"
 }

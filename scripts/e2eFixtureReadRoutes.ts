@@ -19,6 +19,7 @@ import {
 	reviews,
 } from "./e2eFixtureData.ts";
 import { fixtureCsrfToken, fixtureJson, fixtureSecurityHeaders } from "./e2eFixtureHttp.ts";
+import { handleFixtureNativeClientReadRoute } from "./e2eFixtureNativeClients.ts";
 import type { FixtureMutableState, FixtureRequestContext } from "./e2eFixtureRouteTypes.ts";
 
 function eventStream(value: unknown): Response {
@@ -99,6 +100,8 @@ export function handleFixtureReadRoute(
 	const { request, url, repositoryId, nestedPath, selectedRepository, fileRoute, packageRunRoute } =
 		context;
 	if (request.method !== "GET") return null;
+	const nativeClientResponse = handleFixtureNativeClientReadRoute(state, context);
+	if (nativeClientResponse) return nativeClientResponse;
 
 	if (url.pathname === API_ROUTES.accessRefresh) {
 		const destination = new URL("/", url);
@@ -147,9 +150,6 @@ export function handleFixtureReadRoute(
 	}
 	if (url.pathname === API_ROUTES.settingsProfiles) {
 		return fixtureJson({ profiles: state.settingsProfiles });
-	}
-	if (url.pathname === API_ROUTES.nativeClients) {
-		return fixtureJson({ devices: state.nativeClients });
 	}
 	if (url.pathname === API_ROUTES.repositories) {
 		return fixtureJson({ repositories: repositoryCatalog, catalogRevision: 1 });

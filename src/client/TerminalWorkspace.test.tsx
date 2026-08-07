@@ -23,7 +23,10 @@ mock.module("./ghosttyTerminal.ts", () => ({
 }));
 
 const { act, cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
-const { TerminalWorkspace } = await import("./components/TerminalWorkspace.tsx");
+const { default: TerminalWorkspace } = await import("./components/TerminalWorkspace.tsx");
+const { createTerminalHostActions } = await import(
+	"./components/terminal/terminal-host-actions.ts"
+);
 
 const originalFetch = globalThis.fetch;
 const originalWebSocket = globalThis.WebSocket;
@@ -203,15 +206,15 @@ function terminalFetch(input: string | URL | Request, init?: RequestInit): Promi
 
 function defaultProps() {
 	return {
+		...createTerminalHostActions("repo", "csrf-token"),
 		active: true,
 		capability,
-		csrfToken: "csrf-token",
 		rendererConfig: SAFE_TERMINAL_RENDERER_CONFIG,
 		repositoryId: "repo",
 		repositoryName: "fixture",
-		onBack: mock(() => undefined),
-		onEnded: mock(() => undefined),
-		onNotice: mock((_message: string) => undefined),
+		onBack: mock(async () => undefined),
+		onEnded: mock(async () => undefined),
+		onNotice: mock(async (_message: string) => undefined),
 	};
 }
 
@@ -351,6 +354,35 @@ describe("TerminalWorkspace", () => {
 		expect(socket.closes).toContainEqual({ code: 1000, reason: "workspace_unmounted" });
 	});
 
+	test("keeps its attachment when Expo DOM callback proxies change identity", async () => {
+		const view = render(<TerminalWorkspace {...defaultProps()} />);
+		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+		const socket = FakeTerminalWebSocket.instances[0]!;
+		await act(async () => socket.emitMessage(JSON.stringify({ type: "ready" })));
+
+		view.rerender(<TerminalWorkspace {...defaultProps()} active={false} />);
+		view.rerender(<TerminalWorkspace {...defaultProps()} active />);
+		await act(async () => Promise.resolve());
+
+		expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+		expect(socket.closes).toHaveLength(0);
+	});
+
+	test("invokes native host callbacks without forwarding DOM events", async () => {
+		const props = {
+			...defaultProps(),
+			onOpenCommandPalette: mock(async () => undefined),
+		};
+		render(<TerminalWorkspace {...props} />);
+		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+
+		fireEvent.click(screen.getByRole("button", { name: "Review" }));
+		fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+
+		expect(props.onBack.mock.calls[0]).toEqual([]);
+		expect(props.onOpenCommandPalette.mock.calls[0]).toEqual([]);
+	});
+
 	test("sends helper keys and applies the one-shot Ctrl modifier to any helper key", async () => {
 		render(<TerminalWorkspace {...defaultProps()} />);
 		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
@@ -378,11 +410,13 @@ describe("TerminalWorkspace", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Send Escape" }));
 		fireEvent.click(screen.getByRole("button", { name: "Send Tab" }));
+		fireEvent.click(screen.getByRole("button", { name: "Send Enter" }));
 		fireEvent.click(screen.getByRole("button", { name: "Send Ctrl+C" }));
 		fireEvent.click(screen.getByRole("button", { name: "Send Ctrl+L" }));
-		expect(rendererState.keyInputs.slice(-4)).toEqual([
+		expect(rendererState.keyInputs.slice(-5)).toEqual([
 			{ code: "Escape", ctrlKey: false, key: "Escape" },
 			{ code: "Tab", ctrlKey: false, key: "Tab" },
+			{ code: "Enter", ctrlKey: false, key: "Enter" },
 			{ code: "KeyC", ctrlKey: true, key: "c" },
 			{ code: "KeyL", ctrlKey: true, key: "l" },
 		]);

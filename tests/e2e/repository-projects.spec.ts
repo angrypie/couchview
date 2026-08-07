@@ -7,9 +7,6 @@ test.describe("repository projects", () => {
 	test.skip(!localFixture, "The deterministic workflow uses the bundled e2e repository fixture.");
 
 	test.beforeEach(async ({ page, request }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem("couchview:install-hint-dismissed", "1");
-		});
 		const response = await request.post("/api/e2e/reset", {
 			headers: { "x-couchview-csrf": fixtureCsrf },
 		});
@@ -20,8 +17,8 @@ test.describe("repository projects", () => {
 		page,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"One touch-browser pass covers the compact project form.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"One mobile Chromium pass covers the compact project form.",
 		);
 		let submittedRoot: string | null = null;
 		await page.route("**/api/repository-directories**", async (route) => {

@@ -1,31 +1,74 @@
-import { useCallback, useEffect, useState } from "react";
-import { type DrawerView } from "./components/ChangedFilesDrawer.tsx";
 import { CouchviewApplicationView } from "./components/CouchviewApplicationView.tsx";
 import { useArtifacts } from "./features/artifacts/index.ts";
 import { useFailureReporting } from "./features/errors/useFailureReporting.ts";
 import { useGitWorkspace } from "./features/git/index.ts";
 import { useToastNotifications } from "./features/notifications/useToastNotifications.ts";
 import { usePackageRuns } from "./features/packages/usePackageRuns.ts";
-import { usePwaUpdate } from "./features/pwa/usePwaUpdate.ts";
+import { usePwaUpdate } from "./features/pwa/usePwaUpdate";
 import { useRepositoryManagement } from "./features/repositories/useRepositoryManagement.ts";
-import { useRepositoryWorkspace } from "./features/repositories/useRepositoryWorkspace.ts";
+import {
+	type RepositoryHistoryMode,
+	useRepositoryWorkspace,
+} from "./features/repositories/useRepositoryWorkspace.ts";
 import { useReviewWorkflow } from "./features/review/useReviewWorkflow.ts";
+import { useAppTheme } from "./features/settings/ThemeProvider.tsx";
 import { useDisplayPreferences } from "./features/settings/useDisplayPreferences.ts";
 import { useSettingsProfiles } from "./features/settings/useSettingsProfiles.ts";
-import { useThemePreference } from "./features/settings/useThemePreference.ts";
+import { useApplicationShellState } from "./features/shell/useApplicationShellState.ts";
 import { useReviewShellCommands } from "./features/shell/useReviewShellCommands.ts";
-import { useWorkspaceNavigation } from "./features/shell/useWorkspaceNavigation.ts";
+import {
+	useWorkspaceNavigation,
+	type WorkspaceMode,
+} from "./features/shell/useWorkspaceNavigation.ts";
 import { useChangedFileFilters } from "./features/staging/useChangedFileFilters.ts";
-import { COMPACT_LANDSCAPE_QUERY, SPLIT_VIEW_QUERY, useMediaQuery } from "./lib/mediaQuery.ts";
+import { useWorkspaceLayout } from "./lib/mediaQuery.ts";
 
-export function App() {
-	const theme = useThemePreference();
-	const workspace = useRepositoryWorkspace();
+export interface AppRouteConfiguration {
+	accessRefreshAttempted?: boolean;
+	initialMode?: WorkspaceMode;
+	nativeServerManagerUrl?: string | null;
+	onAccessRefreshHandled?: () => void;
+	onNavigate?: (mode: WorkspaceMode, replace?: boolean) => void;
+	onManageServers?: () => void;
+	onReload?: () => void;
+	onTerminalLatencyChange?: (enabled: boolean) => void | Promise<void>;
+	onSettingsDirtyChange?: (dirty: boolean) => void;
+	onRepositorySelection?: (
+		repositoryId: string | null,
+		historyMode: Exclude<RepositoryHistoryMode, "none">,
+	) => void;
+	requestedRepositoryId?: string | null;
+	terminalLatencyEnabled?: boolean;
+}
+
+export function App({
+	accessRefreshAttempted,
+	initialMode,
+	nativeServerManagerUrl,
+	onAccessRefreshHandled,
+	onNavigate,
+	onManageServers,
+	onReload,
+	onTerminalLatencyChange,
+	onSettingsDirtyChange,
+	onRepositorySelection,
+	requestedRepositoryId,
+	terminalLatencyEnabled,
+}: AppRouteConfiguration = {}) {
+	const theme = useAppTheme();
+	const workspace = useRepositoryWorkspace({
+		accessRefreshAttempted,
+		onAccessRefreshHandled,
+		onReload,
+		onRepositorySelection,
+		requestedRepositoryId,
+	});
 	const {
 		bootstrap,
 		clearRepositorySelection,
 		files,
 		getRepositoryId,
+		loadApp,
 		loadRepository,
 		phase,
 		refreshRepositories,
@@ -34,16 +77,14 @@ export function App() {
 		repositoryLoading,
 		setBootstrap,
 	} = workspace;
-	const [drawerOpen, setDrawerOpen] = useState(false);
-	const [drawerView, setDrawerView] = useState<DrawerView>("files");
-	const [remoteBridgeOpen, setRemoteBridgeOpen] = useState(false);
 	const notifications = useToastNotifications();
-	const { dismissToast, setToast, showToast } = notifications;
+	const { dismissToast, showToast } = notifications;
 	const repositoryManagement = useRepositoryManagement({
 		bootstrap,
 		clearRepositorySelection,
 		getRepositoryId,
 		loadRepository,
+		reloadApplication: onReload ?? loadApp,
 		refreshRepositories,
 		showToast,
 	});
@@ -64,9 +105,9 @@ export function App() {
 	};
 	const navigation = useWorkspaceNavigation({
 		bootstrap,
-		clearRepositorySelection,
-		getRepositoryId,
-		loadRepository,
+		initialMode,
+		onNavigate,
+		onSettingsDirtyChange,
 		repository,
 		repositoryId,
 		showToast,
@@ -103,11 +144,18 @@ export function App() {
 	const { clearFailure, setDetailsOpen } = failureReporting;
 	const { resetForRepository } = navigation;
 	const { setPickerOpen } = repositoryManagement;
-	const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+	const shell = useApplicationShellState({
+		clearFailure,
+		clearToast: dismissToast,
+		repositoryId,
+		resetNavigationForRepository: resetForRepository,
+		setFailureDetailsOpen: setDetailsOpen,
+		setRepositoryPickerOpen: setPickerOpen,
+	});
 	const packageWorkflow = usePackageRuns({
 		bootstrap,
-		onRunOpened: closeDrawer,
-		panelActive: drawerView === "commands",
+		onRunOpened: shell.closeDrawer,
+		panelActive: shell.drawerView === "commands",
 		repositoryId,
 		repositoryReady: phase === "ready" && !repositoryLoading,
 		showToast,
@@ -121,12 +169,11 @@ export function App() {
 	// Portrait tablets keep the diff full width and open the file list as a
 	// drawer. Landscape tablets and genuinely wide portrait windows have enough
 	// room for the persistent split view.
-	const splitView = useMediaQuery(SPLIT_VIEW_QUERY);
-	const compactLandscape = useMediaQuery(COMPACT_LANDSCAPE_QUERY) && !splitView;
+	const { compactLandscape, splitView } = useWorkspaceLayout();
 	const fileFilters = useChangedFileFilters(files);
 	const { stagedCount } = fileFilters;
 	const workflow = useReviewWorkflow({
-		closeDrawer,
+		closeDrawer: shell.closeDrawer,
 		commitMessageCapability,
 		codexPreferences: settings.activeProfile.data.codex,
 		dismissToast,
@@ -137,16 +184,6 @@ export function App() {
 		workspace,
 	});
 	const { commit, review, staging } = workflow;
-
-	useEffect(() => {
-		resetForRepository();
-		setDrawerView("files");
-		setToast(null);
-		clearFailure();
-		setDetailsOpen(false);
-		setDrawerOpen(false);
-		setPickerOpen(false);
-	}, [clearFailure, repositoryId, resetForRepository, setDetailsOpen, setPickerOpen, setToast]);
 
 	const pwaUpdateSafe =
 		!(navigation.mode === "settings" && navigation.settingsDirty) &&
@@ -167,16 +204,16 @@ export function App() {
 
 	const shellCommands = useReviewShellCommands({
 		display: displayPreferences,
-		drawerOpen,
+		drawerOpen: shell.drawerOpen,
 		failure: failureReporting,
 		git: gitWorkspace,
 		management: repositoryManagement,
 		navigation,
-		onDrawerOpenChange: setDrawerOpen,
-		onDrawerViewChange: setDrawerView,
-		onRemoteBridgeOpenChange: setRemoteBridgeOpen,
+		onDrawerOpenChange: shell.setDrawerOpen,
+		onDrawerViewChange: shell.setDrawerView,
+		onRemoteBridgeOpenChange: shell.setRemoteBridgeOpen,
 		packages: packageWorkflow,
-		remoteBridgeOpen,
+		remoteBridgeOpen: shell.remoteBridgeOpen,
 		splitView,
 		stagedCount,
 		workflow,
@@ -188,27 +225,32 @@ export function App() {
 			commitMessageCapability={commitMessageCapability}
 			compactLandscape={compactLandscape}
 			display={displayPreferences}
-			drawerOpen={drawerOpen}
-			drawerView={drawerView}
+			drawerOpen={shell.drawerOpen}
+			drawerView={shell.drawerView}
 			failure={failureReporting}
 			filters={fileFilters}
 			git={gitWorkspace}
 			management={repositoryManagement}
+			nativeServerManagerUrl={nativeServerManagerUrl ?? null}
 			navigation={navigation}
 			notifications={notifications}
-			onDrawerOpenChange={setDrawerOpen}
-			onDrawerViewChange={setDrawerView}
-			onRemoteBridgeOpenChange={setRemoteBridgeOpen}
+			onDrawerOpenChange={shell.setDrawerOpen}
+			onDrawerViewChange={shell.setDrawerView}
+			onManageServers={onManageServers}
+			onRemoteBridgeOpenChange={shell.setRemoteBridgeOpen}
 			packages={packageWorkflow}
 			pwa={pwa}
 			remoteBridgeCapability={remoteBridgeCapability}
-			remoteBridgeOpen={remoteBridgeOpen}
+			remoteBridgeOpen={shell.remoteBridgeOpen}
+			requestedRepositoryId={requestedRepositoryId ?? null}
 			settings={settings}
 			shellCommands={shellCommands}
 			showToast={showToast}
 			splitView={splitView}
 			terminalCapability={terminalCapability}
+			terminalLatencyEnabled={terminalLatencyEnabled}
 			theme={theme}
+			onTerminalLatencyChange={onTerminalLatencyChange}
 			workflow={workflow}
 			workspace={workspace}
 		/>

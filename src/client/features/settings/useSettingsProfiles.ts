@@ -1,3 +1,4 @@
+import { useAtom, useAtomValue } from "jotai/react";
 import {
 	type Dispatch,
 	type SetStateAction,
@@ -12,14 +13,11 @@ import type {
 	SettingsProfile,
 	SettingsProfileData,
 } from "../../../shared/contracts.ts";
-import {
-	DEFAULT_SETTINGS_PROFILE_ID,
-	parseSettingsProfileData,
-	SETTINGS_PROFILE_SELECTION_KEY,
-} from "../../../shared/settings.ts";
+import { DEFAULT_SETTINGS_PROFILE_ID, parseSettingsProfileData } from "../../../shared/settings.ts";
 import { ApiError, api } from "../../api.ts";
 import { messageOf } from "../../lib/failures.ts";
-import { fallbackSettingsProfile, storedSettingsProfileId } from "./profileState.ts";
+import { useHydratePersistedAtom } from "../../lib/store/persistedAtom.ts";
+import { fallbackSettingsProfile, settingsProfileSelectionState } from "./profileState.ts";
 
 interface UseSettingsProfilesOptions {
 	active: boolean;
@@ -35,7 +33,8 @@ export function useSettingsProfiles({
 	showToast,
 }: UseSettingsProfilesOptions) {
 	const [profiles, setProfiles] = useState<SettingsProfile[]>(() => [fallbackSettingsProfile()]);
-	const [activeProfileId, setActiveProfileId] = useState(storedSettingsProfileId);
+	const [activeProfileId, setActiveProfileId] = useAtom(settingsProfileSelectionState.valueAtom);
+	const selectionHydrated = useAtomValue(settingsProfileSelectionState.hydratedAtom);
 	const [busy, setBusy] = useState(false);
 	const csrfToken = bootstrap?.csrfToken;
 	const profilesRef = useRef(profiles);
@@ -43,6 +42,7 @@ export function useSettingsProfiles({
 	const activeProfileIdRef = useRef(activeProfileId);
 	activeProfileIdRef.current = activeProfileId;
 	const mutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+	useHydratePersistedAtom(settingsProfileSelectionState);
 
 	const activeProfile = useMemo(
 		() =>
@@ -67,19 +67,15 @@ export function useSettingsProfiles({
 			profilesRef.current = next;
 			setProfiles(next);
 			setBootstrap((current) => (current ? { ...current, settingsProfiles: next } : current));
+			if (!selectionHydrated) return;
 			const selectedId = activeProfileIdRef.current;
 			if (next.some((profile) => profile.id === selectedId)) return;
 			const fallback =
 				next.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID) ?? next[0]!;
 			activeProfileIdRef.current = fallback.id;
-			setActiveProfileId(fallback.id);
-			try {
-				localStorage.setItem(SETTINGS_PROFILE_SELECTION_KEY, fallback.id);
-			} catch {
-				// The in-memory selection remains usable when local storage is unavailable.
-			}
+			void setActiveProfileId(fallback.id).catch(() => undefined);
 		},
-		[setBootstrap],
+		[selectionHydrated, setActiveProfileId, setBootstrap],
 	);
 
 	const replaceProfile = useCallback(
@@ -93,19 +89,17 @@ export function useSettingsProfiles({
 		[applyProfiles],
 	);
 
-	const selectProfile = useCallback((profileId: string) => {
-		const selected =
-			profilesRef.current.find((profile) => profile.id === profileId) ??
-			profilesRef.current.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID);
-		if (!selected) return;
-		activeProfileIdRef.current = selected.id;
-		setActiveProfileId(selected.id);
-		try {
-			localStorage.setItem(SETTINGS_PROFILE_SELECTION_KEY, selected.id);
-		} catch {
-			// The selection remains active for this page lifetime.
-		}
-	}, []);
+	const selectProfile = useCallback(
+		(profileId: string) => {
+			const selected =
+				profilesRef.current.find((profile) => profile.id === profileId) ??
+				profilesRef.current.find((profile) => profile.id === DEFAULT_SETTINGS_PROFILE_ID);
+			if (!selected) return;
+			activeProfileIdRef.current = selected.id;
+			void setActiveProfileId(selected.id).catch(() => undefined);
+		},
+		[setActiveProfileId],
+	);
 
 	const refreshProfiles = useCallback(async () => {
 		const response = await api.settingsProfiles();
@@ -242,6 +236,7 @@ export function useSettingsProfiles({
 		deleteProfile,
 		profiles,
 		saveProfile,
+		selectionHydrated,
 		selectProfile,
 		updateActiveProfileData,
 	};

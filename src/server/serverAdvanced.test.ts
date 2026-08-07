@@ -388,7 +388,7 @@ describe("Couchview HTTP advanced routes", () => {
 		expect(state.reviews.map((review) => review.reviewed)).toEqual([false, false]);
 	});
 
-	test("rejects missing origins and malformed mutation bodies with structured errors", async () => {
+	test("rejects unsafe mutations and serves preflight for an allowed browser origin", async () => {
 		const app = await fixture();
 		const bootstrap = (await (
 			await app.fetch(request(API_ROUTES.bootstrap))
@@ -477,8 +477,10 @@ describe("Couchview HTTP advanced routes", () => {
 				headers: { origin: "http://127.0.0.1:3001" },
 			}),
 		);
-		expect(preflight.status).toBe(404);
-		expect(preflight.headers.has("access-control-allow-origin")).toBe(false);
+		expect(preflight.status).toBe(204);
+		expect(preflight.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:3001");
+		expect(preflight.headers.get("access-control-allow-methods")).toContain("POST");
+		expect(preflight.headers.get("access-control-allow-headers")).toContain(CSRF_HEADER);
 	});
 
 	test("returns actionable Git diagnostics for command failures and timeouts", async () => {

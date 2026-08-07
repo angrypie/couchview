@@ -1,3 +1,3 @@
 /// <reference types="expo/types" />
 
-// Generated route types are included by Expo when available.
+// NOTE: This file should not be edited and should be in your git ignore

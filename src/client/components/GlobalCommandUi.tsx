@@ -1,7 +1,10 @@
+import { View } from "react-native";
+
 import type { CommandId, ShortcutSequence } from "../../shared/settings.ts";
 import { CommandPalette } from "../CommandPalette.tsx";
 import type { RuntimeCommand } from "../commands.ts";
-import { formatShortcut } from "../shortcutEngine.ts";
+import { formatShortcut } from "../shortcutEngine";
+import { Badge } from "./ui";
 
 interface GlobalCommandUiProps {
 	commands: Record<CommandId, RuntimeCommand>;
@@ -19,11 +22,15 @@ export function GlobalCommandUi({
 	return (
 		<>
 			<CommandPalette commands={commands} onOpenChange={onOpenChange} open={open} />
-			{pendingShortcut.length > 0 && (
-				<div aria-live="polite" className="shortcut-pending-hud" role="status">
-					{formatShortcut(pendingShortcut)}
-				</div>
-			)}
+			{pendingShortcut.length > 0 ? (
+				<View
+					accessibilityLiveRegion="polite"
+					accessibilityRole="alert"
+					className="absolute right-4 top-safe-offset-4 z-50"
+				>
+					<Badge variant="primary">{formatShortcut(pendingShortcut)}</Badge>
+				</View>
+			) : null}
 		</>
 	);
 }

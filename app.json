@@ -17,7 +17,8 @@
 						"deploymentTarget": "16.4"
 					}
 				}
-			]
+			],
+			"expo-sharing"
 		],
 		"ios": {
 			"bundleIdentifier": "dev.couchview.app",

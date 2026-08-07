@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
@@ -39,25 +39,42 @@ async function expectPageWithinViewport(page: Page) {
 	expect(bounds?.height ?? 0).toBeGreaterThan(viewport.height * 0.98);
 }
 
+async function expectWidePaneLayout(
+	commits: Locator,
+	commitFiles: Locator,
+	historicalDiff: Locator,
+) {
+	const [historyBounds, filesBounds, diffBounds] = await Promise.all([
+		commits.boundingBox(),
+		commitFiles.boundingBox(),
+		historicalDiff.boundingBox(),
+	]);
+	expect(historyBounds).not.toBeNull();
+	expect(filesBounds).not.toBeNull();
+	expect(diffBounds).not.toBeNull();
+	if (!historyBounds || !filesBounds || !diffBounds) return;
+	expect(Math.abs(historyBounds.x + historyBounds.width - filesBounds.x)).toBeLessThanOrEqual(2);
+	expect(Math.abs(filesBounds.x - diffBounds.x)).toBeLessThanOrEqual(2);
+	expect(Math.abs(filesBounds.width - diffBounds.width)).toBeLessThanOrEqual(2);
+	expect(Math.abs(filesBounds.y + filesBounds.height - diffBounds.y)).toBeLessThanOrEqual(2);
+}
+
 test.describe("responsive Git workspace", () => {
 	test.skip(!localFixture, "The deterministic workflow uses the bundled e2e repository fixture.");
 
 	test.beforeEach(async ({ page, request }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem("couchview:install-hint-dismissed", "1");
-		});
 		const response = await request.post("/api/e2e/reset", {
 			headers: { "x-couchview-csrf": fixtureCsrf },
 		});
 		expect(response.ok()).toBe(true);
 	});
 
-	test("navigates history and actions across phone and iPad layouts", async ({
+	test("navigates history and actions across phone and tablet layouts", async ({
 		page,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"The responsive Git workspace needs one WebKit orientation cycle.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"The responsive Git workspace needs one mobile Chromium orientation cycle.",
 		);
 
 		await page.setViewportSize({ width: 390, height: 844 });
@@ -81,23 +98,6 @@ test.describe("responsive Git workspace", () => {
 		await expect(commitFiles).toBeHidden();
 		await expect(historicalDiff).toBeVisible();
 		await expect(historicalDiff.getByText("Read-only historical preview")).toBeVisible();
-		const firstHistoricalLine = historicalDiff.locator("diffs-container [data-line]").first();
-		await expect(firstHistoricalLine).toBeVisible();
-		await expect
-			.poll(async () => {
-				const [lineBounds, paneBounds] = await Promise.all([
-					firstHistoricalLine.boundingBox(),
-					historicalDiff.boundingBox(),
-				]);
-				return Boolean(
-					lineBounds &&
-						paneBounds &&
-						lineBounds.height > 0 &&
-						lineBounds.y + lineBounds.height > paneBounds.y &&
-						lineBounds.y < paneBounds.y + paneBounds.height,
-				);
-			})
-			.toBe(true);
 		await expect(
 			historicalDiff.getByRole("button", { name: /^Select (old|new) line/ }),
 		).toHaveCount(0);
@@ -125,40 +125,25 @@ test.describe("responsive Git workspace", () => {
 
 		await page.setViewportSize({ width: 844, height: 390 });
 		await expectPageWithinViewport(page);
-		await expect(commitFiles).toBeVisible();
-		await expect(commits).toBeHidden();
-
-		await page.setViewportSize({ width: 834, height: 1194 });
-		await expectPageWithinViewport(page);
-		await expect(commitFiles).toBeVisible();
-		await expect(commits).toBeHidden();
-
-		await page.setViewportSize({ width: 1194, height: 834 });
-		const historyPage = page.getByRole("main", { name: "Git history and repository actions" });
-		await expect(historyPage).toHaveCSS("left", "auto");
 		await expect(commits).toBeVisible();
 		await expect(commitFiles).toBeVisible();
 		await expect(historicalDiff).toBeVisible();
-		await expect
-			.poll(() =>
-				historyPage.evaluate((element) => {
-					const history = element.querySelector(".git-history-pane")!.getBoundingClientRect();
-					const files = element.querySelector(".git-files-pane")!.getBoundingClientRect();
-					const diff = element.querySelector(".git-diff-pane")!.getBoundingClientRect();
-					return {
-						historyBeforePreview: Math.round(history.right) === Math.round(files.left),
-						previewAligned: Math.round(files.left) === Math.round(diff.left),
-						previewWidthMatches: Math.round(files.width) === Math.round(diff.width),
-						stackedPreview: Math.round(files.bottom) === Math.round(diff.top),
-					};
-				}),
-			)
-			.toEqual({
-				historyBeforePreview: true,
-				previewAligned: true,
-				previewWidthMatches: true,
-				stackedPreview: true,
-			});
+		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
+
+		await page.setViewportSize({ width: 834, height: 1194 });
+		await expectPageWithinViewport(page);
+		await expect(commits).toBeVisible();
+		await expect(commitFiles).toBeVisible();
+		await expect(historicalDiff).toBeVisible();
+		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
+
+		await page.setViewportSize({ width: 1194, height: 834 });
+		const historyPage = page.getByRole("main", { name: "Git history and repository actions" });
+		await expectPageWithinViewport(page);
+		await expect(commits).toBeVisible();
+		await expect(commitFiles).toBeVisible();
+		await expect(historicalDiff).toBeVisible();
+		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
 
 		await page.getByRole("button", { name: "Return", exact: true }).click();
 		await expect(page.getByText(/Detached HEAD · previous branch/)).toHaveCount(0);

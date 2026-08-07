@@ -1,31 +1,61 @@
-import {
-	AlertTriangle,
-	ArrowLeft,
-	Bug,
-	LoaderCircle,
-	RotateCw,
-	Search,
-	ShieldCheck,
-	SquareTerminal,
-	Trash2,
-} from "lucide-react";
-import type { CSSProperties } from "react";
+"use dom";
+
+import { type CSSProperties, useEffect, useRef } from "react";
 
 import type { TerminalCapability } from "../../shared/contracts.ts";
 import {
 	type TerminalWorkspaceControllerOptions,
 	useTerminalWorkspace,
 } from "../features/terminal/useTerminalWorkspace.ts";
-import type { TerminalRendererConfig } from "../typographyPreferences.ts";
+import { codeFontStack, type TerminalRendererConfig } from "../typographyPreferences.ts";
+import "./terminal/terminal-dom.css";
+import { terminalFontAssets } from "./terminal/terminal-font-assets";
 
-export interface TerminalWorkspaceProps extends TerminalWorkspaceControllerOptions {
+export interface TerminalWorkspaceProps
+	extends Omit<TerminalWorkspaceControllerOptions, "onEnded" | "onNotice"> {
+	dom?: import("expo/dom").DOMProps;
+	colorScheme?: "dark" | "light";
 	commandPaletteShortcut?: string;
+	commandPaletteOpen?: boolean;
 	rendererConfig: TerminalRendererConfig;
 	repositoryName: string;
-	onBack(): void;
-	onOpenCommandPalette?(): void;
+	onBack(): Promise<void>;
+	onEnded(): Promise<void>;
+	onNotice(message: string): Promise<void>;
+	onOpenCommandPalette?(): Promise<void>;
 	capability: TerminalCapability;
 }
+
+const bundledTerminalFontFaces = `
+	@font-face {
+		font-family: "Iosevka";
+		font-style: normal;
+		font-weight: 400;
+		font-display: swap;
+		src: url("${terminalFontAssets.regular}") format("woff2");
+	}
+	@font-face {
+		font-family: "Iosevka";
+		font-style: normal;
+		font-weight: 700;
+		font-display: swap;
+		src: url("${terminalFontAssets.bold}") format("woff2");
+	}
+	@font-face {
+		font-family: "Iosevka";
+		font-style: italic;
+		font-weight: 400;
+		font-display: swap;
+		src: url("${terminalFontAssets.italic}") format("woff2");
+	}
+	@font-face {
+		font-family: "Iosevka";
+		font-style: italic;
+		font-weight: 700;
+		font-display: swap;
+		src: url("${terminalFontAssets.boldItalic}") format("woff2");
+	}
+`;
 
 function transportLabel(
 	status: ReturnType<typeof useTerminalWorkspace>["transportStatus"],
@@ -42,10 +72,13 @@ function transportLabel(
 	}
 }
 
-export function TerminalWorkspace({
+export default function TerminalWorkspace({
 	commandPaletteShortcut = "",
+	commandPaletteOpen = false,
+	colorScheme = "dark",
+	dom: _dom,
 	onBack,
-	onOpenCommandPalette = () => undefined,
+	onOpenCommandPalette = async () => undefined,
 	repositoryName,
 	...controllerOptions
 }: TerminalWorkspaceProps) {
@@ -58,6 +91,7 @@ export function TerminalWorkspace({
 		enableSafeMode,
 		endSession,
 		ending,
+		focusTerminal,
 		keyboardHelpersDisabled,
 		latencyEnabled,
 		latencySummary,
@@ -74,24 +108,32 @@ export function TerminalWorkspace({
 		virtualControlActive,
 	} = useTerminalWorkspace(controllerOptions);
 	const { active, capability } = controllerOptions;
+	const commandPaletteWasOpenRef = useRef(commandPaletteOpen);
+	useEffect(() => {
+		const restoreFocus = active && commandPaletteWasOpenRef.current && !commandPaletteOpen;
+		commandPaletteWasOpenRef.current = commandPaletteOpen;
+		if (restoreFocus) focusTerminal();
+	}, [active, commandPaletteOpen, focusTerminal]);
 	return (
 		<section
 			aria-hidden={!active}
 			aria-label="tmux terminal"
-			className={`terminal-workspace ${active ? "active" : "hidden"}`}
+			className={`terminal-workspace ${colorScheme} ${active ? "active" : "hidden"}`}
 			inert={!active}
 			style={
 				{
 					"--terminal-background": activeRendererConfig.theme.background,
+					"--code-font-family": codeFontStack(activeRendererConfig.fontFamily),
 				} as CSSProperties
 			}
 		>
-			<header className="terminal-toolbar">
-				<button className="terminal-toolbar-button" onClick={onBack} type="button">
-					<ArrowLeft size={16} /> Review
+			<style>{bundledTerminalFontFaces}</style>
+			<header className="terminal-toolbar" data-testid="terminal-toolbar">
+				<button className="terminal-toolbar-button" onClick={() => void onBack()} type="button">
+					<span aria-hidden="true">←</span> Review
 				</button>
 				<div className="terminal-heading">
-					<SquareTerminal size={16} />
+					<span aria-hidden="true">›_</span>
 					<span>{repositoryName}</span>
 					<span className={`terminal-connection ${connectionState}`}>{connectionLabel}</span>
 					<span
@@ -105,10 +147,10 @@ export function TerminalWorkspace({
 					<button
 						aria-label="Open command palette"
 						className="terminal-toolbar-button command-palette-trigger"
-						onClick={onOpenCommandPalette}
+						onClick={() => void onOpenCommandPalette()}
 						type="button"
 					>
-						<Search size={15} />
+						<span aria-hidden="true">⌘</span>
 						<span className="workspace-command-label">Commands</span>
 						{commandPaletteShortcut && (
 							<kbd className="workspace-command-shortcut">{commandPaletteShortcut}</kbd>
@@ -116,7 +158,7 @@ export function TerminalWorkspace({
 					</button>
 					{transportStatus === "fallback" && retryP2pAvailable && (
 						<button className="terminal-toolbar-button" onClick={retryP2p} type="button">
-							<RotateCw size={15} /> Retry P2P
+							<span aria-hidden="true">↻</span> Retry P2P
 						</button>
 					)}
 					<button
@@ -125,7 +167,7 @@ export function TerminalWorkspace({
 						onClick={toggleLatencyProfiler}
 						type="button"
 					>
-						<Bug size={15} /> Debug
+						<span aria-hidden="true">◉</span> Debug
 					</button>
 					<button
 						className="terminal-toolbar-button danger"
@@ -133,13 +175,15 @@ export function TerminalWorkspace({
 						onClick={() => void endSession()}
 						type="button"
 					>
-						{ending ? <LoaderCircle className="spinner" size={15} /> : <Trash2 size={15} />}
+						<span aria-hidden="true" className={ending ? "spinner" : undefined}>
+							{ending ? "↻" : "×"}
+						</span>
 						End session
 					</button>
 				</div>
 			</header>
 			<div className="terminal-stage">
-				<div className="terminal-surface" ref={containerRef} />
+				<div className="terminal-surface" data-testid="terminal-surface" ref={containerRef} />
 				<div
 					aria-label="Terminal keyboard shortcuts"
 					className="terminal-keyboard-bar"
@@ -198,6 +242,16 @@ export function TerminalWorkspace({
 						Tab
 					</button>
 					<button
+						aria-label="Send Enter"
+						className="terminal-keyboard-key"
+						disabled={keyboardHelpersDisabled}
+						onClick={() => sendHelperKey({ key: "Enter", code: "Enter" })}
+						onPointerDown={preserveTerminalFocus}
+						type="button"
+					>
+						Enter
+					</button>
+					<button
 						aria-label="Send Arrow Left"
 						className="terminal-keyboard-key symbol"
 						disabled={keyboardHelpersDisabled}
@@ -249,7 +303,7 @@ export function TerminalWorkspace({
 							<span>live</span>
 						</div>
 						<div className="terminal-latency-grid">
-							<div>
+							<div data-testid="terminal-latency-key">
 								<span>Key → canvas</span>
 								<strong>
 									{latencySummary ? `${latencySummary.total.lastMs.toFixed(1)} ms` : "Waiting…"}
@@ -260,7 +314,7 @@ export function TerminalWorkspace({
 										: "Type one clean printable key"}
 								</small>
 							</div>
-							<div>
+							<div data-testid="terminal-latency-baseline">
 								<span>Baseline RTT</span>
 								<strong>
 									{roundTripSummary ? `${roundTripSummary.lastMs.toFixed(1)} ms` : "Measuring…"}
@@ -277,7 +331,7 @@ export function TerminalWorkspace({
 							<span>latest · p50 · p95</span>
 						</div>
 						<div className="terminal-latency-phases">
-							<div>
+							<div data-testid="terminal-latency-press-to-send">
 								<span>Press → send</span>
 								<strong>
 									{latencySummary ? `${latencySummary.pressToSend.lastMs.toFixed(1)} ms` : "—"}
@@ -288,7 +342,7 @@ export function TerminalWorkspace({
 										: "Browser input path"}
 								</small>
 							</div>
-							<div>
+							<div data-testid="terminal-latency-send-to-receive">
 								<span>Send → receive</span>
 								<strong>
 									{latencySummary ? `${latencySummary.sendToReceive.lastMs.toFixed(1)} ms` : "—"}
@@ -299,7 +353,7 @@ export function TerminalWorkspace({
 										: "Wire + server/tmux echo"}
 								</small>
 							</div>
-							<div>
+							<div data-testid="terminal-latency-receive-to-paint">
 								<span>Receive → paint</span>
 								<strong>
 									{latencySummary ? `${latencySummary.receiveToPaint.lastMs.toFixed(1)} ms` : "—"}
@@ -316,7 +370,7 @@ export function TerminalWorkspace({
 							<span>latest · p50 · p95</span>
 						</div>
 						<div className="terminal-latency-phases terminal-latency-receive-detail">
-							<div>
+							<div data-testid="terminal-latency-receive-to-write">
 								<span>Receive → write done</span>
 								<strong>
 									{latencySummary ? `${latencySummary.receiveToWrite.lastMs.toFixed(1)} ms` : "—"}
@@ -327,7 +381,7 @@ export function TerminalWorkspace({
 										: "Bytes + Ghostty/WASM write"}
 								</small>
 							</div>
-							<div>
+							<div data-testid="terminal-latency-frame-wait">
 								<span>Frame wait</span>
 								<strong>
 									{latencySummary ? `${latencySummary.writeToRender.lastMs.toFixed(1)} ms` : "—"}
@@ -338,7 +392,7 @@ export function TerminalWorkspace({
 										: "Write done → render starts"}
 								</small>
 							</div>
-							<div>
+							<div data-testid="terminal-latency-canvas-render">
 								<span>Canvas render</span>
 								<strong>
 									{latencySummary ? `${latencySummary.renderDuration.lastMs.toFixed(1)} ms` : "—"}
@@ -368,9 +422,13 @@ export function TerminalWorkspace({
 						{connectionState === "loading" ||
 						connectionState === "connecting" ||
 						connectionState === "reconnecting" ? (
-							<LoaderCircle className="spinner" size={24} />
+							<span aria-hidden="true" className="spinner terminal-status-glyph">
+								↻
+							</span>
 						) : (
-							<AlertTriangle size={24} />
+							<span aria-hidden="true" className="terminal-status-glyph">
+								!
+							</span>
 						)}
 						<strong>{connectionLabel}</strong>
 						{(connectionError || capability.reason) && (
@@ -380,7 +438,7 @@ export function TerminalWorkspace({
 							capability.available && (
 								<div className="terminal-overlay-actions">
 									<button className="action-button secondary" onClick={retry} type="button">
-										<RotateCw size={15} />
+										<span aria-hidden="true">↻</span>
 										{connectionState === "ended" ? "Start tmux" : "Reconnect"}
 									</button>
 									{connectionState === "error" && !safeMode && (
@@ -389,7 +447,7 @@ export function TerminalWorkspace({
 											onClick={enableSafeMode}
 											type="button"
 										>
-											<ShieldCheck size={15} />
+											<span aria-hidden="true">◇</span>
 											Safe Mode
 										</button>
 									)}

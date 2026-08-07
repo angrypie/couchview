@@ -3,7 +3,9 @@ import { rename, rm } from "node:fs/promises";
 
 import type { RestartCapability } from "../shared/contracts.ts";
 
-export function restartCapability(environment: NodeJS.ProcessEnv = process.env): RestartCapability {
+export function restartCapability(
+	environment: Partial<NodeJS.ProcessEnv> = process.env,
+): RestartCapability {
 	if (environment.NODE_ENV === "development") {
 		return {
 			available: false,

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { FileChange, TerminalCapability } from "../../../shared/contracts.ts";
 import type { CommandId, ShortcutSequence } from "../../../shared/settings.ts";
 import { COMMAND_DEFINITIONS, type RuntimeCommand } from "../../commands.ts";
-import { useShortcutEngine } from "../../shortcutEngine.ts";
+import { useShortcutEngine } from "../../shortcutEngine";
 
 interface UseAppCommandsOptions {
 	activeFile: FileChange | null;

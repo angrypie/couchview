@@ -9,17 +9,12 @@
 		},
 		"types": ["react", "react-native"]
 	},
-	"include": [
-		"app",
-		"src/client/components/native",
-		"src/client/expo",
-		"src/client/env.d.ts",
-		"src/client/features/nativePreferences",
-		"src/client/features/nativeServers",
-		"src/client/lib/workbenchLayout.ts",
-		"src/shared",
-		"expo-env.d.ts",
-		"uniwind-types.d.ts"
-	],
-	"exclude": ["**/*.test.ts", "**/*.test.tsx"]
+	"include": ["app", "src/client", "src/shared", "expo-env.d.ts", "uniwind-types.d.ts"],
+	"exclude": [
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		"src/client/appTest*.ts",
+		"src/client/appTest*.tsx",
+		"src/client/terminalTestFakes.ts"
+	]
 }

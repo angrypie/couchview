@@ -5,10 +5,10 @@ export function waitForDelay(milliseconds: number, signal: AbortSignal): Promise
 			return;
 		}
 		const onAbort = () => {
-			window.clearTimeout(timeout);
+			clearTimeout(timeout);
 			reject(new DOMException("The request was aborted.", "AbortError"));
 		};
-		const timeout = window.setTimeout(() => {
+		const timeout = setTimeout(() => {
 			signal.removeEventListener("abort", onAbort);
 			resolve();
 		}, milliseconds);

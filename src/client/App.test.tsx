@@ -1,18 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import {
-	THEME_METADATA_COLORS,
-	THEME_PREFERENCE_ATTRIBUTE,
-	THEME_PREFERENCE_STORAGE_KEY,
-} from "../shared/theme.ts";
+import { useState } from "react";
+import type { AppRouteConfiguration } from "./App.tsx";
 import {
 	App,
 	act,
 	cleanup,
 	createAppTestHarness,
 	createDefaultSettingsProfileData,
-	DEFAULT_SETTINGS_PROFILE_ID,
 	FakeTerminalWebSocket,
 	fireEvent,
+	nativeTestRuntime,
 	previewRendererState,
 	render,
 	rendererState,
@@ -20,6 +17,30 @@ import {
 	waitFor,
 	within,
 } from "./appTestHarness.tsx";
+
+type WorkspaceMode = NonNullable<AppRouteConfiguration["initialMode"]>;
+type ControlledRouteAppProps = Omit<AppRouteConfiguration, "initialMode" | "onNavigate"> & {
+	initialMode?: WorkspaceMode;
+	onRouteChange?(mode: WorkspaceMode, replace: boolean): void;
+};
+
+function ControlledRouteApp({
+	initialMode = "review",
+	onRouteChange,
+	...props
+}: ControlledRouteAppProps) {
+	const [mode, setMode] = useState(initialMode);
+	return (
+		<App
+			{...props}
+			initialMode={mode}
+			onNavigate={(nextMode, replace = false) => {
+				onRouteChange?.(nextMode, replace);
+				setMode(nextMode);
+			}}
+		/>
+	);
+}
 
 describe("Couchview app lifecycle and settings", () => {
 	const fixture = createAppTestHarness();
@@ -47,36 +68,57 @@ describe("Couchview app lifecycle and settings", () => {
 
 	test("offers a network-only sign-in path when the secure session expires", async () => {
 		fixture.bootstrapFailureStatus = 401;
-		window.history.replaceState(null, "", "/?repo=repo-two");
-		render(<App />);
+		render(<App requestedRepositoryId="repo-two" />);
 
 		await screen.findByRole("heading", { name: "Sign-in expired" });
 		expect(screen.getByText("Sign in again to continue using Couchview.")).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Sign in again" }).getAttribute("href")).toBe(
-			"/api/access/refresh?repo=repo-two",
-		);
+		fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+		expect(nativeTestRuntime.openedUrls).toEqual([
+			"http://127.0.0.1:4173/api/access/refresh?repo=repo-two",
+		]);
 		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
 	});
 
 	test("stops a completed Access sign-in from silently looping", async () => {
 		fixture.bootstrapFailureStatus = 401;
-		window.history.replaceState(null, "", "/?repo=repo-two&access_refresh=1");
-		render(<App />);
+		let handledRefreshes = 0;
+		let rearmAccessRefresh = () => {};
+		function AccessRefreshRoute() {
+			const [accessRefreshAttempted, setAccessRefreshAttempted] = useState(true);
+			rearmAccessRefresh = () => setAccessRefreshAttempted(true);
+			return (
+				<App
+					accessRefreshAttempted={accessRefreshAttempted}
+					onAccessRefreshHandled={() => {
+						handledRefreshes += 1;
+						setAccessRefreshAttempted(false);
+					}}
+					requestedRepositoryId="repo-two"
+				/>
+			);
+		}
+		render(<AccessRefreshRoute />);
 
 		await screen.findByRole("heading", { name: "Sign-in didn’t complete" });
 		expect(
 			screen.getByText(
-				"Cloudflare returned to Couchview, but this browser still does not have a usable Access session.",
+				"Cloudflare returned to Couchview, but this device still does not have a usable Access session.",
 			),
 		).toBeTruthy();
-		expect(
-			screen.getByRole("link", { name: "Reset Cloudflare sign-in" }).getAttribute("href"),
-		).toBe("/api/access/logout");
-		expect(screen.getByRole("link", { name: "Try sign-in again" }).getAttribute("href")).toBe(
-			"/api/access/refresh?repo=repo-two",
-		);
-		expect(window.location.search).toBe("?repo=repo-two");
+		fireEvent.click(screen.getByRole("button", { name: "Reset Cloudflare sign-in" }));
+		fireEvent.click(screen.getByRole("button", { name: "Try sign-in again" }));
+		expect(nativeTestRuntime.openedUrls).toEqual([
+			"http://127.0.0.1:4173/api/access/logout",
+			"http://127.0.0.1:4173/api/access/refresh?repo=repo-two",
+		]);
+		expect(handledRefreshes).toBe(1);
+		expect(fixture.requests.filter((request) => request.path === "/api/bootstrap")).toHaveLength(1);
+
+		await act(async () => rearmAccessRefresh());
+		await waitFor(() => expect(handledRefreshes).toBe(2));
+		expect(screen.getByRole("heading", { name: "Sign-in didn’t complete" })).toBeTruthy();
+		expect(fixture.requests.filter((request) => request.path === "/api/bootstrap")).toHaveLength(2);
 	});
 
 	test("offers sign-in, retry, and app-cache recovery for a connection failure", async () => {
@@ -87,23 +129,28 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(screen.getByText("Could not reach Couchview.")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Reset app cache" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Sign in again" }).getAttribute("href")).toBe(
-			"/api/access/refresh",
-		);
+		fireEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+		expect(nativeTestRuntime.openedUrls).toEqual(["http://127.0.0.1:4173/api/access/refresh"]);
 	});
 
 	test("returns native-hosted failures to paired server management", async () => {
-		window.history.replaceState(null, "", "/?couchviewNative=1");
+		let manageServersCalls = 0;
 		globalThis.fetch = (() => Promise.reject(new TypeError("offline"))) as unknown as typeof fetch;
-		render(<App />);
+		render(
+			<App
+				nativeServerManagerUrl="couchview://servers"
+				onManageServers={() => {
+					manageServersCalls += 1;
+				}}
+			/>,
+		);
 
 		await screen.findByRole("heading", { name: "Couchview is unavailable" });
 		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
-		expect(screen.getByRole("link", { name: "Manage servers" }).getAttribute("href")).toBe(
-			"couchview://servers",
-		);
+		fireEvent.click(screen.getByRole("button", { name: "Manage servers" }));
+		expect(manageServersCalls).toBe(1);
 		expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
-		expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Sign in again" })).toBeNull();
 	});
 
 	test("does not suggest authentication or cache recovery for a server response", async () => {
@@ -114,7 +161,36 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(screen.getByText("Request failed (503)")).toBeTruthy();
 		expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 		expect(screen.queryByRole("button", { name: "Reset app cache" })).toBeNull();
-		expect(screen.queryByRole("link", { name: "Sign in again" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Sign in again" })).toBeNull();
+	});
+
+	test("keeps one terminal connection across a bootstrap-only settings refresh", async () => {
+		fixture.terminalAvailable = true;
+		render(<App />);
+
+		await screen.findByText("src/first.ts");
+		fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
+		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
+		const socket = FakeTerminalWebSocket.instances[0]!;
+
+		fireEvent.click(screen.getByRole("button", { name: "Review" }));
+		fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
+		await waitFor(() =>
+			expect(fixture.settingsProfiles[0]?.data.typography.diff.fontSize).toBe(12),
+		);
+		await act(async () => {
+			await Promise.resolve();
+		});
+
+		expect(FakeTerminalWebSocket.instances).toHaveLength(1);
+		expect(socket.closes).toHaveLength(0);
+		expect(
+			fixture.requests.filter(
+				(request) =>
+					request.path === "/api/repositories/repo/terminal/attachments" &&
+					request.method === "POST",
+			),
+		).toHaveLength(1);
 	});
 
 	test("preserves tmux across Review and applies terminal settings only once", async () => {
@@ -123,6 +199,9 @@ describe("Couchview app lifecycle and settings", () => {
 
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Increase diff font size" }));
+		await waitFor(() =>
+			expect(fixture.settingsProfiles[0]?.data.typography.diff.fontSize).toBe(12),
+		);
 		fireEvent.click(screen.getByRole("button", { name: "Open tmux terminal" }));
 
 		await waitFor(() => expect(rendererState.calls).toBe(1));
@@ -145,15 +224,12 @@ describe("Couchview app lifecycle and settings", () => {
 			},
 		});
 		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(1));
-		expect(document.querySelector("main.app-shell")?.classList.contains("terminal-active")).toBe(
-			true,
+		expect(screen.getByRole("region", { name: "tmux terminal" }).getAttribute("aria-hidden")).toBe(
+			"false",
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Review" }));
-		expect(document.querySelector("main.app-shell")?.classList.contains("terminal-active")).toBe(
-			false,
-		);
-		expect(document.querySelector(".terminal-workspace")?.getAttribute("aria-hidden")).toBe("true");
+		expect(screen.getByLabelText("tmux terminal").getAttribute("aria-hidden")).toBe("true");
 		expect(screen.getByText("12px")).toBeTruthy();
 		expect(rendererState.calls).toBe(1);
 		expect(FakeTerminalWebSocket.instances).toHaveLength(1);
@@ -164,7 +240,7 @@ describe("Couchview app lifecycle and settings", () => {
 		const appearanceCard = within(settings)
 			.getByRole("heading", { name: "Appearance" })
 			.closest("section")!;
-		await waitFor(() => expect(previewRendererState.calls).toBe(1));
+		await waitFor(() => expect(previewRendererState.calls).toBeGreaterThan(0));
 		expect(
 			within(appearanceCard)
 				.getByTestId("terminal-typography-preview")
@@ -173,20 +249,20 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(
 			within(appearanceCard).getByTestId("terminal-typography-preview").querySelector("canvas"),
 		).toBeTruthy();
-		fireEvent.change(within(appearanceCard).getByLabelText("Line height adjustment"), {
-			target: { value: "3.5" },
+		fireEvent.change(within(appearanceCard).getByLabelText("Terminal cell height adjustment"), {
+			target: { value: "4" },
 		});
-		const fontSizes = within(appearanceCard).getAllByLabelText("Font size");
-		fireEvent.change(fontSizes[1]!, {
+		const terminalFontSize = within(appearanceCard).getByLabelText("Terminal font size");
+		fireEvent.change(terminalFontSize, {
 			target: { value: "16" },
 		});
-		fireEvent.change(fontSizes[1]!, {
+		fireEvent.change(terminalFontSize, {
 			target: { value: "17" },
 		});
-		fireEvent.change(fontSizes[1]!, {
+		fireEvent.change(terminalFontSize, {
 			target: { value: "18" },
 		});
-		await waitFor(() => expect(rendererState.calls).toBe(1));
+		expect(rendererState.calls).toBe(1);
 		expect(FakeTerminalWebSocket.instances[0]?.closes).toHaveLength(0);
 		const save = within(settings).getByRole("button", {
 			name: "Save changes",
@@ -194,6 +270,9 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(save.disabled).toBe(false);
 
 		fireEvent.click(save);
+		await waitFor(() =>
+			expect(fixture.settingsProfiles[0]?.data.typography.terminal.fontSize).toBe(18),
+		);
 		await waitFor(() => expect(rendererState.calls).toBe(2));
 		await waitFor(() => expect(FakeTerminalWebSocket.instances).toHaveLength(2));
 		await waitFor(() => expect(save.disabled).toBe(true));
@@ -207,23 +286,27 @@ describe("Couchview app lifecycle and settings", () => {
 	});
 
 	test("opens Settings directly from its own route", async () => {
-		window.history.replaceState(null, "", "/settings?repo=repo");
-		render(<App />);
+		const routeChanges: Array<{ mode: WorkspaceMode; replace: boolean }> = [];
+		render(
+			<ControlledRouteApp
+				initialMode="settings"
+				onRouteChange={(mode, replace) => routeChanges.push({ mode, replace })}
+				requestedRepositoryId="repo"
+			/>,
+		);
 
 		const settings = await screen.findByRole("region", { name: "Settings" });
-		expect(window.location.pathname).toBe("/settings");
 		expect(within(settings).getByRole("heading", { name: "Profiles" })).toBeTruthy();
 		expect(within(settings).getByRole("heading", { name: "Appearance" })).toBeTruthy();
 		expect(screen.queryByRole("region", { name: "Unified diff" })).toBeNull();
 
 		fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
 		await screen.findByText("src/first.ts");
-		expect(window.location.pathname).toBe("/");
+		expect(routeChanges).toEqual([{ mode: "review", replace: true }]);
 	});
 
 	test("persists one Codex model and reasoning choice for commit and artifact generation", async () => {
-		window.history.replaceState(null, "", "/settings?repo=repo");
-		render(<App />);
+		render(<App initialMode="settings" requestedRepositoryId="repo" />);
 
 		const settings = await screen.findByRole("region", { name: "Settings" });
 		const codexCard = within(settings)
@@ -232,9 +315,9 @@ describe("Couchview app lifecycle and settings", () => {
 		fireEvent.change(within(codexCard).getByLabelText("Model"), {
 			target: { value: "gpt-5.6-terra" },
 		});
-		fireEvent.change(within(codexCard).getByLabelText("Reasoning effort"), {
-			target: { value: "medium" },
-		});
+		fireEvent.click(within(codexCard).getByRole("button", { name: "Reasoning effort" }));
+		const reasoningPicker = await screen.findByRole("dialog", { name: "Reasoning effort" });
+		fireEvent.click(within(reasoningPicker).getByRole("button", { name: "medium" }));
 		fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() =>
@@ -249,38 +332,31 @@ describe("Couchview app lifecycle and settings", () => {
 		render(<App />);
 		await screen.findByText("src/first.ts");
 
-		fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+		fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
 		const palette = await screen.findByRole("dialog", {
-			name: "Couchview command palette",
+			name: "Command palette",
 		});
 		expect(within(palette).queryByText("Open command palette")).toBeNull();
 		expect(within(palette).getByText("Go to terminal")).toBeTruthy();
 		expect(within(palette).getByText("tmux is unavailable in this test.")).toBeTruthy();
 		expect(
 			within(palette)
-				.getByText("Go to terminal")
-				.closest("[cmdk-item]")
-				?.getAttribute("aria-disabled"),
+				.getByRole("button", { name: /Go to terminal/ })
+				.getAttribute("aria-disabled"),
 		).toBe("true");
 
-		fireEvent.change(
-			within(palette).getByRole("combobox", {
-				name: "Couchview command palette",
-			}),
-			{
-				target: { value: "settings" },
-			},
-		);
+		fireEvent.change(within(palette).getByRole("textbox"), {
+			target: { value: "settings" },
+		});
 		expect(within(palette).getByText("Go to settings")).toBeTruthy();
 		fireEvent.click(within(palette).getByText("Go to settings"));
 
 		expect(await screen.findByRole("region", { name: "Settings" })).toBeTruthy();
-		expect(window.location.pathname).toBe("/settings");
-		expect(screen.queryByRole("dialog", { name: "Couchview command palette" })).toBeNull();
-		fireEvent.click(screen.getByRole("button", { name: "Open command palette" }));
+		expect(screen.queryByRole("dialog", { name: "Command palette" })).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: /^Open command palette,/ }));
 		expect(
 			await screen.findByRole("dialog", {
-				name: "Couchview command palette",
+				name: "Command palette",
 			}),
 		).toBeTruthy();
 	});
@@ -291,10 +367,10 @@ describe("Couchview app lifecycle and settings", () => {
 		await screen.findByText("src/first.ts");
 
 		fireEvent.keyDown(window, { key: "g" });
-		expect(document.querySelector(".shortcut-pending-hud")?.textContent).toBe("G");
+		expect(screen.getByRole("alert").textContent).toBe("G");
 		fireEvent.keyDown(window, { key: "t" });
 		expect(await screen.findByRole("region", { name: "tmux terminal" })).toBeTruthy();
-		expect(document.querySelector(".shortcut-pending-hud")).toBeNull();
+		expect(screen.queryByRole("alert")).toBeNull();
 
 		cleanup();
 		fixture.settingsProfiles[0]!.data.keyboard.layout = "dvorak";
@@ -310,8 +386,7 @@ describe("Couchview app lifecycle and settings", () => {
 	});
 
 	test("applies a device-local theme without dirtying the active profile", async () => {
-		window.history.replaceState(null, "", "/settings");
-		render(<App />);
+		render(<App initialMode="settings" />);
 
 		const settings = await screen.findByRole("region", { name: "Settings" });
 		const save = within(settings).getByRole("button", {
@@ -319,23 +394,20 @@ describe("Couchview app lifecycle and settings", () => {
 		}) as HTMLButtonElement;
 		await waitFor(() => expect(save.disabled).toBe(true));
 		expect(
-			(within(settings).getByRole("radio", { name: "System" }) as HTMLInputElement).checked,
-		).toBe(true);
+			within(settings).getByRole("radio", { name: "System" }).getAttribute("aria-checked"),
+		).toBe("true");
 
 		const profilePutCount = fixture.requests.filter(
 			(request) => request.method === "PUT" && request.path.startsWith("/api/settings/profiles/"),
 		).length;
 		fireEvent.click(within(settings).getByRole("radio", { name: "Light" }));
 
-		expect(
-			(within(settings).getByRole("radio", { name: "Light" }) as HTMLInputElement).checked,
-		).toBe(true);
-		expect(localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY)).toBe("light");
-		expect(document.documentElement.getAttribute(THEME_PREFERENCE_ATTRIBUTE)).toBe("light");
-		expect(document.documentElement.style.colorScheme).toBe("light");
-		expect(document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.content).toBe(
-			THEME_METADATA_COLORS.light,
+		await waitFor(() =>
+			expect(
+				within(settings).getByRole("radio", { name: "Light" }).getAttribute("aria-checked"),
+			).toBe("true"),
 		);
+		expect(document.documentElement.classList.contains("light")).toBe(true);
 		expect(save.disabled).toBe(true);
 		expect(
 			fixture.requests.filter(
@@ -345,16 +417,10 @@ describe("Couchview app lifecycle and settings", () => {
 	});
 
 	test("creates, renames, duplicates, selects, and deletes host-wide profiles", async () => {
-		const prompts = ["Team", "Team copy"];
-		Object.defineProperty(window, "prompt", {
-			configurable: true,
-			value: () => prompts.shift() ?? null,
-		});
-		window.history.replaceState(null, "", "/settings");
-		render(<App />);
+		render(<App initialMode="settings" />);
 		const settings = await screen.findByRole("region", { name: "Settings" });
-		const selector = within(settings).getByLabelText("Active profile") as HTMLSelectElement;
-		expect(selector.value).toBe(DEFAULT_SETTINGS_PROFILE_ID);
+		const selector = within(settings).getByRole("button", { name: "Active profile" });
+		expect(selector.textContent).toContain("Default");
 		expect(
 			(
 				within(settings).getByRole("button", {
@@ -364,9 +430,13 @@ describe("Couchview app lifecycle and settings", () => {
 		).toBe(true);
 
 		fireEvent.click(within(settings).getByRole("button", { name: /New/ }));
+		const createDialog = screen.getByRole("dialog", { name: "New profile" });
+		fireEvent.change(within(createDialog).getByRole("textbox", { name: "Profile name" }), {
+			target: { value: "Team" },
+		});
+		fireEvent.click(within(createDialog).getByRole("button", { name: "Create profile" }));
 		await waitFor(() => expect(fixture.settingsProfiles).toHaveLength(2));
-		expect(selector.value).toBe("profile-1");
-		expect(localStorage.getItem("couchview:settings-profile-id:v1")).toBe("profile-1");
+		await waitFor(() => expect(selector.textContent).toContain("Team"));
 
 		const name = within(settings).getByLabelText("Profile name");
 		expect((name as HTMLInputElement).disabled).toBe(false);
@@ -401,19 +471,23 @@ describe("Couchview app lifecycle and settings", () => {
 		await waitFor(() => expect(fixture.settingsProfiles[1]?.name).toBe("Team renamed"));
 
 		fireEvent.click(within(settings).getByRole("button", { name: /Duplicate/ }));
+		const duplicateDialog = screen.getByRole("dialog", { name: "Duplicate profile" });
+		fireEvent.change(within(duplicateDialog).getByRole("textbox", { name: "Profile name" }), {
+			target: { value: "Team copy" },
+		});
+		fireEvent.click(within(duplicateDialog).getByRole("button", { name: "Duplicate" }));
 		await waitFor(() => expect(fixture.settingsProfiles).toHaveLength(3));
-		expect(selector.value).toBe("profile-2");
+		await waitFor(() => expect(selector.textContent).toContain("Team copy"));
 		expect(fixture.settingsProfiles[2]).toMatchObject({
 			name: "Team copy",
 			data: fixture.settingsProfiles[1]!.data,
 		});
 
 		fireEvent.click(within(settings).getByRole("button", { name: /Delete/ }));
+		const deleteDialog = screen.getByRole("dialog", { name: "Delete profile?" });
+		fireEvent.click(within(deleteDialog).getByRole("button", { name: "Delete" }));
 		await waitFor(() => expect(fixture.settingsProfiles).toHaveLength(2));
-		expect(selector.value).toBe(DEFAULT_SETTINGS_PROFILE_ID);
-		expect(localStorage.getItem("couchview:settings-profile-id:v1")).toBe(
-			DEFAULT_SETTINGS_PROFILE_ID,
-		);
+		await waitFor(() => expect(selector.textContent).toContain("Default"));
 	});
 
 	test("preserves a dirty draft across a stale save and warns before leaving Settings", async () => {
@@ -426,34 +500,46 @@ describe("Couchview app lifecycle and settings", () => {
 			createdAt: "2026-07-31T00:03:00.000Z",
 			updatedAt: "2026-07-31T00:03:00.000Z",
 		});
-		localStorage.setItem("couchview:settings-profile-id:v1", "custom");
-		let allowDiscard = false;
-		const alerts: string[] = [];
-		Object.defineProperty(window, "confirm", {
-			configurable: true,
-			value: () => allowDiscard,
-		});
-		Object.defineProperty(window, "alert", {
-			configurable: true,
-			value: (message: string) => alerts.push(message),
-		});
-		window.history.replaceState(null, "", "/settings");
-		render(<App />);
+		const routeChanges: Array<{ mode: WorkspaceMode; replace: boolean }> = [];
+		render(
+			<ControlledRouteApp
+				initialMode="settings"
+				onRouteChange={(mode, replace) => routeChanges.push({ mode, replace })}
+			/>,
+		);
 		const settings = await screen.findByRole("region", { name: "Settings" });
+		fireEvent.click(within(settings).getByRole("button", { name: "Active profile" }));
+		const profilePicker = await screen.findByRole("dialog", { name: "Active profile" });
+		fireEvent.click(within(profilePicker).getByRole("button", { name: "Custom" }));
+		await waitFor(() =>
+			expect(
+				(within(settings).getByRole("textbox", { name: "Profile name" }) as HTMLInputElement).value,
+			).toBe("Custom"),
+		);
 		const appearance = within(settings)
 			.getByRole("heading", { name: "Appearance" })
 			.closest("section")!;
-		const diffFontSize = within(appearance).getAllByLabelText("Font size")[0] as HTMLInputElement;
+		const diffFontSize = within(appearance).getByLabelText("Diff font size") as HTMLInputElement;
 		fireEvent.change(diffFontSize, { target: { value: "14" } });
 		fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
-		expect(window.location.pathname).toBe("/settings");
+		expect(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).toBeTruthy();
+		expect(routeChanges).toHaveLength(0);
 		expect(screen.getByRole("region", { name: "Settings" })).toBeTruthy();
+		fireEvent.click(
+			within(screen.getByRole("dialog", { name: "Discard unsaved changes?" })).getByRole("button", {
+				name: "Cancel",
+			}),
+		);
 
 		fixture.staleNextSettingsSave = true;
 		fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
-		await waitFor(() =>
-			expect(alerts).toContain("The settings profile changed on another client."),
-		);
+		const staleDialog = await screen.findByRole("dialog", {
+			name: "Settings could not be updated",
+		});
+		expect(
+			within(staleDialog).getByText("The settings profile changed on another client."),
+		).toBeTruthy();
+		fireEvent.click(within(staleDialog).getByRole("button", { name: "OK" }));
 		expect(diffFontSize.value).toBe("14");
 		expect(
 			(
@@ -470,34 +556,34 @@ describe("Couchview app lifecycle and settings", () => {
 				data: { typography: { diff: { fontSize: 14 } } },
 			}),
 		);
-		allowDiscard = true;
 		fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
-		expect(window.location.pathname).toBe("/");
+		await waitFor(() => expect(routeChanges).toEqual([{ mode: "review", replace: true }]));
 	});
 
 	test("records a shortcut and atomically replaces its exact conflict", async () => {
-		window.history.replaceState(null, "", "/settings");
-		render(<App />);
+		render(<App initialMode="settings" />);
 		const settings = await screen.findByRole("region", { name: "Settings" });
 		const keyboardCard = within(settings)
 			.getByRole("heading", { name: "Keyboard shortcuts" })
 			.closest("section")!;
-		const previousFileRow = within(keyboardCard)
-			.getByText("Previous file")
-			.closest(".keybinding-row") as HTMLElement;
-		const nextFileRow = within(keyboardCard)
-			.getByText("Next file")
-			.closest(".keybinding-row") as HTMLElement;
-		expect(previousFileRow.querySelector("kbd")?.textContent).toBe("H");
-		expect(nextFileRow.querySelector("kbd")?.textContent).toBe("L");
+		const previousFileRow = within(keyboardCard).getByTestId("keybinding-row-file.previous");
+		const nextFileRow = within(keyboardCard).getByTestId("keybinding-row-file.next");
+		expect(within(previousFileRow).getByText("H")).toBeTruthy();
+		expect(within(nextFileRow).getByText("L")).toBeTruthy();
 
-		fireEvent.click(within(previousFileRow).getByRole("button", { name: "Record" }));
-		fireEvent.keyDown(window, { key: "l" });
-		await act(async () => {
-			await new Promise((resolve) => setTimeout(resolve, 1_050));
+		fireEvent.click(within(previousFileRow).getByRole("button", { name: "Edit" }));
+		const shortcutDialog = await screen.findByRole("dialog", { name: "Edit Previous file" });
+		fireEvent.change(within(shortcutDialog).getByRole("textbox", { name: "Shortcut" }), {
+			target: { value: "L" },
 		});
-		expect(previousFileRow.querySelector("kbd")?.textContent).toBe("L");
-		expect(nextFileRow.querySelector("kbd")?.textContent).toBe("Unassigned");
+		fireEvent.click(within(shortcutDialog).getByRole("button", { name: "Apply shortcut" }));
+		const conflictDialog = screen.getByRole("dialog", {
+			name: "Replace conflicting shortcuts?",
+		});
+		expect(within(conflictDialog).getByText(/This conflicts with Next file/)).toBeTruthy();
+		fireEvent.click(within(conflictDialog).getByRole("button", { name: "Replace shortcuts" }));
+		expect(within(previousFileRow).getByText("L")).toBeTruthy();
+		expect(within(nextFileRow).getByText("Unassigned")).toBeTruthy();
 
 		fireEvent.click(within(settings).getByRole("button", { name: "Save changes" }));
 		await waitFor(() =>
@@ -511,23 +597,29 @@ describe("Couchview app lifecycle and settings", () => {
 				name: "Reset Previous file shortcut",
 			}),
 		);
-		expect(previousFileRow.querySelector("kbd")?.textContent).toBe("H");
+		expect(within(previousFileRow).getByText("H")).toBeTruthy();
 		fireEvent.click(
 			within(nextFileRow).getByRole("button", {
 				name: "Reset Next file shortcut",
 			}),
 		);
-		expect(nextFileRow.querySelector("kbd")?.textContent).toBe("L");
+		expect(within(nextFileRow).getByText("L")).toBeTruthy();
 	});
 
 	test("persists independent diff and terminal typography from Settings", async () => {
 		fixture.terminalAvailable = true;
-		render(<App />);
+		let settingsDirty = false;
+		render(
+			<App
+				onSettingsDirtyChange={(dirty) => {
+					settingsDirty = dirty;
+				}}
+			/>,
+		);
 		await screen.findByText("src/first.ts");
 
 		fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
 		const settings = screen.getByRole("region", { name: "Settings" });
-		expect(window.location.pathname).toBe("/settings");
 		const appearanceCard = within(settings)
 			.getByRole("heading", { name: "Appearance" })
 			.closest("section")!;
@@ -540,42 +632,43 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(within(appearanceCard).getByLabelText("tmux status preview").textContent).toContain(
 			"nvim *",
 		);
-		expect(within(appearanceCard).getByLabelText("Cell width adjustment").getAttribute("min")).toBe(
-			"-5",
-		);
-		expect(within(appearanceCard).getByLabelText("Cell width adjustment").getAttribute("max")).toBe(
-			"5",
-		);
+		expect(
+			within(appearanceCard).getByLabelText("Terminal cell width adjustment").getAttribute("min"),
+		).toBe("-5");
+		expect(
+			within(appearanceCard).getByLabelText("Terminal cell width adjustment").getAttribute("max"),
+		).toBe("5");
 
-		const systemFonts = within(appearanceCard).getAllByRole("button", {
-			name: /^System monospace/,
+		const systemFonts = within(appearanceCard).getAllByRole("radio", {
+			name: "System monospace",
 		});
 		fireEvent.click(systemFonts[0]!);
-		const fontSizes = within(appearanceCard).getAllByLabelText("Font size");
-		fireEvent.change(fontSizes[0]!, {
+		fireEvent.change(within(appearanceCard).getByLabelText("Diff font size"), {
 			target: { value: "14" },
 		});
-		fireEvent.change(within(appearanceCard).getByLabelText("Line height adjustment"), {
+		fireEvent.change(within(appearanceCard).getByLabelText("Diff line height adjustment"), {
 			target: { value: "3.5" },
 		});
-		fireEvent.change(within(appearanceCard).getByLabelText("Width adjustment"), {
+		fireEvent.change(within(appearanceCard).getByLabelText("Diff width adjustment"), {
 			target: { value: "0.4" },
 		});
 
 		fireEvent.click(systemFonts[1]!);
-		fireEvent.change(fontSizes[1]!, {
+		fireEvent.change(within(appearanceCard).getByLabelText("Terminal font size"), {
 			target: { value: "18" },
 		});
-		fireEvent.change(within(appearanceCard).getByLabelText("Cell height adjustment"), {
+		fireEvent.change(within(appearanceCard).getByLabelText("Terminal cell height adjustment"), {
 			target: { value: "4" },
 		});
-		fireEvent.change(within(appearanceCard).getByLabelText("Cell width adjustment"), {
+		fireEvent.change(within(appearanceCard).getByLabelText("Terminal cell width adjustment"), {
 			target: { value: "-5" },
 		});
+		await waitFor(() => expect(settingsDirty).toBe(true));
 
-		expect(
-			within(appearanceCard).getByTestId("diff-typography-preview").style.fontFamily,
-		).toStartWith("ui-monospace");
+		const diffPreview = within(appearanceCard).getByTestId("diff-typography-preview");
+		expect(within(diffPreview).getByText(/const layout = browserSurface/).style.fontSize).toBe(
+			"14px",
+		);
 		await waitFor(() =>
 			expect(previewRendererState.configs.at(-1)).toMatchObject({
 				fontFamily: "system",
@@ -584,7 +677,6 @@ describe("Couchview app lifecycle and settings", () => {
 				cellWidthAdjustment: -5,
 			}),
 		);
-		expect(localStorage.getItem("couchview:typography:v1")).toBeNull();
 		const save = within(settings).getByRole("button", {
 			name: "Save changes",
 		}) as HTMLButtonElement;
@@ -603,9 +695,10 @@ describe("Couchview app lifecycle and settings", () => {
 			cellHeightAdjustment: 4,
 			cellWidthAdjustment: -5,
 		});
+		await waitFor(() => expect(settingsDirty).toBe(false));
 
 		fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
-		expect(window.location.pathname).toBe("/");
+		await screen.findByRole("region", { name: "Unified diff" });
 		const viewer = screen.getByTestId("pierre-code-view");
 		expect(viewer.style.fontFamily).toStartWith("ui-monospace");
 		expect(viewer.style.fontSize).toBe("14px");

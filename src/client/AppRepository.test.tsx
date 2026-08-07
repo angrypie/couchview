@@ -5,6 +5,7 @@ import {
 	createAppTestHarness,
 	EventSourceStub,
 	fireEvent,
+	nativeTestRuntime,
 	render,
 	repository,
 	screen,
@@ -33,24 +34,25 @@ describe("Couchview app repository workflows", () => {
 		await waitFor(() => expect(EventSourceStub.instances).toHaveLength(1));
 		const stream = EventSourceStub.instances[0]!;
 		const connectionStatus = screen.getByTestId("repository-connection-status");
-		expect(connectionStatus.classList.contains("connected")).toBe(true);
+		expect(connectionStatus.getAttribute("aria-label")).toBe("Connected");
 
 		await act(async () => {
 			stream.onerror?.(new Event("error"));
 		});
 
-		await waitFor(() => expect(connectionStatus.classList.contains("reconnecting")).toBe(true));
-		expect(connectionStatus.title).toBe("Reconnecting to local server");
+		await waitFor(() =>
+			expect(connectionStatus.getAttribute("aria-label")).toBe("Reconnecting to local server"),
+		);
 		expect(screen.queryByText("Offline — cannot reach the local server")).toBeNull();
 		expect(fixture.requests.some((request) => request.path === "/api/instance")).toBe(true);
 
 		await act(async () => {
 			stream.onopen?.(new Event("open"));
 		});
-		expect(connectionStatus.classList.contains("connected")).toBe(true);
+		expect(connectionStatus.getAttribute("aria-label")).toBe("Connected");
 	});
 
-	test("shows offline with a banner after the reachability probe fails", async () => {
+	test("marks the repository connection offline after the reachability probe fails", async () => {
 		render(<App />);
 
 		await screen.findByTestId("pierre-code-view");
@@ -61,9 +63,11 @@ describe("Couchview app repository workflows", () => {
 		});
 
 		const connectionStatus = screen.getByTestId("repository-connection-status");
-		await waitFor(() => expect(connectionStatus.classList.contains("offline")).toBe(true));
-		expect(connectionStatus.title).toBe("Offline — local server unavailable");
-		expect(screen.getByText("Offline — cannot reach the local server")).toBeTruthy();
+		await waitFor(() =>
+			expect(connectionStatus.getAttribute("aria-label")).toBe(
+				"Offline — local server unavailable",
+			),
+		);
 	});
 
 	test("preloads adjacent diffs and reuses them for instant back-and-forth navigation", async () => {
@@ -191,7 +195,7 @@ describe("Couchview app repository workflows", () => {
 			).length;
 		const initialDiffRequests = diffRequestCount();
 		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
-		const drawer = await screen.findByRole("complementary", {
+		const drawer = await screen.findByRole("dialog", {
 			name: "Changed files",
 		});
 		expect(within(drawer).getByLabelText("2 changed files, 2 additions, 1 deletion")).toBeTruthy();
@@ -221,7 +225,7 @@ describe("Couchview app repository workflows", () => {
 
 		await screen.findByTestId("pierre-code-view");
 		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
-		const drawer = await screen.findByRole("complementary", {
+		const drawer = await screen.findByRole("dialog", {
 			name: "Changed files",
 		});
 		fireEvent.click(within(drawer).getByRole("button", { name: "Stage all files (2)" }));
@@ -260,14 +264,12 @@ describe("Couchview app repository workflows", () => {
 
 		await screen.findByTestId("pierre-code-view");
 		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
-		const drawer = await screen.findByRole("complementary", { name: "Changed files" });
+		const drawer = await screen.findByRole("dialog", { name: "Changed files" });
 		expect(within(drawer).getByRole("button", { name: "Unreview shown files (2)" })).toBeTruthy();
-		fireEvent.change(within(drawer).getByRole("combobox", { name: "Review filter" }), {
-			target: { value: "reviewed" },
-		});
-		fireEvent.change(within(drawer).getByRole("combobox", { name: "Stage filter" }), {
-			target: { value: "staged" },
-		});
+		fireEvent.click(within(drawer).getByRole("button", { name: "Review filter" }));
+		fireEvent.click(await screen.findByRole("button", { name: "Reviewed" }));
+		fireEvent.click(within(drawer).getByRole("button", { name: "Stage filter" }));
+		fireEvent.click(await screen.findByRole("button", { name: "Staged" }));
 		fireEvent.click(within(drawer).getByRole("button", { name: "Unreview shown files (1)" }));
 
 		await screen.findByText("1 review mark removed");
@@ -293,7 +295,7 @@ describe("Couchview app repository workflows", () => {
 
 		await screen.findByTestId("pierre-code-view");
 		fireEvent.click(screen.getByRole("button", { name: "Open changed files" }));
-		const drawer = await screen.findByRole("complementary", { name: "Changed files" });
+		const drawer = await screen.findByRole("dialog", { name: "Changed files" });
 		fireEvent.click(within(drawer).getByRole("button", { name: "Unreview shown files (1)" }));
 
 		await screen.findByText("Could not remove review marks.");
@@ -428,8 +430,15 @@ describe("Couchview app repository workflows", () => {
 
 		const dialog = await screen.findByRole("dialog", { name: "Native IDE setup" });
 		expect(within(dialog).getByText("Direct WebRTC preferred")).toBeTruthy();
-		const zedLink = within(dialog).getByRole("link", { name: "Open" });
-		expect(zedLink.getAttribute("href")).toBe("zed://ssh/couchview-fixture-device-one/fixture");
+		const openZed = within(dialog).getByRole("button", {
+			name: "Open /fixture in Zed through MacBook Air",
+		});
+		fireEvent.click(openZed);
+		await waitFor(() =>
+			expect(nativeTestRuntime.openedUrls).toContain(
+				"zed://ssh/couchview-fixture-device-one/fixture",
+			),
+		);
 		expect(
 			within(dialog).getByText("zed 'ssh://couchview-fixture-device-one/fixture'"),
 		).toBeTruthy();
@@ -450,7 +459,7 @@ describe("Couchview app repository workflows", () => {
 		).toBeTruthy();
 		expect(within(dialog).getByText("Claude Code Remote Control")).toBeTruthy();
 
-		fireEvent.change(within(dialog).getByLabelText("Device name"), {
+		fireEvent.change(within(dialog).getByRole("textbox"), {
 			target: { value: "Travel Air" },
 		});
 		fireEvent.click(within(dialog).getByRole("button", { name: "Generate" }));
@@ -490,9 +499,7 @@ describe("Couchview app repository workflows", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
 		const picker = await screen.findByRole("dialog", { name: "Repositories" });
 		fireEvent.click(
-			within(picker).getByRole("button", {
-				name: /second-fixture \/second-fixture/,
-			}),
+			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
 		);
 		await waitFor(() => {
 			expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
@@ -528,32 +535,48 @@ describe("Couchview app repository workflows", () => {
 		});
 	});
 
-	test("switches repositories through the picker and follows URL history", async () => {
-		render(<App />);
+	test("loads a routed repository after URL history catches up and follows Back", async () => {
+		const selections: Array<{ repositoryId: string | null; mode: "push" | "replace" }> = [];
+		const onRepositorySelection = (repositoryId: string | null, mode: "push" | "replace") => {
+			selections.push({ repositoryId, mode });
+		};
+		const view = render(
+			<App onRepositorySelection={onRepositorySelection} requestedRepositoryId="repo" />,
+		);
 
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
 		const picker = await screen.findByRole("dialog", { name: "Repositories" });
 		expect(within(picker).getByText("/second-fixture")).toBeTruthy();
 		fireEvent.click(
-			within(picker).getByRole("button", {
-				name: /second-fixture \/second-fixture/,
-			}),
+			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
 		);
 
+		await waitFor(() =>
+			expect(selections.at(-1)).toEqual({ repositoryId: "repo-two", mode: "push" }),
+		);
+		expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
+			"fixture",
+		);
+		expect(
+			fixture.requests.some((request) => request.path === "/api/repositories/repo-two/files"),
+		).toBe(false);
+
+		view.rerender(
+			<App onRepositorySelection={onRepositorySelection} requestedRepositoryId="repo-two" />,
+		);
 		await waitFor(() => {
 			expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
 				"second-fixture",
 			);
 		});
-		expect(new URL(window.location.href).searchParams.get("repo")).toBe("repo-two");
 		expect(
 			fixture.requests.some((request) => request.path === "/api/repositories/repo-two/files"),
 		).toBe(true);
 
-		window.history.replaceState(null, "", "/?repo=repo");
-		await new Promise((resolve) => setTimeout(resolve, 0));
-		fireEvent.popState(window);
+		view.rerender(
+			<App onRepositorySelection={onRepositorySelection} requestedRepositoryId="repo" />,
+		);
 		await waitFor(() => {
 			expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
 				"fixture",
@@ -563,11 +586,16 @@ describe("Couchview app repository workflows", () => {
 
 	test("adds and opens the first project from an empty repository catalog", async () => {
 		fixture.catalog = [];
-		render(<App />);
+		const selections: Array<{ repositoryId: string | null; mode: "push" | "replace" }> = [];
+		const view = render(
+			<App
+				onRepositorySelection={(repositoryId, mode) => selections.push({ repositoryId, mode })}
+			/>,
+		);
 
 		fireEvent.click(await screen.findByRole("button", { name: "Select repository" }));
 		const picker = await screen.findByRole("dialog", { name: "Repositories" });
-		expect(within(picker).getByText("No saved repositories.")).toBeTruthy();
+		expect(within(picker).getByText("No saved repositories")).toBeTruthy();
 		fireEvent.click(within(picker).getByRole("button", { name: "Browse server folders" }));
 		const directoryPicker = await screen.findByRole("dialog", { name: "Choose project folder" });
 		await within(directoryPicker).findByText("/projects");
@@ -582,12 +610,20 @@ describe("Couchview app repository workflows", () => {
 				body: { root: "/projects/added-project" },
 			}),
 		);
+		await waitFor(() =>
+			expect(selections.at(-1)).toEqual({ repositoryId: "repo-added", mode: "push" }),
+		);
+		view.rerender(
+			<App
+				onRepositorySelection={(repositoryId, mode) => selections.push({ repositoryId, mode })}
+				requestedRepositoryId="repo-added"
+			/>,
+		);
 		await screen.findByText("added-project");
 		expect(screen.queryByRole("dialog", { name: "Repositories" })).toBeNull();
 		expect(screen.getByRole("button", { name: "Select repository" }).textContent).toContain(
 			"added-project",
 		);
-		expect(new URL(window.location.href).searchParams.get("repo")).toBe("repo-added");
 	});
 
 	test("keeps the project path available when registration fails", async () => {
@@ -601,13 +637,13 @@ describe("Couchview app repository workflows", () => {
 			name: "Project path on this server",
 		});
 		fireEvent.change(pathInput, { target: { value: "/projects/missing" } });
-		fireEvent.click(within(picker).getByRole("button", { name: "Add project" }));
+		fireEvent.click(within(picker).getByRole("button", { name: "Add" }));
 
 		await screen.findByText("The repository directory does not exist");
 		expect(screen.getByRole("dialog", { name: "Repositories" })).toBeTruthy();
 		expect((pathInput as HTMLInputElement).value).toBe("/projects/missing");
 		expect(
-			(within(picker).getByRole("button", { name: "Add project" }) as HTMLButtonElement).disabled,
+			(within(picker).getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled,
 		).toBe(false);
 	});
 
@@ -640,7 +676,7 @@ describe("Couchview app repository workflows", () => {
 		const picker = await screen.findByRole("dialog", { name: "Repositories" });
 		expect(within(picker).getByText("Unavailable")).toBeTruthy();
 		const unavailableProject = within(picker).getByRole("button", {
-			name: /second-fixture \/second-fixture Unavailable/,
+			name: "second-fixture, /second-fixture, unavailable",
 		}) as HTMLButtonElement;
 		expect(unavailableProject.disabled).toBe(true);
 
@@ -709,7 +745,7 @@ describe("Couchview app repository workflows", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
 		const picker = await screen.findByRole("dialog", { name: "Repositories" });
 		fireEvent.click(
-			within(picker).getByRole("button", { name: /second-fixture \/second-fixture/ }),
+			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
 		);
 		await waitFor(() =>
 			expect(
@@ -721,30 +757,15 @@ describe("Couchview app repository workflows", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
 		const returnPicker = await screen.findByRole("dialog", { name: "Repositories" });
-		fireEvent.click(within(returnPicker).getByRole("button", { name: /fixture \/fixture/ }));
+		fireEvent.click(within(returnPicker).getByRole("button", { name: "fixture, /fixture" }));
 		await waitFor(() => expect(secondLoadAborted).toBe(true));
 		await screen.findByText("src/first.ts");
 	});
 
-	test("uses portrait-consistent compact landscape actions and toggles staging", async () => {
-		Object.defineProperty(window, "matchMedia", {
-			configurable: true,
-			value: (query: string) => ({
-				matches: query.includes("max-height: 599px"),
-				media: query,
-				onchange: null,
-				addEventListener() {},
-				removeEventListener() {},
-				addListener() {},
-				removeListener() {},
-				dispatchEvent: () => false,
-			}),
-		});
-		const { container } = render(<App />);
+	test("keeps one file-navigation control set and toggles staging", async () => {
+		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		expect(container.querySelector(".app-shell.compact-landscape")).toBeTruthy();
-		expect(container.querySelector(".file-bar")).toBeNull();
 		expect(screen.getAllByRole("button", { name: "Previous file" })).toHaveLength(1);
 		expect(screen.getAllByRole("button", { name: "Next file" })).toHaveLength(1);
 
@@ -762,7 +783,15 @@ describe("Couchview app repository workflows", () => {
 		await screen.findByText("src/first.ts");
 
 		fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
-		await screen.findByRole("button", { name: "Unstage current file" });
+		await waitFor(() =>
+			expect(
+				(screen.getByRole("button", { name: "Unstage current file" }) as HTMLButtonElement)
+					.disabled,
+			).toBe(false),
+		);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
 		expect(
 			fixture.requests.find(
 				(request) => request.path === "/api/repositories/repo/files/first/stage",
@@ -770,6 +799,13 @@ describe("Couchview app repository workflows", () => {
 		).toMatchObject({ staged: true });
 
 		fireEvent.click(screen.getByRole("button", { name: "Unstage current file" }));
+		await waitFor(() =>
+			expect(
+				fixture.requests.filter(
+					(request) => request.path === "/api/repositories/repo/files/first/stage",
+				),
+			).toHaveLength(2),
+		);
 		await screen.findByRole("button", { name: "Stage current file" });
 		expect(
 			fixture.requests
@@ -787,7 +823,7 @@ describe("Couchview app repository workflows", () => {
 			screen.getByText("Git diff returned no data for a changed file after two attempts"),
 		).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "Error details" }));
-		const details = await screen.findByRole("dialog", { name: "Git error details" });
+		const details = await screen.findByRole("dialog", { name: "Error details" });
 		expect(within(details).getByText("diff1234")).toBeTruthy();
 		expect(within(details).getByText("empty_output")).toBeTruthy();
 		expect(
@@ -803,7 +839,7 @@ describe("Couchview app repository workflows", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Stage current file" }));
 		await screen.findByText("Git update-index stopped responding after 15 seconds");
 		fireEvent.click(screen.getByRole("button", { name: "Details" }));
-		const details = await screen.findByRole("dialog", { name: "Git error details" });
+		const details = await screen.findByRole("dialog", { name: "Error details" });
 		expect(within(details).getByText("stage123")).toBeTruthy();
 		expect(within(details).getByText("update-index")).toBeTruthy();
 		expect(within(details).getByText("timeout")).toBeTruthy();

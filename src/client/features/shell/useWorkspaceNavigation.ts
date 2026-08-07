@@ -1,28 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
 import type {
 	BootstrapResponse,
 	RepositorySummary,
 	TerminalCapability,
 } from "../../../shared/contracts.ts";
-import { ARTIFACTS_PATH, isArtifactsPath } from "../artifacts/navigation.ts";
-import { GIT_HISTORY_PATH, isGitHistoryPath } from "../git/index.ts";
-import type { RepositoryHistoryMode } from "../repositories/useRepositoryWorkspace.ts";
-import { isSettingsPath, SETTINGS_PATH } from "../settings/profileState.ts";
 
 export type WorkspaceMode = "review" | "history" | "artifacts" | "terminal" | "settings";
 
-function modeForPath(pathname = window.location.pathname): Exclude<WorkspaceMode, "terminal"> {
-	if (isSettingsPath(pathname)) return "settings";
-	if (isGitHistoryPath(pathname)) return "history";
-	if (isArtifactsPath(pathname)) return "artifacts";
-	return "review";
-}
-
 interface UseWorkspaceNavigationOptions {
 	bootstrap: BootstrapResponse | null;
-	clearRepositorySelection: () => void;
-	getRepositoryId: () => string | null;
-	loadRepository: (repositoryId: string, historyMode: RepositoryHistoryMode) => Promise<void>;
+	initialMode?: WorkspaceMode;
+	onNavigate?: (mode: WorkspaceMode, replace?: boolean) => void;
+	onSettingsDirtyChange?: (dirty: boolean) => void;
 	repository: RepositorySummary | null;
 	repositoryId: string | null;
 	showToast: (message: string) => void;
@@ -31,149 +21,72 @@ interface UseWorkspaceNavigationOptions {
 
 export function useWorkspaceNavigation({
 	bootstrap,
-	clearRepositorySelection,
-	getRepositoryId,
-	loadRepository,
+	initialMode = "review",
+	onNavigate,
+	onSettingsDirtyChange,
 	repository,
 	repositoryId,
 	showToast,
 	terminalCapability,
 }: UseWorkspaceNavigationOptions) {
-	const [mode, setMode] = useState<WorkspaceMode>(() => modeForPath());
-	const [settingsDirty, setSettingsDirty] = useState(false);
-	const [terminalOpened, setTerminalOpened] = useState(false);
+	const [localMode, setLocalMode] = useState<WorkspaceMode>(initialMode);
+	const [settingsDirty, setSettingsDirtyState] = useState(false);
+	const [terminalOpened, setTerminalOpened] = useState(initialMode === "terminal");
+	const mode = onNavigate ? initialMode : localMode;
+	const initialModeRef = useRef(initialMode);
+	initialModeRef.current = initialMode;
+	const onNavigateRef = useRef(onNavigate);
+	onNavigateRef.current = onNavigate;
 
-	const openSettings = useCallback(() => {
-		const url = new URL(window.location.href);
-		if (!isSettingsPath(url.pathname)) {
-			url.pathname = SETTINGS_PATH;
-			window.history.pushState({ couchviewPage: "settings" }, "", url);
-		}
-		setMode("settings");
-	}, []);
+	useEffect(() => {
+		if (!onNavigate) setLocalMode(initialMode);
+		if (initialMode === "terminal") setTerminalOpened(true);
+	}, [initialMode, onNavigate]);
 
-	const closeSettings = useCallback(() => {
-		const url = new URL(window.location.href);
-		url.pathname = "/";
-		window.history.replaceState(null, "", url);
-		setMode("review");
-	}, []);
+	const navigate = useCallback(
+		(nextMode: WorkspaceMode, replace = false) => {
+			if (!onNavigate) setLocalMode(nextMode);
+			if (nextMode === "terminal") setTerminalOpened(true);
+			onNavigate?.(nextMode, replace);
+		},
+		[onNavigate],
+	);
+	const setSettingsDirty = useCallback(
+		(dirty: boolean) => {
+			onSettingsDirtyChange?.(dirty);
+			setSettingsDirtyState(dirty);
+		},
+		[onSettingsDirtyChange],
+	);
 
-	const openGitHistory = useCallback(() => {
-		const url = new URL(window.location.href);
-		if (!isGitHistoryPath(url.pathname)) {
-			url.pathname = GIT_HISTORY_PATH;
-			window.history.pushState({ couchviewPage: "history" }, "", url);
-		}
-		setMode("history");
-	}, []);
-
-	const closeGitHistory = useCallback(() => {
-		const url = new URL(window.location.href);
-		url.pathname = "/";
-		window.history.replaceState(null, "", url);
-		setMode("review");
-	}, []);
-
-	const openArtifacts = useCallback(() => {
-		const url = new URL(window.location.href);
-		if (!isArtifactsPath(url.pathname)) {
-			url.pathname = ARTIFACTS_PATH;
-			window.history.pushState({ couchviewPage: "artifacts" }, "", url);
-		}
-		setMode("artifacts");
-	}, []);
-
-	const closeArtifacts = useCallback(() => {
-		const url = new URL(window.location.href);
-		url.pathname = "/";
-		window.history.replaceState(null, "", url);
-		setMode("review");
-	}, []);
+	const openSettings = useCallback(() => navigate("settings"), [navigate]);
+	const closeSettings = useCallback(() => navigate("review", true), [navigate]);
+	const openGitHistory = useCallback(() => navigate("history"), [navigate]);
+	const closeGitHistory = useCallback(() => navigate("review", true), [navigate]);
+	const openArtifacts = useCallback(() => navigate("artifacts"), [navigate]);
+	const closeArtifacts = useCallback(() => navigate("review", true), [navigate]);
 
 	const showReview = useCallback((): boolean => {
-		if (
-			mode === "settings" &&
-			settingsDirty &&
-			!window.confirm("Discard unsaved profile changes?")
-		) {
+		if (mode === "settings" && settingsDirty) {
+			showToast("Save or discard the profile changes before leaving settings.");
 			return false;
 		}
-		const url = new URL(window.location.href);
-		if (
-			isSettingsPath(url.pathname) ||
-			isGitHistoryPath(url.pathname) ||
-			isArtifactsPath(url.pathname)
-		) {
-			url.pathname = "/";
-			window.history.replaceState(null, "", url);
-		}
-		setMode("review");
+		if (mode !== "review") navigate("review", true);
 		return true;
-	}, [mode, settingsDirty]);
+	}, [mode, navigate, settingsDirty, showToast]);
 
 	const openTerminal = useCallback(() => {
 		if (!bootstrap || !repositoryId || !repository) return;
 		if (!terminalCapability.available) {
-			showToast(terminalCapability.reason ?? "The browser tmux terminal is unavailable.");
+			showToast(terminalCapability.reason ?? "The tmux terminal is unavailable.");
 			return;
 		}
-		setTerminalOpened(true);
-		setMode("terminal");
-	}, [bootstrap, repository, repositoryId, showToast, terminalCapability]);
-
-	useEffect(() => {
-		const onPopState = () => {
-			const currentUrl = new URL(window.location.href);
-			if (
-				mode === "settings" &&
-				settingsDirty &&
-				!isSettingsPath(currentUrl.pathname) &&
-				!window.confirm("Discard unsaved profile changes?")
-			) {
-				currentUrl.pathname = SETTINGS_PATH;
-				window.history.pushState({ couchviewPage: "settings" }, "", currentUrl);
-				return;
-			}
-			setMode(modeForPath(currentUrl.pathname));
-			const requestedId = currentUrl.searchParams.get("repo");
-			const selected = bootstrap?.repositories.find(
-				(item) => item.id === requestedId && item.available,
-			);
-			if (selected) {
-				if (selected.id !== getRepositoryId()) {
-					void loadRepository(selected.id, "none");
-				}
-				return;
-			}
-			const fallback = bootstrap?.repositories.find((item) => item.available);
-			if (fallback) void loadRepository(fallback.id, "replace");
-			else clearRepositorySelection();
-		};
-		window.addEventListener("popstate", onPopState);
-		return () => window.removeEventListener("popstate", onPopState);
-	}, [
-		bootstrap?.repositories,
-		clearRepositorySelection,
-		getRepositoryId,
-		loadRepository,
-		mode,
-		settingsDirty,
-	]);
-
-	useEffect(() => {
-		if (!settingsDirty) return;
-		const onBeforeUnload = (event: BeforeUnloadEvent) => {
-			event.preventDefault();
-			event.returnValue = "";
-		};
-		window.addEventListener("beforeunload", onBeforeUnload);
-		return () => window.removeEventListener("beforeunload", onBeforeUnload);
-	}, [settingsDirty]);
+		navigate("terminal");
+	}, [bootstrap, navigate, repository, repositoryId, showToast, terminalCapability]);
 
 	const resetForRepository = useCallback(() => {
-		setMode(modeForPath());
-		setTerminalOpened(false);
+		if (!onNavigateRef.current) setLocalMode(initialModeRef.current);
+		setTerminalOpened(initialModeRef.current === "terminal");
 	}, []);
 
 	return {
@@ -186,7 +99,7 @@ export function useWorkspaceNavigation({
 		openSettings,
 		openTerminal,
 		resetForRepository,
-		setMode,
+		setMode: navigate,
 		setSettingsDirty,
 		settingsDirty,
 		showReview,

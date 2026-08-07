@@ -10,7 +10,6 @@ test.describe("repository artifacts", () => {
 
 	test.beforeEach(async ({ page, request }) => {
 		await page.addInitScript(() => {
-			localStorage.setItem("couchview:install-hint-dismissed", "1");
 			Object.defineProperty(navigator, "clipboard", {
 				configurable: true,
 				value: {
@@ -26,10 +25,12 @@ test.describe("repository artifacts", () => {
 		expect(response.ok()).toBe(true);
 	});
 
-	test("builds, reconnects, and downloads on iPhone and iPad", async ({ page }, testInfo) => {
+	test("builds, reconnects, and downloads across phone and tablet layouts", async ({
+		page,
+	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"Artifact delivery needs one representative mobile WebKit pass.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"Artifact delivery needs one representative mobile Chromium pass.",
 		);
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto("/");
@@ -41,15 +42,18 @@ test.describe("repository artifacts", () => {
 		await expect(page.getByLabel("CLI device")).toContainText("Fixture Mac");
 		await workspace.getByRole("button", { name: "Suggest artifact with Codex" }).click();
 		const form = workspace.getByRole("form", { name: "Create artifact" });
-		await expect(form.getByLabel("Name")).toHaveCSS("font-size", "16px");
-		await form.getByLabel("What should this artifact produce?").fill("compile with Bun");
+		const nameField = form.getByRole("textbox", { name: "Name" });
+		await expect(nameField).toBeEditable();
+		await form
+			.getByRole("textbox", { name: "What should this artifact produce?" })
+			.fill("compile with Bun");
 		await form.getByRole("button", { name: "Fill form" }).click();
 		await expect(form.getByText("Codex filled an editable suggestion")).toBeVisible();
 		await expect(form.getByText("Fixture suggestion using gpt-5.6-luna.")).toBeVisible();
 		await expect(form.getByText("Read package.json")).toBeVisible();
-		await form.getByLabel("Name").fill("mac-cli");
-		await form.getByLabel("Command").fill("bun run build:cli");
-		await form.getByLabel("Exact output path").fill("dist/couchview-cli");
+		await nameField.fill("mac-cli");
+		await form.getByRole("textbox", { name: "Command" }).fill("bun run build:cli");
+		await form.getByRole("textbox", { name: "Exact output path" }).fill("dist/couchview-cli");
 		await form.getByRole("button", { name: "Create artifact" }).click();
 
 		const card = workspace.getByRole("article").filter({ hasText: "mac-cli" });
@@ -57,7 +61,7 @@ test.describe("repository artifacts", () => {
 		await expect(card.getByText("bun run build:cli", { exact: true })).toBeVisible();
 		await card.getByRole("button", { name: "Edit" }).click();
 		const editForm = workspace.getByRole("form", { name: "Edit mac-cli artifact" });
-		await editForm.getByLabel("Exact output path").fill("dist/couchview-mac");
+		await editForm.getByRole("textbox", { name: "Exact output path" }).fill("dist/couchview-mac");
 		await editForm.getByRole("button", { name: "Save changes" }).click();
 		await expect(card.getByText("dist/couchview-mac", { exact: true })).toBeVisible();
 
@@ -79,16 +83,14 @@ test.describe("repository artifacts", () => {
 		await expect(reconnectedCard.getByLabel("mac-cli build output")).toContainText(
 			"fixture build started: bun run build:cli",
 		);
-		const downloadLink = reconnectedCard.getByRole("link", { name: "Download" });
-		await expect(downloadLink).toBeVisible({ timeout: 10_000 });
-		await expect(downloadLink).toHaveAttribute("download", "couchview-mac");
-		await expect(downloadLink).toHaveAttribute(
-			"href",
+		const downloadButton = reconnectedCard.getByRole("button", { name: "Download" });
+		await expect(downloadButton).toBeVisible({ timeout: 10_000 });
+		const downloadPromise = page.waitForEvent("download");
+		await downloadButton.click();
+		const download = await downloadPromise;
+		expect(download.url()).toMatch(
 			/\/api\/repositories\/fixture-repository\/artifacts\/fixture-artifact-1\/builds\/fixture-artifact-build-1\/download$/,
 		);
-		const downloadPromise = page.waitForEvent("download");
-		await downloadLink.click();
-		const download = await downloadPromise;
 		expect(download.suggestedFilename()).toBe("couchview-mac");
 		const downloadPath = await download.path();
 		expect(downloadPath).not.toBeNull();
@@ -106,7 +108,7 @@ test.describe("repository artifacts", () => {
 			.toEqual({ overflow: 0, width: 390 });
 		await page.setViewportSize({ width: 834, height: 1194 });
 		await expect(workspace).toBeVisible();
-		await expect(downloadLink).toBeInViewport();
+		await expect(downloadButton).toBeInViewport();
 		await expect
 			.poll(() =>
 				workspace.evaluate(() => ({

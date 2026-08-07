@@ -15,6 +15,7 @@ import {
 	type RemoteBridgeDevice,
 } from "../../../shared/contracts.ts";
 import { api } from "../../api.ts";
+import { type ServerEventSubscription, subscribeServerEvents } from "../../lib/api/serverEvents";
 import { copyToClipboard } from "../../lib/clipboard.ts";
 import { messageOf } from "../../lib/failures.ts";
 import { useArtifactProposal } from "./useArtifactProposal.ts";
@@ -33,7 +34,7 @@ type ArtifactBusyAction = "create" | "update" | "delete" | "build" | "stop";
 
 interface ArtifactStream {
 	runId: string;
-	source: EventSource;
+	source: ServerEventSubscription;
 }
 
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "stopped"]);
@@ -149,47 +150,49 @@ export function useArtifacts({
 						? snapshots[run.artifactId]!
 						: { run, output: [] },
 			}));
-			const source = new EventSource(
+			const source = subscribeServerEvents(
 				API_ROUTES.artifactRunEvents(run.repositoryId, run.artifactId, run.id),
+				{
+					onMessage: (message) => {
+						try {
+							const event = JSON.parse(message.data) as ArtifactRunEvent;
+							if (event.type === "snapshot") {
+								setSnapshots((currentSnapshots) => ({
+									...currentSnapshots,
+									[run.artifactId]: event.snapshot,
+								}));
+								updateRun(event.snapshot.run);
+								return;
+							}
+							if (event.type === "output") {
+								setSnapshots((currentSnapshots) => {
+									const snapshot = currentSnapshots[run.artifactId];
+									if (!snapshot || snapshot.run.id !== run.id) return currentSnapshots;
+									if (snapshot.output.some((chunk) => chunk.sequence === event.chunk.sequence)) {
+										return currentSnapshots;
+									}
+									return {
+										...currentSnapshots,
+										[run.artifactId]: {
+											...snapshot,
+											output: [...snapshot.output, event.chunk],
+										},
+									};
+								});
+								return;
+							}
+							updateRun(event.run);
+							if (TERMINAL_RUN_STATUSES.has(event.run.status)) {
+								closeStream(run.artifactId);
+								setTimeout(() => void refreshRef.current(), 0);
+							}
+						} catch {
+							// Ignore malformed run events; the subscription will keep reconnecting.
+						}
+					},
+				},
 			);
 			streamsRef.current.set(run.artifactId, { runId: run.id, source });
-			source.onmessage = (message) => {
-				try {
-					const event = JSON.parse(message.data) as ArtifactRunEvent;
-					if (event.type === "snapshot") {
-						setSnapshots((currentSnapshots) => ({
-							...currentSnapshots,
-							[run.artifactId]: event.snapshot,
-						}));
-						updateRun(event.snapshot.run);
-						return;
-					}
-					if (event.type === "output") {
-						setSnapshots((currentSnapshots) => {
-							const snapshot = currentSnapshots[run.artifactId];
-							if (!snapshot || snapshot.run.id !== run.id) return currentSnapshots;
-							if (snapshot.output.some((chunk) => chunk.sequence === event.chunk.sequence)) {
-								return currentSnapshots;
-							}
-							return {
-								...currentSnapshots,
-								[run.artifactId]: {
-									...snapshot,
-									output: [...snapshot.output, event.chunk],
-								},
-							};
-						});
-						return;
-					}
-					updateRun(event.run);
-					if (TERMINAL_RUN_STATUSES.has(event.run.status)) {
-						closeStream(run.artifactId);
-						window.setTimeout(() => void refreshRef.current(), 0);
-					}
-				} catch {
-					// EventSource reconnects after malformed or interrupted event delivery.
-				}
-			};
 		},
 		[closeStream, updateRun],
 	);
@@ -282,16 +285,16 @@ export function useArtifacts({
 			.finally(() => {
 				if (!controller.signal.aborted) setLoading(false);
 			});
-		const catalogInterval = window.setInterval(() => {
+		const catalogInterval = setInterval(() => {
 			void refresh().catch(() => undefined);
 		}, 3_000);
-		const deviceInterval = window.setInterval(() => {
+		const deviceInterval = setInterval(() => {
 			void refreshDevices().catch(() => undefined);
 		}, 10_000);
 		return () => {
 			controller.abort();
-			window.clearInterval(catalogInterval);
-			window.clearInterval(deviceInterval);
+			clearInterval(catalogInterval);
+			clearInterval(deviceInterval);
 			for (const stream of streamsRef.current.values()) stream.source.close();
 			streamsRef.current.clear();
 			if (requestRef.current === controller) requestRef.current = null;

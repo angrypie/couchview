@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-import type { ApiErrorBody, ApiErrorDiagnostic } from "../shared/contracts.ts";
+import { type ApiErrorBody, type ApiErrorDiagnostic, CSRF_HEADER } from "../shared/contracts.ts";
+import { NATIVE_CLIENT_TOKEN_HEADER } from "../shared/nativeClients.ts";
 import { HttpError } from "./errors.ts";
 import { GitCommandError } from "./git/index.ts";
 import { json } from "./serverHttp.ts";
@@ -109,5 +110,19 @@ export function addSecurityHeaders(response: Response): Response {
 		"Content-Security-Policy",
 		"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",
 	);
+	return response;
+}
+
+export function addCorsHeaders(response: Response, origin: string): Response {
+	const headers = response.headers;
+	headers.set("Access-Control-Allow-Credentials", "true");
+	headers.set(
+		"Access-Control-Allow-Headers",
+		`Content-Type, ${CSRF_HEADER}, ${NATIVE_CLIENT_TOKEN_HEADER}, X-Requested-With`,
+	);
+	headers.set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, DELETE, OPTIONS");
+	headers.set("Access-Control-Allow-Origin", origin);
+	headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+	headers.append("Vary", "Origin");
 	return response;
 }

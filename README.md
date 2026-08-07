@@ -1,6 +1,9 @@
 # Couchview
 
-Couchview is a local-first, mobile-optimized PWA for reviewing the combined `HEAD → working tree` diff of a Git repository. It keeps code nearly full width, makes file and hunk navigation fast, searches a tapped identifier across the project, and supports review, staging, and commit workflows.
+Couchview is a local-first, universal Expo application for reviewing the combined
+`HEAD → working tree` diff of a Git repository. It runs as an installable web app and a paired
+native client. It keeps code nearly full width, makes file and hunk navigation fast, searches a
+tapped identifier across the project, and supports review, staging, and commit workflows.
 
 It shows staged, unstaged, partially staged, and untracked non-ignored changes in one stable queue. Staging a file does not remove it from that queue or mark it reviewed.
 
@@ -32,9 +35,10 @@ bun run build:binary
 ./dist/couchview --repo /absolute/path/to/project
 ```
 
-This runs the Vite production build and then uses Bun's `--compile` flag to bundle the
-server, its packages, and the Bun runtime into `dist/couchview`. Keep the executable in
-the generated `dist/` directory so it can serve the companion web assets beside it.
+This exports the Expo web production app, applies Couchview's PWA post-processing, and then uses
+Bun's `--compile` flag to bundle the server, its packages, and the Bun runtime into
+`dist/couchview`. Keep the executable in the generated `dist/` directory so it can serve the
+companion web assets beside it.
 `bun run test:binary` smoke-tests that existing executable without rebuilding it; CI runs
 the build and smoke check in that order, outside the regular unit-test path.
 
@@ -137,12 +141,13 @@ LAN mode exposes repository diffs, staging controls, and detected package script
 
 ### Native iPhone and iPad app
 
-The Expo app uses the same mobile product surface as the PWA. After it verifies
-the selected paired server with the device credential stored in SecureStore, it
-opens that server's PWA in the native shell. Review, commands, settings, Git
-history, artifacts, downloads, and the tmux terminal therefore use the same
-components and same-origin transports as mobile Safari. Pairing and paired-server
-management remain native.
+The Expo app renders the same React Native product composition as Expo web. After it verifies the
+selected paired server with the device credential stored in SecureStore, native requests,
+streams, downloads, and terminal attachments use that server origin and credential directly.
+Review, commands, settings, Git history, artifacts, and their surrounding terminal UI do not load
+a hosted PWA or full-product WebView. Pierre Diff and the Ghostty live terminal/typography preview
+are the three focused Expo DOM islands required by their DOM, worker, WASM, and canvas renderers.
+Pairing and paired-server management are native.
 
 Run one reachable Couchview process on the computer; a separate API server is
 not needed. The same `couchview --host 0.0.0.0 ...` process serves the PWA, JSON
@@ -156,31 +161,32 @@ with `bun x expo run:ios --configuration Release`. The EAS profiles are ready
 for local EAS builds after the project is linked once with `bun x eas init`; then use
 `bun x eas build --platform ios --profile development --local`.
 
-### Browser tmux terminal
+### Ghostty tmux terminal
 
 Couchview provides one persistent tmux terminal per repository, rendered by
 `ghostty-web`. Install tmux on the machine running Couchview and make it available
 on `PATH`. A new session starts immediately in the repository with tmux's configured
 default shell. Couchview loads the host user's normal XDG or `~/.tmux.conf` first,
 then enforces persistence, mouse, focus, and true-color settings required by the
-browser terminal. Review hides the mounted terminal without ending it; reconnects,
+Ghostty renderer. Review hides the mounted terminal without ending it; reconnects,
 reloads, and Couchview restarts reattach to the same tmux session. **End session**
 kills that session and every program running in it.
 
-Appearance is browser-owned and never reads the host Ghostty configuration. Open
+Appearance is device-local and never reads the host Ghostty configuration. Open
 **Settings** to tune the diff and terminal independently. Both can use bundled
-Iosevka or the browser's system monospace stack. Diff controls cover font size,
+Iosevka or the platform's system monospace stack. Diff controls cover font size,
 line height, and letter spacing; terminal controls cover font size plus pixel-based
 cell height and width adjustments (the terminal grid's row and column spacing).
 Cell width can be tuned from −5px to +5px. Settings has its own `/settings` route,
 while preserving the selected repository when returning to Review.
-Preferences are stored in the current browser. The fixed Catppuccin Mocha terminal
+Preferences are stored on the current device. The fixed Catppuccin Mocha terminal
 palette and Safe Mode defaults are bundled, while terminal renderer and WASM assets
-load only after the terminal is opened and are not part of the PWA precache.
+load only after the terminal is opened; the web build does not include them in the PWA
+precache.
 
 With the terminal focused, `Cmd++`/`Cmd+-` on Apple devices or `Ctrl++`/`Ctrl+-`
 on Windows and Linux change only its font size; `Cmd+0` or `Ctrl+0` restores the
-configured size. Couchview prevents browser zoom, re-fits tmux, and keeps
+configured size. Couchview keeps zoom inside the renderer, re-fits tmux, and keeps
 the temporary size across reconnects and Review handoffs. Reloading resets it.
 
 Terminal access is enabled automatically only when the bind address and every
@@ -248,12 +254,12 @@ COUCHVIEW_TERMINAL_STUN=stun:stun.example.net:3478,stun:backup.example.net couch
 There is deliberately no TURN relay. Networks that block UDP, symmetric NATs,
 and restrictive firewalls can therefore prevent a direct path; WebSocket remains
 the fallback. The authenticated control WebSocket stays open during P2P, and the
-browser renews a same-origin authorization lease through the protected HTTP API.
-Closing that controller, taking over from another tab, ending the session,
+client renews its authorization lease through the protected HTTP API.
+Closing that controller, taking over from another client, ending the session,
 forgetting the repository, or restarting Couchview also tears down WebRTC.
 
 P2P changes the privacy boundary: ICE can reveal peer IP addresses to the
-authorized browser and Couchview host, and terminal payloads on a direct path no
+authorized client and Couchview host, and terminal payloads on a direct path no
 longer traverse the configured reverse proxy or tunnel. That origin still carries
 signaling, lease renewal, and WebSocket fallback. Enable P2P only when direct peer
 exposure is acceptable.
@@ -723,16 +729,20 @@ checkout, builds into a temporary directory so a failed build cannot replace the
 UI, then replaces its server worker on the same host and port and reloads the current
 review. The foreground supervisor remains attached to the launching terminal, including
 across repeated restarts. `couchview restart` triggers the same action from another shell.
-This action is intentionally unavailable in development mode, where Vite already reloads
-client changes, and when `STATIC_DIR` points at a custom build.
+This action is intentionally unavailable in development mode, where Expo/Metro already applies
+client changes with Fast Refresh, and when `STATIC_DIR` points at a custom build.
 
-For application development, run the Bun API and Vite UI together:
+For application development, run the Bun API and Expo/Metro web UI together:
 
 ```sh
 bun run dev -- --repo /absolute/path/to/project
 ```
 
-Development also binds both processes to `127.0.0.1` by default. The UI proxies `/api`, including server-sent events, to the loopback API endpoint at `http://127.0.0.1:3001`. Pass `--host 0.0.0.0` to opt into phone access and print the phone-accessible frontend URLs. `PORT` can change the development API port and `COUCHVIEW_WEB_PORT` can change the Vite port.
+Development also binds both processes to `127.0.0.1` by default. Expo web receives the explicit
+API origin `http://127.0.0.1:3001`, and the Bun API CORS-allowlists the generated frontend
+origins, including server-sent-event requests. Pass `--host 0.0.0.0` to opt into phone access and
+print the phone-accessible frontend URLs. `PORT` changes the development API port and
+`COUCHVIEW_WEB_PORT` changes the Expo/Metro web port.
 
 ## Review workflow
 
@@ -740,14 +750,18 @@ Development also binds both processes to `127.0.0.1` by default. The UI proxies 
 - Open the file drawer to jump directly to a file or filter the queue by All, Unreviewed, Reviewed, or Staged. The persistent arrow controls visit the previous or next file; `[` and `]` do the same from the keyboard.
 - Use the hunk up/down controls, or `K` and `J`, to jump between changes in the current file.
 - Tap an identifier in a diff to run a literal, case-sensitive project search. Results are separated into Current file and Other files. Opening a result shows a read-only source window with a one-tap return to the active diff.
-- Line numbers are hidden by default so the code gets the widest possible viewport; tap `123` to reveal them. Use the adjacent line-wrap control to switch long lines between horizontal scrolling and wrapping. Both display preferences are stored in the browser.
+- Line numbers are hidden by default so the code gets the widest possible viewport; tap `123` to
+  reveal them. Use the adjacent line-wrap control to switch long lines between horizontal
+  scrolling and wrapping. Both display preferences are stored on the current device.
 - Mark reviewed to record the current content revision and automatically advance to the next unreviewed file. In compact landscape mode, Review only toggles the mark because Next is a separate adjacent control. Undo is offered. A later content change clears the review.
 - Stage writes the whole file to the real Git index; once fully staged, the same control becomes Unstage and restores that path in the index from `HEAD` without changing its working copy. Review and stage are independent actions, and a stale operation is rejected instead of changing the index.
 - Commit is available from the changed-files drawer once at least one path is staged. It commits exactly the current Git index with the supplied message; unstaged working-tree edits remain local, and stale or conflicted states are rejected. **Generate with Codex** uses the signed-in local Codex CLI to propose an editable, single-line Conventional Commit from the staged patch; generation never stages or commits changes.
 - When tracked or non-ignored `package.json` files are present, the drawer adds a **Commands** view. Scripts are grouped by subproject, run with the package manager declared by the project or indicated by its nearest lockfile, and stream stdout and stderr into a reconnectable output sheet. Long-running scripts keep running when the sheet closes and can be stopped explicitly.
 - If Git fails or stops producing output, Couchview shows the operation-specific message instead of treating an empty response as a valid diff. Open **Details** to see a diagnostic ID, failure kind, exit code, and bounded Git output, or copy the complete diagnostic for reporting.
 - Phone layouts share a centered floating action dock. Portrait keeps its roomier repository/file bars plus hunk actions in the dock; compact landscape moves hunk navigation into its single top line and keeps only Previous, Review/Unreview, Stage/Unstage, and Next in the dock to protect vertical space.
-- Use the minus and plus controls to adjust diff code from 9–24 px, or open **Settings** for all typography controls. The compact 11 px default and the selected preferences are stored in the browser.
+- Use the minus and plus controls to adjust diff code from 9–24 px, or open **Settings** for all
+  typography controls. The compact 11 px default and selected preferences are stored on the
+  current device.
 
 Binary and metadata-only changes remain reviewable and stageable. Very large diffs show an explicit truncation warning.
 
@@ -821,10 +835,17 @@ PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 bun run test:e2e
 
 ## Project layout
 
-- `src/client/` contains the React review interface and PWA lifecycle UI.
-- `src/server/` contains the Bun CLI/server, global SQLite catalog, Git boundary, validation, and event stream.
+- `app/` contains the thin universal Expo Router routes and root layout.
+- `src/client/features/` contains stateful product capabilities and side effects.
+- `src/client/components/` contains React Native presentation; reusable design-system primitives
+  live only in `src/client/components/ui/`.
+- `src/client/lib/` contains shared platform services, transport, Jotai wiring, and persistence.
+- `src/server/` contains the Bun CLI/server, global SQLite catalog, Git boundary, validation, and
+  event streams.
 - `src/shared/contracts.ts` is the typed client/server API contract.
-- `scripts/dev.ts` supervises the loopback-only Vite and Bun development processes.
+- `scripts/dev.ts` supervises the Expo/Metro web and Bun API development processes.
 - `scripts/e2e-fixture.ts` serves the deterministic production smoke fixture.
 
-All shipped fonts, icons, scripts, and styles are local. Vite asset inlining is disabled so production can enforce its Content Security Policy without third-party origins or `data:` script/style assets.
+All shipped fonts, icons, scripts, and styles are local. The Expo web postprocessor extracts
+inline executable bootstrap code for the existing Content Security Policy and generates the
+bounded PWA app-shell service worker without caching API or navigation responses.

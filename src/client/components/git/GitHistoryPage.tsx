@@ -7,21 +7,36 @@ import {
 	GitBranch,
 	GitCommitHorizontal,
 	History,
-	LoaderCircle,
 	MoreHorizontal,
 	RotateCcw,
 	Search,
 	Trash2,
-} from "lucide-react";
+} from "lucide-react-native";
 import { useState } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 
 import type { FileChange, RepositorySummary } from "../../../shared/contracts.ts";
 import type { GitHistoryFile } from "../../../shared/git/index.ts";
 import type { ResolvedTheme } from "../../../shared/theme.ts";
 import { DiffViewer } from "../../DiffViewer.tsx";
-import type { GitWorkspaceController } from "../../features/git/index.ts";
+import type { GitPendingAction, GitWorkspaceController } from "../../features/git/index.ts";
 import type { useDisplayPreferences } from "../../features/settings/useDisplayPreferences.ts";
 import { codeFontStack } from "../../typographyPreferences.ts";
+import {
+	Badge,
+	Button,
+	EmptyState,
+	Heading,
+	HStack,
+	Icon,
+	IconButton,
+	ListItem,
+	Sheet,
+	Spinner,
+	Text,
+	Toolbar,
+	VStack,
+} from "../ui/index.ts";
 import { GitActionConfirmation } from "./GitActionConfirmation.tsx";
 
 interface GitHistoryPageProps {
@@ -56,39 +71,42 @@ function HistoricalDiff({
 }: Pick<GitHistoryPageProps, "controller" | "display" | "themeType">) {
 	if (controller.diffBusy && !controller.diff) {
 		return (
-			<div className="loading-state git-diff-state">
-				<LoaderCircle className="spinner" size={24} />
-				<p className="state-copy">Loading commit diff…</p>
-			</div>
+			<VStack align="center" className="flex-1 p-6" justify="center" space="sm">
+				<Spinner />
+				<Text tone="muted">Loading commit diff…</Text>
+			</VStack>
 		);
 	}
 	if (!controller.diff) {
 		return (
-			<div className="empty-state git-diff-state">
-				<FileCode2 className="state-icon" size={28} />
-				<p className="state-copy">Select a changed file to preview its commit diff.</p>
-			</div>
+			<EmptyState
+				description="Select a changed file to preview its commit diff."
+				icon={FileCode2}
+				title="No file selected"
+			/>
 		);
 	}
 	if (controller.diff.binary) {
 		return (
-			<div className="empty-state git-diff-state">
-				<FileCode2 className="state-icon" size={28} />
-				<h3 className="state-title">Binary file</h3>
-				<p className="state-copy">A line-by-line preview is not available.</p>
-			</div>
+			<EmptyState
+				description="A line-by-line preview is not available."
+				icon={FileCode2}
+				title="Binary file"
+			/>
 		);
 	}
 	if (controller.diff.hunks.length === 0) {
 		return (
-			<div className="empty-state git-diff-state">
-				<FileCode2 className="state-icon" size={28} />
-				<p className="state-copy">This change has no textual hunks.</p>
-			</div>
+			<EmptyState
+				description="This change has no textual hunks."
+				icon={FileCode2}
+				title="No textual changes"
+			/>
 		);
 	}
+
 	return (
-		<div className="git-diff-viewer">
+		<View className="relative min-h-0 flex-1 overflow-hidden">
 			<DiffViewer
 				diff={controller.diff}
 				fontFamily={codeFontStack(display.typography.diff.fontFamily)}
@@ -102,12 +120,291 @@ function HistoricalDiff({
 				themeType={themeType}
 				widthAdjustment={display.typography.diff.widthAdjustment}
 			/>
-			{controller.diffBusy && (
-				<div className="diff-refresh-indicator" role="status">
-					<LoaderCircle className="spinner" size={14} /> Refreshing diff…
-				</div>
+			{controller.diffBusy ? (
+				<HStack
+					align="center"
+					className="absolute right-2 top-2 rounded-full border border-border bg-popover px-2 py-1"
+					space="xs"
+				>
+					<Spinner size="small" />
+					<Text size="xs" tone="muted">
+						Refreshing diff…
+					</Text>
+				</HStack>
+			) : null}
+		</View>
+	);
+}
+
+interface HistoryPaneProps {
+	controller: GitWorkspaceController;
+	visible: boolean;
+}
+
+function CommitHistoryPane({ controller, visible }: HistoryPaneProps) {
+	return (
+		<View
+			accessibilityLabel="Commit history"
+			className={
+				visible
+					? "flex min-h-0 flex-1 border-border md:w-80 md:flex-none md:border-r"
+					: "hidden min-h-0 flex-1 border-border md:flex md:w-80 md:flex-none md:border-r"
+			}
+			role="region"
+		>
+			<HStack className="m-2 rounded-xl bg-muted p-1" space="xs">
+				<Button
+					className="flex-1"
+					onPress={() => controller.setScope("current")}
+					size="sm"
+					variant={controller.scope === "current" ? "primary" : "ghost"}
+				>
+					Current
+				</Button>
+				<Button
+					className="flex-1"
+					onPress={() => controller.setScope("all")}
+					size="sm"
+					variant={controller.scope === "all" ? "primary" : "ghost"}
+				>
+					All refs
+				</Button>
+			</HStack>
+
+			{controller.loading && controller.commits.length === 0 ? (
+				<VStack align="center" className="flex-1" justify="center">
+					<Spinner />
+				</VStack>
+			) : controller.commits.length === 0 ? (
+				<EmptyState description="No commits in this scope." icon={History} title="No commits" />
+			) : (
+				<ScrollView className="min-h-0 flex-1" contentContainerClassName="gap-1 p-2">
+					{controller.commits.map((commit) => {
+						const selected = controller.selectedCommitId === commit.id;
+						return (
+							<Pressable
+								accessibilityRole="button"
+								accessibilityState={{ selected }}
+								className={
+									selected
+										? "flex-row items-start gap-3 rounded-xl border-l-2 border-primary bg-accent p-3 active:opacity-80"
+										: "flex-row items-start gap-3 rounded-xl border-l-2 border-transparent p-3 active:opacity-80 hover:bg-muted"
+								}
+								key={commit.id}
+								onPress={() => void controller.selectCommit(commit)}
+							>
+								<Icon as={GitCommitHorizontal} size={18} tone="primary" />
+								<VStack className="min-w-0 flex-1" space="xs">
+									<Text bold={selected} numberOfLines={2} size="sm">
+										{commit.subject || "Untitled commit"}
+									</Text>
+									<Text numberOfLines={1} size="xs" tone="muted">
+										{commit.shortId} · {commit.authorName} · {formatCommitDate(commit.authoredAt)}
+									</Text>
+									{commit.decorations.length ? (
+										<HStack space="xs" wrap>
+											{commit.decorations.map((decoration) => (
+												<Badge key={decoration} variant="outline">
+													{decoration}
+												</Badge>
+											))}
+										</HStack>
+									) : null}
+								</VStack>
+							</Pressable>
+						);
+					})}
+					{controller.nextCursor ? (
+						<Button
+							className="mt-2"
+							loading={controller.loadMoreBusy}
+							onPress={() => void controller.loadMore()}
+							variant="outline"
+						>
+							Load more
+						</Button>
+					) : null}
+				</ScrollView>
 			)}
-		</div>
+		</View>
+	);
+}
+
+interface FilesPaneProps extends HistoryPaneProps {
+	onCheckout(): void;
+}
+
+function CommitFilesPane({ controller, onCheckout, visible }: FilesPaneProps) {
+	return (
+		<View
+			accessibilityLabel="Commit files"
+			className={
+				visible
+					? "flex min-h-0 flex-1 border-border md:max-h-[40%] md:border-b"
+					: "hidden min-h-0 flex-1 border-border md:flex md:max-h-[40%] md:border-b"
+			}
+			role="region"
+		>
+			<HStack align="center" className="min-h-14 border-b border-border px-2 py-2" space="sm">
+				<IconButton
+					accessibilityLabel="Back to commits"
+					className="md:hidden"
+					icon={ChevronLeft}
+					onPress={controller.showCommits}
+					size="sm"
+				/>
+				<VStack className="min-w-0 flex-1" space="xs">
+					<Text bold numberOfLines={1} size="sm">
+						{controller.details?.commit.subject ?? "Commit changes"}
+					</Text>
+					{controller.details ? (
+						<Text numberOfLines={1} size="xs" tone="muted">
+							{controller.details.commit.shortId} · {controller.details.files.length} changed{" "}
+							{controller.details.files.length === 1 ? "file" : "files"}
+						</Text>
+					) : null}
+				</VStack>
+				{controller.details ? (
+					<Button disabled={Boolean(controller.actionBusy)} onPress={onCheckout} size="sm">
+						Checkout
+					</Button>
+				) : null}
+			</HStack>
+
+			{controller.detailsBusy ? (
+				<VStack align="center" className="flex-1" justify="center">
+					<Spinner />
+				</VStack>
+			) : controller.details?.files.length ? (
+				<ScrollView className="min-h-0 flex-1" contentContainerClassName="gap-1 p-2">
+					{controller.details.files.map((file) => {
+						const selected = controller.selectedFileId === file.id;
+						return (
+							<Pressable
+								accessibilityRole="button"
+								accessibilityState={{ selected }}
+								className={
+									selected
+										? "flex-row items-start gap-3 rounded-xl border-l-2 border-primary bg-accent p-3 active:opacity-80"
+										: "flex-row items-start gap-3 rounded-xl border-l-2 border-transparent p-3 active:opacity-80 hover:bg-muted"
+								}
+								key={file.id}
+								onPress={() => void controller.selectFile(file.id)}
+							>
+								<Icon as={FileCode2} size={18} tone="primary" />
+								<VStack className="min-w-0 flex-1" space="xs">
+									<Text bold={selected} numberOfLines={2} size="sm">
+										{file.path}
+									</Text>
+									<Text size="xs" tone="muted">
+										{fileKindLabel(file)} · +{file.additions ?? "–"} −{file.deletions ?? "–"}
+									</Text>
+								</VStack>
+							</Pressable>
+						);
+					})}
+				</ScrollView>
+			) : (
+				<EmptyState
+					description={
+						controller.details
+							? "This commit has no changed files."
+							: "Select a commit to inspect its files."
+					}
+					icon={FileCode2}
+					title={controller.details ? "No changed files" : "No commit selected"}
+				/>
+			)}
+		</View>
+	);
+}
+
+function HistoricalDiffPane({
+	controller,
+	display,
+	themeType,
+	visible,
+}: Pick<GitHistoryPageProps, "controller" | "display" | "themeType"> & { visible: boolean }) {
+	return (
+		<View
+			accessibilityLabel="Historical diff"
+			className={visible ? "flex min-h-0 flex-1" : "hidden min-h-0 flex-1 md:flex"}
+			role="region"
+		>
+			<HStack align="center" className="min-h-14 border-b border-border px-2 py-2" space="sm">
+				<IconButton
+					accessibilityLabel="Back to commit files"
+					className="md:hidden"
+					icon={ChevronLeft}
+					onPress={controller.showFiles}
+					size="sm"
+				/>
+				<VStack className="min-w-0 flex-1" space="xs">
+					<Text bold numberOfLines={1} size="sm">
+						{controller.diff?.path ?? "Commit diff"}
+					</Text>
+					{controller.diff ? (
+						<Text size="xs" tone="muted">
+							Read-only historical preview
+						</Text>
+					) : null}
+				</VStack>
+			</HStack>
+			<HistoricalDiff controller={controller} display={display} themeType={themeType} />
+		</View>
+	);
+}
+
+interface RepositoryActionsProps {
+	controller: GitWorkspaceController;
+	files: FileChange[];
+	onOpenChange(open: boolean): void;
+	onRequestAction(pending: GitPendingAction): void;
+	open: boolean;
+	repository: RepositorySummary | null;
+}
+
+function RepositoryActions({
+	controller,
+	files,
+	onOpenChange,
+	onRequestAction,
+	open,
+	repository,
+}: RepositoryActionsProps) {
+	return (
+		<Sheet onOpenChange={onOpenChange} open={open} title="Repository actions">
+			<ListItem
+				accessibilityRole="menuitem"
+				disabled={files.length === 0}
+				leading={<Icon as={Archive} tone="primary" />}
+				onPress={() => onRequestAction({ action: "stash" })}
+				title="Stash changes"
+			/>
+			<ListItem
+				accessibilityRole="menuitem"
+				disabled={!controller.status?.stashCount || files.length > 0}
+				leading={<Icon as={ArchiveRestore} tone="primary" />}
+				onPress={() => onRequestAction({ action: "restore-stash" })}
+				subtitle={`${controller.status?.stashCount ?? 0} available`}
+				title="Restore latest stash"
+			/>
+			<ListItem
+				accessibilityRole="menuitem"
+				disabled={!controller.status?.canUndoLastCommit}
+				leading={<Icon as={RotateCcw} tone="primary" />}
+				onPress={() => onRequestAction({ action: "undo-last-commit" })}
+				title="Undo last commit"
+			/>
+			<ListItem
+				accessibilityRole="menuitem"
+				disabled={Boolean(repository?.unborn) || files.length === 0}
+				leading={<Icon as={Trash2} tone="destructive" />}
+				onPress={() => onRequestAction({ action: "clean" })}
+				title="Clean repository"
+				tone="destructive"
+			/>
+		</Sheet>
 	);
 }
 
@@ -127,7 +424,7 @@ export function GitHistoryPage({
 		: controller.selectedCommitId
 			? "files"
 			: "commits";
-	const requestAction = (pending: Parameters<typeof controller.requestAction>[0]) => {
+	const requestAction = (pending: GitPendingAction) => {
 		setMenuOpen(false);
 		controller.requestAction(pending);
 	};
@@ -138,254 +435,92 @@ export function GitHistoryPage({
 	};
 
 	return (
-		<main
-			aria-label="Git history and repository actions"
-			className={`git-history-page git-mobile-view-${mobileView}`}
+		<View
+			accessibilityLabel="Git history and repository actions"
+			className="min-h-0 flex-1 bg-background"
+			role="main"
 		>
-			<header className="git-history-toolbar">
-				<button className="git-history-back" onClick={back} type="button">
-					<ArrowLeft size={16} /> <span>Review</span>
-				</button>
-				<div className="git-history-heading">
-					<h1>Git history</h1>
-					<div>
-						<div className="repo-meta">
-							<GitBranch size={11} />{" "}
+			<Toolbar className="min-h-14" placement="top">
+				<Button leftIcon={ArrowLeft} onPress={back} size="sm" variant="outline">
+					Review
+				</Button>
+				<VStack align="center" className="min-w-0 flex-1" space="xs">
+					<Heading className="text-base" level={1} numberOfLines={1}>
+						Git history
+					</Heading>
+					<HStack align="center" className="max-w-full" space="xs">
+						<Icon as={GitBranch} size={12} tone="muted" />
+						<Text numberOfLines={1} size="xs" tone="muted">
 							{repository?.branch ?? `detached at ${repository?.head?.slice(0, 7) ?? "HEAD"}`}
-						</div>
-					</div>
-				</div>
-				<div className="git-header-actions">
-					<button
-						aria-label="Open command palette"
-						className="icon-button command-palette-trigger"
-						onClick={onOpenCommandPalette}
-						title={`Open command palette (${commandPaletteShortcut})`}
-						type="button"
+						</Text>
+					</HStack>
+				</VStack>
+				<IconButton
+					accessibilityHint={`Shortcut: ${commandPaletteShortcut}`}
+					accessibilityLabel="Open command palette"
+					icon={Search}
+					onPress={onOpenCommandPalette}
+				/>
+				<IconButton
+					accessibilityLabel="Repository actions"
+					icon={MoreHorizontal}
+					onPress={() => setMenuOpen(true)}
+				/>
+			</Toolbar>
+
+			{!repository?.branch && controller.status?.previousBranch ? (
+				<HStack
+					align="center"
+					className="border-b border-warning bg-warning/10 px-3 py-2"
+					space="sm"
+				>
+					<Text className="min-w-0 flex-1" numberOfLines={2} size="sm" tone="warning">
+						Detached HEAD · previous branch {controller.status.previousBranch}
+					</Text>
+					<Button
+						disabled={Boolean(controller.actionBusy)}
+						onPress={() =>
+							files.length > 0
+								? requestAction({ action: "return" })
+								: void controller.returnToPreviousBranch()
+						}
+						size="sm"
+						variant="outline"
 					>
-						<Search size={18} />
-					</button>
-					<div className="git-action-menu-wrap">
-						<button
-							aria-expanded={menuOpen}
-							aria-haspopup="menu"
-							aria-label="Repository actions"
-							className="icon-button"
-							onClick={() => setMenuOpen((current) => !current)}
-							type="button"
-						>
-							<MoreHorizontal size={20} />
-						</button>
-						{menuOpen && (
-							<div className="git-action-menu" role="menu">
-								<button
-									disabled={files.length === 0}
-									onClick={() => requestAction({ action: "stash" })}
-									role="menuitem"
-									type="button"
-								>
-									<Archive size={16} /> Stash changes
-								</button>
-								<button
-									disabled={!controller.status?.stashCount || files.length > 0}
-									onClick={() => requestAction({ action: "restore-stash" })}
-									role="menuitem"
-									type="button"
-								>
-									<ArchiveRestore size={16} /> Restore latest stash (
-									{controller.status?.stashCount ?? 0})
-								</button>
-								<button
-									disabled={!controller.status?.canUndoLastCommit}
-									onClick={() => requestAction({ action: "undo-last-commit" })}
-									role="menuitem"
-									type="button"
-								>
-									<RotateCcw size={16} /> Undo last commit
-								</button>
-								<button
-									className="danger"
-									disabled={Boolean(repository?.unborn) || files.length === 0}
-									onClick={() => requestAction({ action: "clean" })}
-									role="menuitem"
-									type="button"
-								>
-									<Trash2 size={16} /> Clean repository
-								</button>
-							</div>
-						)}
-					</div>
-				</div>
-			</header>
+						Return
+					</Button>
+				</HStack>
+			) : null}
 
-			<div className="git-history-body">
-				{!repository?.branch && controller.status?.previousBranch && (
-					<div className="git-detached-banner">
-						<span>Detached HEAD · previous branch {controller.status.previousBranch}</span>
-						<button
-							disabled={Boolean(controller.actionBusy)}
-							onClick={() =>
-								files.length > 0
-									? requestAction({ action: "return" })
-									: void controller.returnToPreviousBranch()
+			<View className="min-h-0 flex-1 md:flex-row">
+				<CommitHistoryPane controller={controller} visible={mobileView === "commits"} />
+				<View className="min-h-0 flex-1">
+					<CommitFilesPane
+						controller={controller}
+						onCheckout={() => {
+							if (controller.details) {
+								requestAction({ action: "checkout", commit: controller.details.commit });
 							}
-							type="button"
-						>
-							Return
-						</button>
-					</div>
-				)}
+						}}
+						visible={mobileView === "files"}
+					/>
+					<HistoricalDiffPane
+						controller={controller}
+						display={display}
+						themeType={themeType}
+						visible={mobileView === "diff"}
+					/>
+				</View>
+			</View>
 
-				<div className="git-workspace-content">
-					<section aria-label="Commit history" className="git-history-pane">
-						<div className="segmented git-history-scope">
-							<button
-								className={controller.scope === "current" ? "active" : ""}
-								onClick={() => controller.setScope("current")}
-								type="button"
-							>
-								Current
-							</button>
-							<button
-								className={controller.scope === "all" ? "active" : ""}
-								onClick={() => controller.setScope("all")}
-								type="button"
-							>
-								All refs
-							</button>
-						</div>
-						<div className="git-commit-list">
-							{controller.loading && controller.commits.length === 0 ? (
-								<div className="loading-state git-list-state">
-									<LoaderCircle className="spinner" size={23} />
-								</div>
-							) : controller.commits.length === 0 ? (
-								<div className="empty-state git-list-state">
-									<History className="state-icon" size={25} />
-									<p className="state-copy">No commits in this scope.</p>
-								</div>
-							) : (
-								controller.commits.map((commit) => (
-									<button
-										className={`git-commit-row ${controller.selectedCommitId === commit.id ? "current" : ""}`}
-										key={commit.id}
-										onClick={() => void controller.selectCommit(commit)}
-										type="button"
-									>
-										<GitCommitHorizontal size={16} />
-										<span className="git-commit-copy">
-											<strong>{commit.subject || "Untitled commit"}</strong>
-											<small>
-												{commit.shortId} · {commit.authorName} ·{" "}
-												{formatCommitDate(commit.authoredAt)}
-											</small>
-											{commit.decorations.length > 0 && (
-												<span className="git-ref-list">
-													{commit.decorations.map((decoration) => (
-														<span key={decoration}>{decoration}</span>
-													))}
-												</span>
-											)}
-										</span>
-									</button>
-								))
-							)}
-							{controller.nextCursor && (
-								<button
-									className="action-button secondary git-load-more"
-									disabled={controller.loadMoreBusy}
-									onClick={() => void controller.loadMore()}
-									type="button"
-								>
-									{controller.loadMoreBusy && <LoaderCircle className="spinner" size={15} />} Load
-									more
-								</button>
-							)}
-						</div>
-					</section>
-
-					<section aria-label="Commit files" className="git-files-pane">
-						<header className="git-pane-header">
-							<button
-								aria-label="Back to commits"
-								className="icon-button git-mobile-back"
-								onClick={controller.showCommits}
-								type="button"
-							>
-								<ChevronLeft size={18} />
-							</button>
-							<div>
-								<strong>{controller.details?.commit.subject ?? "Commit changes"}</strong>
-								{controller.details && (
-									<small>
-										{controller.details.commit.shortId} · {controller.details.files.length} changed{" "}
-										{controller.details.files.length === 1 ? "file" : "files"}
-									</small>
-								)}
-							</div>
-							{controller.details && (
-								<button
-									className="action-button git-checkout-action"
-									disabled={Boolean(controller.actionBusy)}
-									onClick={() =>
-										requestAction({ action: "checkout", commit: controller.details!.commit })
-									}
-									type="button"
-								>
-									Checkout
-								</button>
-							)}
-						</header>
-						<div className="git-file-list">
-							{controller.detailsBusy ? (
-								<div className="loading-state git-list-state">
-									<LoaderCircle className="spinner" size={23} />
-								</div>
-							) : controller.details ? (
-								controller.details.files.map((file) => (
-									<button
-										className={`git-file-row ${controller.selectedFileId === file.id ? "current" : ""}`}
-										key={file.id}
-										onClick={() => void controller.selectFile(file.id)}
-										type="button"
-									>
-										<FileCode2 size={15} />
-										<span>
-											<strong>{file.path}</strong>
-											<small>
-												{fileKindLabel(file)} · +{file.additions ?? "–"} −{file.deletions ?? "–"}
-											</small>
-										</span>
-									</button>
-								))
-							) : (
-								<div className="empty-state git-list-state">
-									<p className="state-copy">Select a commit to inspect its files.</p>
-								</div>
-							)}
-						</div>
-					</section>
-
-					<section aria-label="Historical diff" className="git-diff-pane">
-						<header className="git-pane-header git-diff-header">
-							<button
-								aria-label="Back to commit files"
-								className="icon-button git-mobile-back"
-								onClick={controller.showFiles}
-								type="button"
-							>
-								<ChevronLeft size={18} />
-							</button>
-							<div>
-								<strong>{controller.diff?.path ?? "Commit diff"}</strong>
-								{controller.diff && <small>Read-only historical preview</small>}
-							</div>
-						</header>
-						<HistoricalDiff controller={controller} display={display} themeType={themeType} />
-					</section>
-				</div>
-			</div>
-
+			<RepositoryActions
+				controller={controller}
+				files={files}
+				onOpenChange={setMenuOpen}
+				onRequestAction={requestAction}
+				open={menuOpen}
+				repository={repository}
+			/>
 			<GitActionConfirmation
 				busy={Boolean(controller.actionBusy)}
 				files={files}
@@ -396,6 +531,6 @@ export function GitHistoryPage({
 				repository={repository}
 				status={controller.status}
 			/>
-		</main>
+		</View>
 	);
 }

@@ -22,7 +22,7 @@ interface RemoteInteractiveSpawnOptions {
 
 export interface RemoteTerminalClientRuntime {
 	paths: RemoteBridgePaths;
-	env: NodeJS.ProcessEnv;
+	env: Partial<NodeJS.ProcessEnv>;
 	which(command: "ssh"): string | null;
 	spawn(command: string[], options: RemoteInteractiveSpawnOptions): RemoteInteractiveProcess;
 	onExit(listener: () => void): void;
@@ -53,9 +53,12 @@ function remoteShellCommand(script: string): string {
 	return `exec /bin/sh -c ${shellQuote(script)}`;
 }
 
-function remoteInteractiveEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	if (environment.TERM !== "xterm-ghostty") return environment;
-	return { ...environment, TERM: "xterm-256color" };
+function remoteInteractiveEnvironment(environment: Partial<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
+	const normalized =
+		environment.TERM === "xterm-ghostty" ? { ...environment, TERM: "xterm-256color" } : environment;
+	// Expo declares NODE_ENV as required globally, while OS process environments
+	// legitimately omit it. Keep the runtime value unchanged at this spawn boundary.
+	return normalized as NodeJS.ProcessEnv;
 }
 
 export function remoteTerminalLaunchCommand(

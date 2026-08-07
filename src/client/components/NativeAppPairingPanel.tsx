@@ -1,16 +1,12 @@
-import {
-	Copy,
-	ExternalLink,
-	LoaderCircle,
-	Plus,
-	RefreshCw,
-	Smartphone,
-	Trash2,
-} from "lucide-react";
+import { Copy, ExternalLink, Plus, RefreshCw, Smartphone, Trash2 } from "lucide-react-native";
 import { useMemo } from "react";
+import { Linking, Pressable, View } from "react-native";
+import Svg, { Path, Rect } from "react-native-svg";
 import { toQR } from "toqr";
 
 import { useNativeClientPairing } from "../features/nativeClients/useNativeClientPairing.ts";
+import { confirmAction } from "../lib/confirmAction";
+import { Button, Card, Icon, IconButton, ListItem, Spinner, Text } from "./ui";
 
 interface NativeAppPairingPanelProps {
 	csrfToken: string;
@@ -41,114 +37,121 @@ function PairingQrCode({ value }: { value: string }) {
 	}, [value]);
 	if (!modules.length) return null;
 	return (
-		<svg
-			aria-label="QR code for Couchview app pairing"
-			className="native-app-pairing-qr"
-			role="img"
-			viewBox={`-4 -4 ${size + 8} ${size + 8}`}
+		<View
+			accessibilityLabel="QR code for Couchview app pairing"
+			accessibilityRole="image"
+			className="size-48 overflow-hidden rounded-lg bg-white p-2"
 		>
-			<rect fill="#ffffff" height={size + 8} width={size + 8} x={-4} y={-4} />
-			<path d={path} fill="#090d12" />
-		</svg>
+			<Svg height="100%" viewBox={`-4 -4 ${size + 8} ${size + 8}`} width="100%">
+				<Rect fill="#ffffff" height={size + 8} width={size + 8} x={-4} y={-4} />
+				<Path d={path} fill="#090d12" />
+			</Svg>
+		</View>
 	);
 }
 
 export function NativeAppPairingPanel({ csrfToken, open, onNotice }: NativeAppPairingPanelProps) {
 	const nativeClients = useNativeClientPairing({ active: open, csrfToken, onNotice });
-
 	return (
-		<section className="remote-bridge-card native-app-card">
-			<div className="remote-bridge-card-heading">
-				<div>
-					<h3>Couchview app</h3>
-					<p>Pair an iPhone or iPad once, then use every repository on this server.</p>
-				</div>
-				<button
-					aria-label="Refresh paired Couchview apps"
-					className="icon-button"
+		<Card className="gap-4">
+			<View className="flex-row items-start gap-3">
+				<View className="min-w-0 flex-1 gap-1">
+					<Text bold>Couchview app</Text>
+					<Text className="text-muted-foreground" size="sm">
+						Pair an iPhone or iPad once, then use every repository on this server.
+					</Text>
+				</View>
+				<IconButton
+					accessibilityLabel="Refresh paired Couchview apps"
 					disabled={nativeClients.loading}
-					onClick={() => void nativeClients.refresh()}
-					type="button"
-				>
-					<RefreshCw className={nativeClients.loading ? "spinner" : ""} size={16} />
-				</button>
-			</div>
-			<div className="remote-bridge-devices">
+					icon={RefreshCw}
+					onPress={() => void nativeClients.refresh()}
+				/>
+			</View>
+			<View className="gap-1">
 				{nativeClients.devices.map((device) => (
-					<div className="remote-bridge-device" key={device.id}>
-						<Smartphone className="remote-bridge-device-icon" size={18} />
-						<div className="remote-bridge-device-meta">
-							<strong>{device.label}</strong>
-							<span>{formatDeviceTime(device.lastUsedAt)}</span>
-						</div>
-						<button
-							aria-label={`Revoke app access for ${device.label}`}
-							className="icon-button remote-bridge-revoke"
-							disabled={nativeClients.revokingId !== null}
-							onClick={() => {
-								if (window.confirm(`Revoke Couchview app access for ${device.label}?`)) {
-									void nativeClients.revoke(device);
-								}
-							}}
-							type="button"
-						>
-							{nativeClients.revokingId === device.id ? (
-								<LoaderCircle className="spinner" size={16} />
+					<ListItem
+						key={device.id}
+						leading={<Icon as={Smartphone} size={18} tone="muted" />}
+						subtitle={formatDeviceTime(device.lastUsedAt)}
+						title={device.label}
+						trailing={
+							nativeClients.revokingId === device.id ? (
+								<Spinner />
 							) : (
-								<Trash2 size={16} />
-							)}
-						</button>
-					</div>
+								<IconButton
+									accessibilityLabel={`Revoke app access for ${device.label}`}
+									disabled={nativeClients.revokingId !== null}
+									icon={Trash2}
+									onPress={() => {
+										void confirmAction(`Revoke Couchview app access for ${device.label}?`).then(
+											(confirmed) => {
+												if (confirmed) return nativeClients.revoke(device);
+											},
+										);
+									}}
+									variant="ghost"
+								/>
+							)
+						}
+					/>
 				))}
 				{!nativeClients.loading && nativeClients.devices.length === 0 ? (
-					<p className="remote-bridge-empty">No Couchview apps are paired yet.</p>
+					<Text className="py-3 text-center text-muted-foreground" size="sm">
+						No Couchview apps are paired yet.
+					</Text>
 				) : null}
-			</div>
-			<button
-				className="action-button secondary"
+			</View>
+			<Button
 				disabled={nativeClients.creating}
-				onClick={nativeClients.createPairing}
-				type="button"
+				leftIcon={Plus}
+				loading={nativeClients.creating}
+				onPress={nativeClients.createPairing}
+				variant="secondary"
 			>
-				{nativeClients.creating ? (
-					<LoaderCircle className="spinner" size={15} />
-				) : (
-					<Plus size={15} />
-				)}
 				Generate app pairing
-			</button>
+			</Button>
 			{nativeClients.pairing ? (
-				<div className="native-app-pairing">
+				<View className="items-center gap-3 rounded-xl bg-muted p-3 sm:flex-row sm:items-start">
 					<PairingQrCode value={nativeClients.pairing.deepLink} />
-					<div>
-						<pre className="remote-bridge-command">{nativeClients.pairing.deepLink}</pre>
-						<div className="native-app-pairing-actions">
-							<button
-								className="action-button secondary"
-								onClick={() => void nativeClients.copyPairingLink()}
-								type="button"
+					<View className="min-w-0 flex-1 gap-3">
+						<Pressable onPress={() => void nativeClients.copyPairingLink()}>
+							<Text className="font-mono text-primary" selectable size="xs">
+								{nativeClients.pairing.deepLink}
+							</Text>
+						</Pressable>
+						<View className="flex-row flex-wrap gap-2">
+							<Button
+								leftIcon={Copy}
+								onPress={() => void nativeClients.copyPairingLink()}
+								size="sm"
+								variant="outline"
 							>
-								<Copy size={15} /> Copy link
-							</button>
-							<a className="remote-bridge-open" href={nativeClients.pairing.deepLink}>
-								<ExternalLink size={13} /> Open app
-							</a>
-						</div>
-						<span>
+								Copy link
+							</Button>
+							<Button
+								leftIcon={ExternalLink}
+								onPress={() => void Linking.openURL(nativeClients.pairing!.deepLink)}
+								size="sm"
+								variant="outline"
+							>
+								Open app
+							</Button>
+						</View>
+						<Text className="text-muted-foreground" size="xs">
 							Code {nativeClients.pairing.code} · expires{" "}
-							{new Intl.DateTimeFormat(undefined, {
-								hour: "numeric",
-								minute: "2-digit",
-							}).format(new Date(nativeClients.pairing.expiresAt))}
-						</span>
-					</div>
-				</div>
+							{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+								new Date(nativeClients.pairing.expiresAt),
+							)}
+						</Text>
+					</View>
+				</View>
 			) : null}
 			{nativeClients.error ? (
-				<div className="remote-bridge-error" role="alert">
+				<Text accessibilityRole="alert" className="text-destructive" size="sm">
 					{nativeClients.error}
-				</div>
+				</Text>
 			) : null}
-		</section>
+		</Card>
 	);
 }

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useAtom, useAtomValue } from "jotai/react";
+import { useCallback, useState } from "react";
+
+import { useHydratePersistedAtom } from "../../lib/store/persistedAtom.ts";
 import { nativeCredentialStore } from "./credentialStore";
 import { claimNativePairing } from "./nativeApi.ts";
 import { parseNativePairingLink } from "./pairingLink.ts";
-import { nativeProfileStorage } from "./profileStorage";
+import { nativeProfilesState } from "./profileState.ts";
 import type { NativeServerProfile } from "./types.ts";
 
 export interface NativeProfilesController {
@@ -22,62 +25,39 @@ function errorMessage(error: unknown): string {
 }
 
 export function useNativeProfiles(): NativeProfilesController {
-	const [profiles, setProfiles] = useState<NativeServerProfile[]>([]);
-	const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-	const [hydrated, setHydrated] = useState(false);
+	const [metadata, setMetadata] = useAtom(nativeProfilesState.valueAtom);
+	const hydrated = useAtomValue(nativeProfilesState.hydratedAtom);
+	const persistenceError = useAtomValue(nativeProfilesState.errorAtom);
 	const [claiming, setClaiming] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	useEffect(() => {
-		let active = true;
-		void nativeProfileStorage.load().then(
-			(stored) => {
-				if (!active) return;
-				setProfiles(stored.profiles);
-				setActiveProfileId(
-					stored.profiles.some(({ id }) => id === stored.activeProfileId)
-						? stored.activeProfileId
-						: (stored.profiles[0]?.id ?? null),
-				);
-				setHydrated(true);
-			},
-			(loadError) => {
-				if (!active) return;
-				setError(errorMessage(loadError));
-				setHydrated(true);
-			},
-		);
-		return () => {
-			active = false;
-		};
-	}, []);
+	const [actionError, setActionError] = useState<string | null>(null);
+	const { activeProfileId, profiles } = metadata;
+	useHydratePersistedAtom(nativeProfilesState);
 
 	const save = useCallback(
 		async (nextProfiles: NativeServerProfile[], nextActiveProfileId: string | null) => {
-			setProfiles(nextProfiles);
-			setActiveProfileId(nextActiveProfileId);
-			await nativeProfileStorage.save(nextProfiles, nextActiveProfileId);
+			await setMetadata({ profiles: nextProfiles, activeProfileId: nextActiveProfileId });
 		},
-		[],
+		[setMetadata],
 	);
 
 	const activate = useCallback(
 		async (profileId: string) => {
-			if (!profiles.some(({ id }) => id === profileId)) return;
-			setError(null);
+			if (!hydrated || !profiles.some(({ id }) => id === profileId)) return;
+			setActionError(null);
 			try {
 				await save(profiles, profileId);
 			} catch (activateError) {
-				setError(errorMessage(activateError));
+				setActionError(errorMessage(activateError));
 			}
 		},
-		[profiles, save],
+		[hydrated, profiles, save],
 	);
 
 	const claim = useCallback(
 		async (link: string, deviceLabel: string) => {
+			if (!hydrated) throw new Error("Server profiles are still loading");
 			setClaiming(true);
-			setError(null);
+			setActionError(null);
 			try {
 				const pairing = parseNativePairingLink(link);
 				const claimed = await claimNativePairing(pairing.baseUrl, {
@@ -108,49 +88,51 @@ export function useNativeProfiles(): NativeProfilesController {
 					throw saveError;
 				}
 			} catch (claimError) {
-				setError(errorMessage(claimError));
+				setActionError(errorMessage(claimError));
 				throw claimError;
 			} finally {
 				setClaiming(false);
 			}
 		},
-		[profiles, save],
+		[hydrated, profiles, save],
 	);
 
 	const remove = useCallback(
 		async (profileId: string) => {
+			if (!hydrated) return;
 			const removed = profiles.find(({ id }) => id === profileId);
 			if (!removed) return;
-			setError(null);
+			setActionError(null);
 			try {
 				await nativeCredentialStore.remove(removed.serverId);
 				const next = profiles.filter(({ id }) => id !== profileId);
 				const nextActive = activeProfileId === profileId ? (next[0]?.id ?? null) : activeProfileId;
 				await save(next, nextActive);
 			} catch (removeError) {
-				setError(errorMessage(removeError));
+				setActionError(errorMessage(removeError));
 			}
 		},
-		[activeProfileId, profiles, save],
+		[activeProfileId, hydrated, profiles, save],
 	);
 
 	const update = useCallback(
 		async (profile: NativeServerProfile) => {
+			if (!hydrated) return;
 			const next = profiles.map((candidate) => (candidate.id === profile.id ? profile : candidate));
 			try {
 				await save(next, activeProfileId);
 			} catch (updateError) {
-				setError(errorMessage(updateError));
+				setActionError(errorMessage(updateError));
 			}
 		},
-		[activeProfileId, profiles, save],
+		[activeProfileId, hydrated, profiles, save],
 	);
 
 	return {
 		hydrated,
 		profiles,
 		activeProfile: profiles.find(({ id }) => id === activeProfileId) ?? null,
-		error,
+		error: actionError ?? (persistenceError ? errorMessage(persistenceError) : null),
 		claiming,
 		activate,
 		claim,

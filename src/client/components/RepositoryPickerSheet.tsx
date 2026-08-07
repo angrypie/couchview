@@ -2,17 +2,30 @@ import {
 	Check,
 	FileCode2,
 	FolderOpen,
-	LoaderCircle,
 	MonitorUp,
 	Plus,
 	RefreshCw,
 	Trash2,
-	X,
-} from "lucide-react";
+} from "lucide-react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
 import type { RepositoryCatalogEntry, RestartCapability } from "../../shared/contracts.ts";
 import type { useRepositoryDirectoryBrowser } from "../features/repositories/useRepositoryDirectoryBrowser.ts";
 import { RepositoryDirectoryPickerSheet } from "./RepositoryDirectoryPickerSheet.tsx";
 import type { RestartPhase } from "./RestartOverlay.tsx";
+import {
+	Badge,
+	Button,
+	EmptyState,
+	Icon,
+	IconButton,
+	Input,
+	InputField,
+	ListItem,
+	Sheet,
+	Spinner,
+	Text,
+} from "./ui";
 
 interface RepositoryPickerSheetProps {
 	addBusy: boolean;
@@ -55,170 +68,130 @@ export function RepositoryPickerSheet({
 	restart,
 	restartPhase,
 }: RepositoryPickerSheetProps) {
-	if (!open) return null;
 	const close = () => {
 		directoryBrowser.close();
 		onClose();
 	};
+	if (open && directoryBrowser.active) {
+		return (
+			<RepositoryDirectoryPickerSheet
+				addBusy={addBusy}
+				browser={directoryBrowser}
+				onBack={directoryBrowser.close}
+				onChoose={onAddDirectory}
+				onClose={close}
+			/>
+		);
+	}
 
 	return (
-		<>
-			<button
-				aria-label="Close repository picker"
-				className="sheet-scrim"
-				onClick={close}
-				type="button"
-			/>
-			{directoryBrowser.active ? (
-				<RepositoryDirectoryPickerSheet
-					addBusy={addBusy}
-					browser={directoryBrowser}
-					onBack={directoryBrowser.close}
-					onChoose={onAddDirectory}
-					onClose={close}
-				/>
-			) : (
-				<section
-					aria-label="Repositories"
-					aria-modal="true"
-					className="bottom-sheet repository-picker"
-					role="dialog"
-				>
-					<span className="sheet-grabber" />
-					<header className="sheet-header">
-						<div>
-							<h2 className="sheet-title">Repositories</h2>
-							<div className="repo-meta">Switch projects without restarting the server</div>
-						</div>
-						<button
-							aria-label="Close repository picker"
-							className="icon-button"
-							onClick={close}
-							type="button"
-						>
-							<X size={19} />
-						</button>
-					</header>
-					<form
-						aria-label="Add project"
-						className="repository-add-form"
-						onSubmit={(event) => {
-							event.preventDefault();
-							onAdd();
-						}}
+		<Sheet
+			description="Switch projects without restarting the server"
+			footer={
+				<View className="w-full gap-2">
+					{restart ? (
+						<>
+							<Button
+								disabled={!restart.available || restartPhase !== null}
+								fullWidth
+								leftIcon={RefreshCw}
+								loading={restartPhase === "building"}
+								onPress={onRebuild}
+								variant="secondary"
+							>
+								Rebuild & restart Couchview
+							</Button>
+							<Text className="text-muted-foreground" size="xs">
+								{restart.available
+									? "Builds this Couchview checkout, then reloads the current review."
+									: restart.reason}
+							</Text>
+						</>
+					) : null}
+					{nativeSetupAvailable ? (
+						<Button fullWidth leftIcon={MonitorUp} onPress={onOpenNativeSetup} variant="secondary">
+							Native IDE setup
+						</Button>
+					) : null}
+				</View>
+			}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) close();
+			}}
+			open={open}
+			title="Repositories"
+		>
+			<View className="gap-2">
+				<Text bold size="sm">
+					Project path on this server
+				</Text>
+				<View className="flex-row items-center gap-2">
+					<Input className="min-w-0 flex-1">
+						<InputField
+							accessibilityLabel="Project path on this server"
+							autoCapitalize="none"
+							autoCorrect={false}
+							editable={!addBusy}
+							onChangeText={onAddRootChange}
+							placeholder="/absolute/path/to/project"
+							value={addRoot}
+						/>
+					</Input>
+					<IconButton
+						accessibilityLabel="Browse server folders"
+						disabled={addBusy}
+						icon={FolderOpen}
+						onPress={() => directoryBrowser.open(addRoot.trim() || undefined)}
+						variant="outline"
+					/>
+					<Button
+						disabled={addBusy || !addRoot.trim()}
+						leftIcon={Plus}
+						loading={addBusy}
+						onPress={onAdd}
+						size="sm"
 					>
-						<label htmlFor="repository-add-root">Project path on this server</label>
-						<div>
-							<input
-								autoCapitalize="none"
-								autoComplete="off"
-								autoCorrect="off"
-								disabled={addBusy}
-								id="repository-add-root"
-								onChange={(event) => onAddRootChange(event.target.value)}
-								placeholder="/absolute/path/to/project"
-								spellCheck={false}
-								value={addRoot}
-							/>
-							<button
-								aria-label="Browse server folders"
-								className="icon-button repository-browse-button"
-								disabled={addBusy}
-								onClick={() => directoryBrowser.open(addRoot.trim() || undefined)}
-								title="Browse folders on the Couchview server"
-								type="button"
-							>
-								<FolderOpen size={17} />
-							</button>
-							<button
-								className="action-button secondary"
-								disabled={addBusy || !addRoot.trim()}
-								type="submit"
-							>
-								{addBusy ? <LoaderCircle className="spinner" size={16} /> : <Plus size={16} />}
-								Add project
-							</button>
-						</div>
-					</form>
-					<div className="repository-list">
-						{repositories.length > 0 ? (
-							repositories.map((entry) => (
-								<div
-									className={`repository-row ${entry.id === currentRepositoryId ? "current" : ""} ${entry.available ? "" : "unavailable"}`}
-									key={entry.id}
+						Add
+					</Button>
+				</View>
+			</View>
+			<ScrollView className="max-h-[45vh]" contentContainerClassName="gap-1">
+				{repositories.length ? (
+					repositories.map((entry) => {
+						const current = entry.id === currentRepositoryId;
+						return (
+							<View className="flex-row items-center gap-1" key={entry.id}>
+								<ListItem
+									accessibilityLabel={`${entry.name}, ${entry.root}${entry.available ? "" : ", unavailable"}`}
+									className="min-w-0 flex-1"
+									disabled={!entry.available}
+									leading={current ? <Icon as={Check} size={18} tone="success" /> : null}
+									onPress={() => onSelect(entry)}
+									selected={current}
+									subtitle={entry.root}
+									title={entry.name}
+									trailing={!entry.available ? <Badge>Unavailable</Badge> : null}
+								/>
+								<Pressable
+									accessibilityLabel={`Forget ${entry.name}`}
+									accessibilityRole="button"
+									className="size-10 items-center justify-center rounded-lg active:bg-muted disabled:opacity-50"
+									disabled={forgetBusy !== null}
+									onPress={() => onForget(entry)}
 								>
-									<button
-										aria-current={entry.id === currentRepositoryId ? "true" : undefined}
-										className="repository-select"
-										disabled={!entry.available}
-										onClick={() => onSelect(entry)}
-										type="button"
-									>
-										<span className="repository-row-name">
-											{entry.name}
-											{entry.id === currentRepositoryId && <Check size={14} />}
-										</span>
-										<span className="repository-row-path">{entry.root}</span>
-										{!entry.available && <span className="repository-row-status">Unavailable</span>}
-									</button>
-									<button
-										aria-label={`Forget ${entry.name}`}
-										className="icon-button repository-forget"
-										disabled={forgetBusy !== null}
-										onClick={() => onForget(entry)}
-										title="Forget repository and delete its saved review state"
-										type="button"
-									>
-										{forgetBusy === entry.id ? (
-											<LoaderCircle className="spinner" size={16} />
-										) : (
-											<Trash2 size={16} />
-										)}
-									</button>
-								</div>
-							))
-						) : (
-							<div className="empty-state" style={{ minHeight: 150 }}>
-								<FileCode2 className="state-icon" size={26} />
-								<p className="state-copy">No saved repositories.</p>
-							</div>
-						)}
-					</div>
-					<footer className="sheet-footer">
-						{restart && (
-							<>
-								<button
-									className="action-button secondary repository-restart-action"
-									disabled={!restart.available || restartPhase !== null}
-									onClick={onRebuild}
-									type="button"
-								>
-									{restartPhase === "building" ? (
-										<LoaderCircle className="spinner" size={16} />
+									{forgetBusy === entry.id ? (
+										<Spinner />
 									) : (
-										<RefreshCw size={16} />
+										<Icon as={Trash2} size={17} tone="destructive" />
 									)}
-									Rebuild &amp; restart Couchview
-								</button>
-								<div className="progress-label">
-									{restart.available
-										? "Builds this Couchview checkout, then reloads the current review."
-										: restart.reason}
-								</div>
-							</>
-						)}
-						{nativeSetupAvailable && (
-							<button
-								className="action-button secondary repository-remote-action"
-								onClick={onOpenNativeSetup}
-								type="button"
-							>
-								<MonitorUp size={16} /> Native IDE setup
-							</button>
-						)}
-					</footer>
-				</section>
-			)}
-		</>
+								</Pressable>
+							</View>
+						);
+					})
+				) : (
+					<EmptyState icon={FileCode2} title="No saved repositories" />
+				)}
+			</ScrollView>
+		</Sheet>
 	);
 }

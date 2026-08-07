@@ -1,24 +1,23 @@
-import { useEffect, useState } from "react";
+import { useWindowDimensions } from "react-native";
 
-export const SPLIT_VIEW_QUERY = [
-	"(orientation: landscape) and (min-width: 760px) and (min-height: 600px)",
-	"(min-width: 1100px) and (min-height: 600px)",
-].join(", ");
+const TABLET_SPLIT_WIDTH = 900;
+const COMPACT_LANDSCAPE_HEIGHT = 600;
 
-export const COMPACT_LANDSCAPE_QUERY = "(orientation: landscape) and (max-height: 599px)";
+export interface WorkspaceLayout {
+	compactLandscape: boolean;
+	splitView: boolean;
+}
 
-export function useMediaQuery(query: string): boolean {
-	const [matches, setMatches] = useState(() =>
-		typeof window === "undefined" ? false : window.matchMedia(query).matches,
-	);
+export function workspaceLayout(width: number, height: number): WorkspaceLayout {
+	const landscape = width > height;
+	const splitView = width >= TABLET_SPLIT_WIDTH && (landscape || width >= 1180);
+	return {
+		compactLandscape: landscape && height < COMPACT_LANDSCAPE_HEIGHT && !splitView,
+		splitView,
+	};
+}
 
-	useEffect(() => {
-		const media = window.matchMedia(query);
-		const update = () => setMatches(media.matches);
-		update();
-		media.addEventListener("change", update);
-		return () => media.removeEventListener("change", update);
-	}, [query]);
-
-	return matches;
+export function useWorkspaceLayout(): WorkspaceLayout {
+	const { height, width } = useWindowDimensions();
+	return workspaceLayout(width, height);
 }

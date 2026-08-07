@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react-native";
 import {
 	Archive,
 	CheckCircle2,
@@ -16,7 +16,7 @@ import {
 	Settings2,
 	SquareTerminal,
 	TerminalSquare,
-} from "lucide-react";
+} from "lucide-react-native";
 
 import type { CommandId, ShortcutSequence } from "../shared/settings.ts";
 

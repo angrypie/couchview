@@ -178,7 +178,7 @@ export async function startServer(
 						let exitCode: number;
 						try {
 							const build = Bun.spawn(
-								[process.execPath, "run", "build", "--outDir", candidateDirectory],
+								[process.execPath, "run", "build", "--output-dir", candidateDirectory],
 								{
 									cwd: appRoot,
 									env: process.env,

@@ -13,7 +13,7 @@ export function parseExpoWebBuildArguments(
 	let outputDirectory = "dist";
 	for (let index = 0; index < args.length; index += 1) {
 		const argument = args[index];
-		if (argument === "--outDir" || argument === "--output-dir") {
+		if (argument === "--output-dir") {
 			const value = args[index + 1];
 			if (!value || value.startsWith("--")) {
 				throw new Error(`${argument} requires an output directory`);
@@ -22,7 +22,7 @@ export function parseExpoWebBuildArguments(
 			index += 1;
 			continue;
 		}
-		const inlineOutput = /^--(?:outDir|output-dir)=(.+)$/.exec(argument ?? "");
+		const inlineOutput = /^--output-dir=(.+)$/.exec(argument ?? "");
 		if (inlineOutput?.[1]) {
 			outputDirectory = inlineOutput[1];
 			continue;

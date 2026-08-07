@@ -38,7 +38,7 @@ const GIT_MODULE_BOUNDARIES: ReadonlyArray<{
 	},
 	{
 		directory: "src/client/components/git/",
-		entries: new Set(["src/client/components/git/index.ts", "src/client/components/git/index.css"]),
+		entries: new Set(["src/client/components/git/index.ts"]),
 	},
 	{
 		directory: "src/server/git/",

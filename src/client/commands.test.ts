@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import { COMMAND_IDS, DEFAULT_KEYBINDINGS } from "../shared/settings.ts";
-import { COMMAND_DEFINITIONS } from "./commands.ts";
+import "./appTestNativeRuntime.tsx";
+
+const { COMMAND_DEFINITIONS } = await import("./commands.ts");
 
 describe("command registry", () => {
 	test("contains metadata and a declared default for every command ID", () => {

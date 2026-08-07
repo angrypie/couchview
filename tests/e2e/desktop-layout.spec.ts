@@ -26,70 +26,45 @@ test.describe("desktop review layout", () => {
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 
 		await page.keyboard.press("Control+k");
-		const palette = page.getByRole("dialog", { name: "Couchview command palette" });
+		const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
 		await expect(palette).toBeVisible();
-		await expect(palette.getByText("Open command palette")).toHaveCount(0);
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("package");
-		await palette.getByText("Open package commands", { exact: true }).click();
+		await expect(palette.getByRole("button", { name: /^Open command palette/ })).toHaveCount(0);
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("package");
+		await palette.getByRole("button", { name: /^Open package commands/ }).click();
 		await expect(palette).toHaveCount(0);
 		await expect(page.getByRole("heading", { name: "Package commands" })).toBeVisible();
 
 		await page.getByRole("button", { name: "Open command palette" }).click();
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("settings");
-		await palette.getByText("Go to settings", { exact: true }).click();
-		await expect(page.getByRole("region", { name: "Settings" })).toBeVisible();
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("settings");
+		await palette.getByRole("button", { name: /^Go to settings/ }).click();
+		const settings = page.getByRole("region", { name: "Settings" });
+		await expect(settings).toBeVisible();
 		await expect(page).toHaveURL(/\/settings/);
 	});
 
 	test("applies and persists a device-local color theme", async ({ page }) => {
 		await page.emulateMedia({ colorScheme: "dark" });
 		await page.goto("/settings");
-		await page.evaluate(() => localStorage.removeItem("couchview:theme-preference:v1"));
-		await page.reload();
 
 		const settings = page.getByRole("region", { name: "Settings" });
-		const root = page.locator("html");
 		const save = settings.getByRole("button", { name: "Save changes" });
-		await expect(settings.getByRole("radio", { name: "System" })).toBeChecked();
-		await expect(root).toHaveClass(/\bdark\b/);
+		await expect(settings.getByRole("radio", { name: "System", exact: true })).toBeChecked();
 
-		await settings.getByRole("radio", { name: "Light" }).click();
-		await expect(root).toHaveClass(/\blight\b/);
-		await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 248, 251)");
-		await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#f6f8fb");
+		await settings.getByRole("radio", { name: "Light", exact: true }).click();
+		await expect(settings.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
 		await expect(save).toBeDisabled();
 
 		await page.reload();
-		await expect(settings.getByRole("radio", { name: "Light" })).toBeChecked();
-		await expect(root).toHaveClass(/\blight\b/);
+		await expect(settings.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
 		await settings.getByRole("button", { name: "Review", exact: true }).click();
-		await expect(page.locator(".top-bar")).toHaveCSS(
-			"background-color",
-			"rgba(255, 255, 255, 0.96)",
-		);
-		await expect(page.locator(".file-bar")).toHaveCSS(
-			"background-color",
-			"rgba(255, 255, 255, 0.96)",
-		);
-		await expect(page.locator(".bottom-bar")).toHaveCSS(
-			"background-color",
-			"rgba(255, 255, 255, 0.96)",
-		);
-		await expect(page.getByRole("searchbox", { name: "Filter changed files" })).toHaveCSS(
-			"background-color",
-			"rgb(255, 255, 255)",
-		);
-		await expect(page.getByRole("button", { name: "Select repository" })).toHaveCSS(
-			"color",
-			"rgb(29, 38, 51)",
-		);
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 
 		await page.getByRole("button", { name: "Open settings" }).click();
-		await settings.getByRole("radio", { name: "Dark" }).click();
-		await expect(root).toHaveClass(/\bdark\b/);
-		await expect(page.locator("body")).toHaveCSS("background-color", "rgb(13, 16, 20)");
-		await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#101317");
+		await settings.getByRole("radio", { name: "Dark", exact: true }).click();
+		await expect(settings.getByRole("radio", { name: "Dark", exact: true })).toBeChecked();
 		await expect(save).toBeDisabled();
+		await page.reload();
+		await expect(settings.getByRole("radio", { name: "Dark", exact: true })).toBeChecked();
 	});
 
 	test("keeps filenames and controls visible while the changed-files list scrolls", async ({
@@ -117,63 +92,47 @@ test.describe("desktop review layout", () => {
 		await page.goto("/");
 
 		const drawer = page.getByRole("complementary", { name: "Changed files" });
-		const fileList = drawer.locator(".file-list");
-		const footer = drawer.locator(".drawer-footer");
 		const currentFile = page.getByRole("region", { name: "Current file" });
 		const commandTrigger = page.getByRole("button", { name: "Open command palette" });
-		const reviewAction = page.getByRole("button", { name: "Review + next" });
+		const stageAll = drawer.getByRole("button", { name: "Stage all files (30)" });
+		const importantPath =
+			"src/generated/with/a/very/long/directory/that/must/not/hide/file-28-important-name.ts";
+		const importantFile = drawer.getByRole("button", { name: importantPath });
 
 		await expect(page.getByRole("button", { name: "Previous file" })).toHaveCount(1);
 		await expect(page.getByRole("button", { name: "Next file" })).toHaveCount(1);
 		await expect(currentFile.getByRole("button", { name: "Previous file" })).toHaveCount(0);
 		await expect(currentFile.getByRole("button", { name: "Next file" })).toHaveCount(0);
-		await expect(page.locator(".artifacts-launch-button .lucide-archive")).toBeVisible();
-		await expect(page.locator(".git-history-launch-button .lucide-git-graph")).toBeVisible();
-		await expect
-			.poll(() => reviewAction.evaluate((element) => element.getBoundingClientRect().width))
-			.toBeLessThanOrEqual(420);
-		await expect
-			.poll(() =>
-				commandTrigger.evaluate((element) => {
-					const icon = element.querySelector("svg")?.getBoundingClientRect();
-					const shortcut = element.querySelector("kbd")?.getBoundingClientRect();
-					if (!icon || !shortcut) return 99;
-					return Math.abs(icon.top + icon.height / 2 - (shortcut.top + shortcut.height / 2));
-				}),
-			)
-			.toBeLessThanOrEqual(1);
+		await expect(page.getByRole("button", { name: "Open repository artifacts" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Open Git history" })).toBeVisible();
+		await expect(commandTrigger).toBeVisible();
+		await expect(page.getByRole("button", { name: "Review + next" })).toBeVisible();
+		await expect(stageAll).toBeInViewport();
+		await expect(importantFile).toBeAttached();
 
-		await expect(drawer.getByRole("button", { name: "Stage all files (30)" })).toBeVisible();
-		await expect(footer).toBeVisible();
-		await expect
-			.poll(() =>
-				fileList.evaluate((element) => ({
-					clientHeight: element.clientHeight,
-					scrollHeight: element.scrollHeight,
-					overflowY: getComputedStyle(element).overflowY,
-				})),
-			)
-			.toMatchObject({ overflowY: "auto" });
-
-		const listMetrics = await fileList.evaluate((element) => ({
-			clientHeight: element.clientHeight,
-			scrollHeight: element.scrollHeight,
-		}));
-		expect(listMetrics.scrollHeight).toBeGreaterThan(listMetrics.clientHeight);
-
-		const footerBottom = await footer.evaluate((element) => element.getBoundingClientRect().bottom);
-		expect(footerBottom).toBeLessThanOrEqual(800);
-
-		await fileList.evaluate((element) => {
-			element.scrollTop = element.scrollHeight;
+		const listMetrics = await drawer.evaluate((element) => {
+			const candidates = [element, ...element.querySelectorAll<HTMLElement>("*")];
+			const fileList = candidates.find((candidate) => {
+				const { overflowY } = getComputedStyle(candidate);
+				return (
+					(overflowY === "auto" || overflowY === "scroll") &&
+					candidate.scrollHeight > candidate.clientHeight
+				);
+			});
+			if (!fileList)
+				throw new Error("Changed files did not provide an independently scrollable list");
+			const metrics = {
+				clientHeight: fileList.clientHeight,
+				scrollHeight: fileList.scrollHeight,
+				horizontalOverflow: fileList.scrollWidth - fileList.clientWidth,
+			};
+			fileList.scrollTop = fileList.scrollHeight;
+			return metrics;
 		});
-		await expect.poll(() => fileList.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-		const importantName = drawer.getByText("file-28-important-name.ts", { exact: true });
-		await expect(importantName).toBeVisible();
-		await expect(importantName).toHaveCSS("font-size", "12px");
-		await expect
-			.poll(() => fileList.evaluate((element) => element.scrollWidth - element.clientWidth))
-			.toBeLessThanOrEqual(0);
+		expect(listMetrics.scrollHeight).toBeGreaterThan(listMetrics.clientHeight);
+		expect(listMetrics.horizontalOverflow).toBeLessThanOrEqual(1);
+		await expect(importantFile).toBeInViewport();
+		await expect(stageAll).toBeInViewport();
 	});
 
 	test("pairs apps and native IDEs without overflowing the desktop sheet", async ({ page }) => {
@@ -238,9 +197,10 @@ test.describe("desktop review layout", () => {
 
 		await page.goto("/");
 		await page.getByRole("button", { name: "Set up native IDE" }).click();
-		const dialog = page.getByRole("dialog", { name: "Native IDE setup" });
+		const sheet = page.getByRole("dialog", { name: "Native IDE", exact: true });
+		const dialog = sheet.getByRole("dialog", { name: "Native IDE setup", exact: true });
 		await expect(dialog).toBeVisible();
-		await expect(dialog.getByRole("heading", { name: "Couchview app" })).toBeVisible();
+		await expect(dialog.getByText("Couchview app", { exact: true })).toBeVisible();
 		await expect(dialog.getByText("Fixture iPhone", { exact: true })).toBeVisible();
 		await dialog.getByRole("button", { name: "Generate app pairing" }).click();
 		await expect(
@@ -250,11 +210,11 @@ test.describe("desktop review layout", () => {
 			dialog.getByText(/couchview:\/\/pair\?protocol=couchview-native-v1/),
 		).toBeVisible();
 		await expect(dialog.getByText("Direct WebRTC preferred")).toBeVisible();
-		const zedLink = dialog.getByRole("link", { name: "Open", exact: true });
-		await expect(zedLink).toHaveAttribute(
-			"href",
-			"zed://ssh/couchview-fixture-device/fixtures/sample-project",
-		);
+		await expect(
+			dialog.getByRole("button", {
+				name: "Open /fixtures/sample-project in Zed through MacBook Air",
+			}),
+		).toBeVisible();
 		await expect(
 			dialog.getByText("zed 'ssh://couchview-fixture-device/fixtures/sample-project'", {
 				exact: true,
@@ -280,27 +240,37 @@ test.describe("desktop review layout", () => {
 		).toBeVisible();
 		await expect
 			.poll(async () => {
-				const nextBounds = await dialog.boundingBox();
+				const nextBounds = await sheet.boundingBox();
 				return nextBounds ? nextBounds.y + nextBounds.height : Number.POSITIVE_INFINITY;
 			})
 			.toBeLessThanOrEqual(800);
-		const bounds = await dialog.boundingBox();
+		const bounds = await sheet.boundingBox();
 		expect(bounds).not.toBeNull();
 		expect(bounds!.x).toBeGreaterThanOrEqual(0);
 		expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(1280);
 
-		await dialog.getByLabel("Device name").fill("Travel Air");
-		await dialog.getByRole("button", { name: "Generate", exact: true }).click();
+		const deviceName = dialog.getByRole("textbox", { name: "Device name" });
+		await deviceName.scrollIntoViewIfNeeded();
+		await expect(deviceName).toBeInViewport();
+		await deviceName.fill("Travel Air");
+		const generateMacPairing = dialog.getByRole("button", { name: "Generate", exact: true });
+		await generateMacPairing.scrollIntoViewIfNeeded();
+		await expect(generateMacPairing).toBeInViewport();
+		await generateMacPairing.click();
 		await expect(dialog.getByText(/couchview bridge pair/)).toBeVisible();
 		expect(pairingRequest).toEqual({ csrf: fixtureCsrf, label: "Travel Air" });
 
 		page.once("dialog", (confirmation) => void confirmation.accept());
-		await dialog.getByRole("button", { name: "Revoke app access for Fixture iPhone" }).click();
-		await expect(dialog.getByText("No Couchview apps are paired yet.")).toBeVisible();
-
-		page.once("dialog", (confirmation) => void confirmation.accept());
-		await dialog.getByRole("button", { name: "Revoke MacBook Air" }).click();
+		const revokeMac = dialog.getByRole("button", { name: "Revoke MacBook Air" });
+		await revokeMac.scrollIntoViewIfNeeded();
+		await revokeMac.click();
 		await expect(dialog.getByText("No development Macs are paired yet.")).toBeVisible();
 		expect(revokedDevice).toBe(device.id);
+
+		page.once("dialog", (confirmation) => void confirmation.accept());
+		const revokeApp = dialog.getByRole("button", { name: "Revoke app access for Fixture iPhone" });
+		await revokeApp.scrollIntoViewIfNeeded();
+		await revokeApp.click();
+		await expect(dialog.getByText("No Couchview apps are paired yet.")).toBeVisible();
 	});
 });

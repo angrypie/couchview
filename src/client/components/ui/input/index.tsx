@@ -39,11 +39,17 @@ type InputFieldProps = React.ComponentPropsWithoutRef<typeof UIInput.Input> &
 
 const InputField = React.forwardRef<React.ComponentRef<typeof UIInput.Input>, InputFieldProps>(
 	function InputField(
-		{ className, placeholderTextColorClassName = "accent-muted-foreground", ...props },
+		{
+			accessibilityLabel,
+			className,
+			placeholderTextColorClassName = "accent-muted-foreground",
+			...props
+		},
 		ref,
 	) {
 		return (
 			<UIInput.Input
+				aria-label={accessibilityLabel}
 				className={inputFieldStyle({ class: className })}
 				placeholderTextColorClassName={placeholderTextColorClassName}
 				ref={ref}
@@ -56,4 +62,29 @@ const InputField = React.forwardRef<React.ComponentRef<typeof UIInput.Input>, In
 Input.displayName = "Input";
 InputField.displayName = "InputField";
 
-export { Input, InputField };
+type TextAreaProps = React.ComponentPropsWithoutRef<typeof UIInput.Input> & {
+	containerClassName?: string;
+};
+
+const textAreaStyle = tva({ base: "min-h-24 items-start py-1" });
+const textAreaFieldStyle = tva({ base: "min-h-20 py-2" });
+
+const TextArea = React.forwardRef<React.ComponentRef<typeof UIInput.Input>, TextAreaProps>(
+	function TextArea({ className, containerClassName, ...props }, ref) {
+		return (
+			<Input className={textAreaStyle({ class: containerClassName })}>
+				<InputField
+					className={textAreaFieldStyle({ class: className })}
+					multiline
+					ref={ref}
+					textAlignVertical="top"
+					{...props}
+				/>
+			</Input>
+		);
+	},
+);
+
+TextArea.displayName = "TextArea";
+
+export { Input, InputField, type InputFieldProps, type InputProps, TextArea, type TextAreaProps };

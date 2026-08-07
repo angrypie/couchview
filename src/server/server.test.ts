@@ -786,7 +786,7 @@ describe("Couchview HTTP security and routes", () => {
 			}),
 		);
 		expect(staged.status).toBe(200);
-		expect(staged.headers.has("access-control-allow-origin")).toBe(false);
+		expect(staged.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:3001");
 		const stagedState = (await staged.json()) as StageFileResponse;
 		if (!stagedState.file) throw new Error("staged fixture disappeared");
 		expect(stagedState.changes).toEqual({

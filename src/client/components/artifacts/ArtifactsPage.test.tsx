@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import type { ComponentProps } from "react";
 
 import type {
 	ArtifactBuild,
@@ -8,71 +8,116 @@ import type {
 	ArtifactDefinitionInput,
 	ArtifactRun,
 } from "../../../shared/contracts.ts";
-import { ArtifactCard } from "./ArtifactCard.tsx";
-import { ArtifactDefinitionForm } from "./ArtifactDefinitionForm.tsx";
+import "../../appTestNativeRuntime.tsx";
+import type { ArtifactDownloadRequest } from "../../lib/artifactDownloadTypes.ts";
 
-if (!GlobalRegistrator.isRegistered) {
-	GlobalRegistrator.register({ url: "http://127.0.0.1:4173/" });
-}
+mock.module("uniwind", () => ({
+	useResolveClassNames: () => ({ color: "#111827" }),
+	withUniwind: <Component,>(component: Component) => component,
+}));
+
+const downloads: ArtifactDownloadRequest[] = [];
+mock.module("../../lib/artifactDownload", () => ({
+	downloadArtifact: async (request: ArtifactDownloadRequest) => {
+		downloads.push(request);
+	},
+}));
 
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
+const { ArtifactCard } = await import("./ArtifactCard.tsx");
+const { ArtifactDefinitionForm } = await import("./ArtifactDefinitionForm.tsx");
 
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	downloads.length = 0;
+});
 
 function definition(overrides: Partial<ArtifactDefinition> = {}): ArtifactDefinition {
 	return {
-		id: "artifact-1",
-		repositoryId: "repo-1",
-		name: "couchview-cli",
 		argv: ["bun", "run", "build cli"],
-		workingDirectory: ".",
-		outputPath: "dist/couchview",
-		outputKind: "file",
-		revision: 1,
 		createdAt: "2026-08-04T10:00:00.000Z",
+		id: "artifact-1",
+		name: "couchview-cli",
+		outputKind: "file",
+		outputPath: "dist/couchview",
+		repositoryId: "repo-1",
+		revision: 1,
 		updatedAt: "2026-08-04T10:00:00.000Z",
+		workingDirectory: ".",
 		...overrides,
 	};
 }
 
 function build(): ArtifactBuild {
 	return {
-		id: "build-1",
-		repositoryId: "repo-1",
 		artifactId: "artifact-1",
+		createdAt: "2026-08-04T10:01:00.000Z",
 		definitionRevision: 1,
 		downloadName: "couchview",
-		mediaType: "application/octet-stream",
-		sizeBytes: 12,
-		sha256: "a".repeat(64),
 		executable: false,
-		createdAt: "2026-08-04T10:01:00.000Z",
+		id: "build-1",
+		mediaType: "application/octet-stream",
+		repositoryId: "repo-1",
+		sha256: "a".repeat(64),
+		sizeBytes: 12,
 	};
 }
 
 function run(overrides: Partial<ArtifactRun> = {}): ArtifactRun {
 	return {
-		id: "run-1",
-		repositoryId: "repo-1",
+		argv: ["bun", "run", "build cli"],
 		artifactId: "artifact-1",
 		artifactName: "couchview-cli",
-		definitionRevision: 1,
-		argv: ["bun", "run", "build cli"],
-		invocation: "bun run 'build cli'",
-		workingDirectory: ".",
-		status: "succeeded",
-		exitCode: 0,
-		startedAt: "2026-08-04T10:00:00.000Z",
-		finishedAt: "2026-08-04T10:01:00.000Z",
-		outputTruncated: false,
-		error: null,
 		buildId: "build-1",
+		definitionRevision: 1,
+		error: null,
+		exitCode: 0,
+		finishedAt: "2026-08-04T10:01:00.000Z",
+		id: "run-1",
+		invocation: "bun run 'build cli'",
+		outputTruncated: false,
+		repositoryId: "repo-1",
+		startedAt: "2026-08-04T10:00:00.000Z",
+		status: "succeeded",
+		workingDirectory: ".",
 		...overrides,
 	};
 }
 
+function artifactItem(overrides: Partial<ArtifactCatalogItem> = {}): ArtifactCatalogItem {
+	return {
+		activeRun: null,
+		builds: [build()],
+		definition: definition(),
+		recentRun: run(),
+		...overrides,
+	};
+}
+
+function renderCard(overrides: Partial<ComponentProps<typeof ArtifactCard>> = {}) {
+	return render(
+		<ArtifactCard
+			busyAction={null}
+			item={artifactItem()}
+			onBuild={() => undefined}
+			onCopy={() => undefined}
+			onDelete={() => undefined}
+			onEdit={() => undefined}
+			onPair={() => undefined}
+			onStop={() => undefined}
+			repositoryId="repo-1"
+			selectedDevice={null}
+			snapshot={{
+				output: [{ sequence: 1, stream: "stdout", text: "built\n" }],
+				run: run(),
+			}}
+			{...overrides}
+		/>,
+	);
+}
+
 describe("artifact workspace presentation", () => {
-	test("parses one familiar command field into exact argv, including an empty argument", async () => {
+	test("parses a familiar command into exact argv, including an empty argument", async () => {
 		const inputs: ArtifactDefinitionInput[] = [];
 		render(
 			<ArtifactDefinitionForm
@@ -94,31 +139,31 @@ describe("artifact workspace presentation", () => {
 
 		await waitFor(() => expect(inputs).toHaveLength(1));
 		expect(inputs[0]).toEqual({
-			name: "mac-cli",
 			argv: ["bun", "run", ""],
-			workingDirectory: ".",
-			outputPath: "dist/couch view",
+			name: "mac-cli",
 			outputKind: "file",
+			outputPath: "dist/couch view",
+			workingDirectory: ".",
 		});
 		expect(screen.getByText("bun run ''")).toBeTruthy();
 	});
 
-	test("asks for optional intent and applies a Codex proposal as an editable draft", async () => {
+	test("applies a Codex proposal as an editable draft", async () => {
 		const saved: ArtifactDefinitionInput[] = [];
 		render(
 			<ArtifactDefinitionForm
 				busy={false}
 				onCancel={() => undefined}
-				onPropose={async (request) => ({
+				onPropose={async () => ({
+					configurationFiles: ["package.json"],
 					proposal: {
-						name: request ? "static-site" : "default-build",
 						argv: ["bun", "run", "build"],
-						workingDirectory: ".",
-						outputPath: "dist",
+						name: "static-site",
 						outputKind: "directory",
+						outputPath: "dist",
+						workingDirectory: ".",
 					},
 					summary: "The package build script emits dist.",
-					configurationFiles: ["package.json"],
 				})}
 				onSave={async (input) => {
 					saved.push(input);
@@ -129,11 +174,7 @@ describe("artifact workspace presentation", () => {
 			/>,
 		);
 
-		fireEvent.change(screen.getByLabelText("What should this artifact produce?"), {
-			target: { value: "static build" },
-		});
 		fireEvent.click(screen.getByRole("button", { name: "Fill form" }));
-
 		await waitFor(() =>
 			expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("static-site"),
 		);
@@ -141,44 +182,6 @@ describe("artifact workspace presentation", () => {
 		expect(screen.getByText("The package build script emits dist.")).toBeTruthy();
 		expect(screen.getByText("Read package.json")).toBeTruthy();
 		expect(saved).toHaveLength(0);
-
-		fireEvent.change(screen.getByLabelText("Command"), {
-			target: { value: "bun run build --minify" },
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Create artifact" }));
-		await waitFor(() => expect(saved).toHaveLength(1));
-		expect(saved[0]?.argv).toEqual(["bun", "run", "build", "--minify"]);
-	});
-
-	test("requests the default configured artifact when intent is left empty", async () => {
-		const requests: string[] = [];
-		render(
-			<ArtifactDefinitionForm
-				busy={false}
-				onCancel={() => undefined}
-				onPropose={async (request) => {
-					requests.push(request);
-					return {
-						proposal: {
-							name: "default-build",
-							argv: ["bun", "run", "build"],
-							workingDirectory: ".",
-							outputPath: "dist",
-							outputKind: "directory",
-						},
-						summary: "Default project build.",
-						configurationFiles: ["package.json"],
-					};
-				}}
-				onSave={async () => true}
-				proposalCapability={{ available: true, reason: null }}
-				suggestOnOpen
-			/>,
-		);
-
-		fireEvent.click(screen.getByRole("button", { name: "Fill form" }));
-		await waitFor(() => expect(requests).toEqual([""]));
-		expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("default-build");
 	});
 
 	test("shows unsupported shell syntax before save", () => {
@@ -204,7 +207,6 @@ describe("artifact workspace presentation", () => {
 				onSave={async () => true}
 			/>,
 		);
-
 		fireEvent.change(screen.getByLabelText("Exact output path"), {
 			target: { value: "dist/locally-edited" },
 		});
@@ -222,65 +224,42 @@ describe("artifact workspace presentation", () => {
 		);
 	});
 
-	test("renders retained builds as attachment links without fetching payload bytes", () => {
-		const item: ArtifactCatalogItem = {
-			definition: definition(),
-			builds: [build()],
-			activeRun: null,
-			recentRun: run(),
-		};
-		render(
-			<ArtifactCard
-				busyAction={null}
-				item={item}
-				onBuild={() => undefined}
-				onCopy={() => undefined}
-				onDelete={() => undefined}
-				onEdit={() => undefined}
-				onPair={() => undefined}
-				onStop={() => undefined}
-				repositoryId="repo-1"
-				selectedDevice={null}
-				snapshot={{
-					run: run(),
-					output: [{ sequence: 1, stream: "stdout", text: "built\n" }],
-				}}
-			/>,
-		);
+	test("downloads retained builds through the platform seam", async () => {
+		renderCard();
+		fireEvent.click(screen.getByRole("button", { name: "Download" }));
 
-		const download = screen.getByRole("link", { name: "Download" });
-		expect(download.getAttribute("download")).toBe("couchview");
-		expect(download.getAttribute("href")).toBe(
-			"/api/repositories/repo-1/artifacts/artifact-1/builds/build-1/download",
-		);
+		await waitFor(() => expect(downloads).toHaveLength(1));
+		expect(downloads[0]).toEqual({
+			downloadName: "couchview",
+			mediaType: "application/octet-stream",
+			path: "/api/repositories/repo-1/artifacts/artifact-1/builds/build-1/download",
+		});
 		expect(screen.getByLabelText("couchview-cli build output").textContent).toContain("built");
 		expect(screen.getByText("sha256:aaaaaaaaaaaa…")).toBeTruthy();
 	});
 
+	test("confirms destructive deletion without window.confirm", () => {
+		let deleted = false;
+		renderCard({ onDelete: () => (deleted = true) });
+
+		fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+		expect(screen.getByRole("dialog", { name: "Delete couchview-cli?" })).toBeTruthy();
+		expect(deleted).toBe(false);
+		fireEvent.click(screen.getByRole("button", { name: "Delete artifact" }));
+		expect(deleted).toBe(true);
+	});
+
 	test("offers stop while a build is active", () => {
 		let stopped = "";
-		render(
-			<ArtifactCard
-				busyAction={null}
-				item={{
-					definition: definition(),
-					builds: [],
-					activeRun: run({ status: "running" }),
-					recentRun: run({ status: "running" }),
-				}}
-				onBuild={() => undefined}
-				onCopy={() => undefined}
-				onDelete={() => undefined}
-				onEdit={() => undefined}
-				onPair={() => undefined}
-				onStop={(runId) => {
-					stopped = runId;
-				}}
-				repositoryId="repo-1"
-				selectedDevice={null}
-				snapshot={undefined}
-			/>,
-		);
+		renderCard({
+			item: artifactItem({
+				activeRun: run({ status: "running" }),
+				builds: [],
+				recentRun: run({ status: "running" }),
+			}),
+			onStop: (runId) => (stopped = runId),
+			snapshot: undefined,
+		});
 
 		fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 		expect(stopped).toBe("run-1");

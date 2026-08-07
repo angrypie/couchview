@@ -1,3 +1,7 @@
+import { useMemo } from "react";
+import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 import type {
 	CommitMessageCapability,
 	RemoteBridgeCapability,
@@ -8,7 +12,7 @@ import type { useFailureReporting } from "../features/errors/useFailureReporting
 import type { GitWorkspaceController } from "../features/git/index.ts";
 import type { useToastNotifications } from "../features/notifications/useToastNotifications.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
-import type { usePwaUpdate } from "../features/pwa/usePwaUpdate.ts";
+import type { usePwaUpdate } from "../features/pwa/usePwaUpdate";
 import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
@@ -19,8 +23,7 @@ import type { useReviewShellCommands } from "../features/shell/useReviewShellCom
 import type { useWorkspaceNavigation } from "../features/shell/useWorkspaceNavigation.ts";
 import type { DrawerView } from "../features/staging/types.ts";
 import type { useChangedFileFilters } from "../features/staging/useChangedFileFilters.ts";
-import { isNativeProductSurface, NATIVE_SERVER_MANAGER_URL } from "../lib/nativeProductSurface.ts";
-import { formatShortcut } from "../shortcutEngine.ts";
+import { formatShortcut } from "../shortcutEngine";
 import { ApplicationStateView } from "./ApplicationStateView.tsx";
 import { AppToastStack } from "./AppToastStack.tsx";
 import { ArtifactsPage } from "./artifacts/index.ts";
@@ -31,7 +34,8 @@ import { ProfileSettingsPage } from "./ProfileSettingsPage.tsx";
 import { RestartOverlay } from "./RestartOverlay.tsx";
 import { ReviewWorkspaceChrome } from "./ReviewWorkspaceChrome.tsx";
 import { ReviewWorkspaceOverlays } from "./ReviewWorkspaceOverlays.tsx";
-import { TerminalWorkspace } from "./TerminalWorkspace.tsx";
+import TerminalWorkspace from "./TerminalWorkspace.tsx";
+import { createTerminalHostActions } from "./terminal/terminal-host-actions.ts";
 
 interface CouchviewApplicationViewProps {
 	artifacts: ArtifactsController;
@@ -44,20 +48,25 @@ interface CouchviewApplicationViewProps {
 	filters: ReturnType<typeof useChangedFileFilters>;
 	git: GitWorkspaceController;
 	management: ReturnType<typeof useRepositoryManagement>;
+	nativeServerManagerUrl: string | null;
 	navigation: ReturnType<typeof useWorkspaceNavigation>;
 	notifications: ReturnType<typeof useToastNotifications>;
 	onDrawerOpenChange: (open: boolean) => void;
 	onDrawerViewChange: (view: DrawerView) => void;
+	onManageServers?: () => void;
 	onRemoteBridgeOpenChange: (open: boolean) => void;
+	onTerminalLatencyChange?: (enabled: boolean) => void | Promise<void>;
 	packages: ReturnType<typeof usePackageRuns>;
 	pwa: ReturnType<typeof usePwaUpdate>;
 	remoteBridgeCapability: RemoteBridgeCapability;
 	remoteBridgeOpen: boolean;
+	requestedRepositoryId: string | null;
 	settings: ReturnType<typeof useSettingsProfiles>;
 	shellCommands: ReturnType<typeof useReviewShellCommands>;
 	showToast: (message: string) => void;
 	splitView: boolean;
 	terminalCapability: TerminalCapability;
+	terminalLatencyEnabled?: boolean;
 	theme: ReturnType<typeof useThemePreference>;
 	workflow: ReturnType<typeof useReviewWorkflow>;
 	workspace: ReturnType<typeof useRepositoryWorkspace>;
@@ -74,42 +83,74 @@ export function CouchviewApplicationView({
 	filters,
 	git,
 	management,
+	nativeServerManagerUrl,
 	navigation,
 	notifications,
 	onDrawerOpenChange,
 	onDrawerViewChange,
+	onManageServers,
 	onRemoteBridgeOpenChange,
+	onTerminalLatencyChange,
 	packages,
 	pwa,
 	remoteBridgeCapability,
 	remoteBridgeOpen,
+	requestedRepositoryId,
 	settings,
 	shellCommands,
 	showToast,
 	splitView,
 	terminalCapability,
+	terminalLatencyEnabled,
 	theme,
 	workflow,
 	workspace,
 }: CouchviewApplicationViewProps) {
+	const safeAreaInsets = useSafeAreaInsets();
 	const commandPaletteShortcut = formatShortcut(display.commandBindings["palette.open"]);
+	const terminalCsrfToken = workspace.bootstrap?.csrfToken ?? null;
+	const terminalRepositoryId = workspace.repositoryId;
+	const terminalHostActions = useMemo(
+		() =>
+			terminalRepositoryId && terminalCsrfToken !== null
+				? createTerminalHostActions(terminalRepositoryId, terminalCsrfToken)
+				: null,
+		[terminalCsrfToken, terminalRepositoryId],
+	);
 	const terminal =
 		navigation.terminalOpened &&
 		workspace.bootstrap &&
 		workspace.repositoryId &&
-		workspace.repository ? (
+		workspace.repository &&
+		terminalHostActions ? (
 			<TerminalWorkspace
+				{...terminalHostActions}
 				active={navigation.mode === "terminal"}
 				capability={terminalCapability}
+				colorScheme={theme.resolvedTheme}
 				commandPaletteShortcut={commandPaletteShortcut}
-				csrfToken={workspace.bootstrap.csrfToken}
-				onBack={() => navigation.setMode("review")}
-				onEnded={() => showToast("tmux session ended")}
-				onNotice={showToast}
-				onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
+				commandPaletteOpen={shellCommands.paletteOpen}
+				dom={{
+					scrollEnabled: false,
+					style: {
+						bottom: safeAreaInsets.bottom,
+						left: 0,
+						opacity: navigation.mode === "terminal" ? 1 : 0,
+						position: "absolute",
+						right: 0,
+						top: safeAreaInsets.top,
+						zIndex: navigation.mode === "terminal" ? 90 : -1,
+					},
+				}}
+				onBack={async () => navigation.setMode("review")}
+				onEnded={async () => showToast("tmux session ended")}
+				onNotice={async (message) => showToast(message)}
+				onOpenCommandPalette={async () => shellCommands.setPaletteOpen(true)}
+				onLatencyProfilerChange={async (enabled) => onTerminalLatencyChange?.(enabled)}
 				rendererConfig={display.terminalConfig}
 				repositoryId={workspace.repositoryId}
 				repositoryName={workspace.repository.name}
+				latencyProfilerEnabled={terminalLatencyEnabled}
 			/>
 		) : null;
 	const commandUi = (
@@ -138,12 +179,12 @@ export function CouchviewApplicationView({
 
 	if (navigation.mode === "settings" && workspace.phase === "ready" && workspace.bootstrap) {
 		return (
-			<>
+			<View className="min-h-0 flex-1 bg-background">
 				{terminal}
 				<ProfileSettingsPage
 					busy={settings.busy}
 					commandPaletteShortcut={commandPaletteShortcut}
-					nativeServerManagerUrl={isNativeProductSurface() ? NATIVE_SERVER_MANAGER_URL : null}
+					nativeServerManagerUrl={nativeServerManagerUrl}
 					onBack={navigation.closeSettings}
 					onCreate={(name) => settings.createProfile(name)}
 					onDelete={settings.deleteProfile}
@@ -158,7 +199,7 @@ export function CouchviewApplicationView({
 					theme={theme}
 				/>
 				{commandUi}
-			</>
+			</View>
 		);
 	}
 
@@ -171,15 +212,17 @@ export function CouchviewApplicationView({
 				loadError={workspace.loadError}
 				loadErrorCode={workspace.loadErrorCode}
 				onLoad={workspace.loadApp}
+				onManageServers={onManageServers}
 				onResetAppCache={workspace.resetAppCache}
 				phase={workspace.phase}
+				repositoryId={workspace.repositoryId ?? requestedRepositoryId}
 			/>
 		);
 	}
 
 	if (navigation.mode === "history") {
 		return (
-			<>
+			<View className="min-h-0 flex-1 bg-background">
 				{terminal}
 				{commandUi}
 				<GitHistoryPage
@@ -199,13 +242,13 @@ export function CouchviewApplicationView({
 					onCopy={() => void failure.copyDiagnostics()}
 					open={failure.detailsOpen}
 				/>
-			</>
+			</View>
 		);
 	}
 
 	if (navigation.mode === "artifacts") {
 		return (
-			<>
+			<View className="min-h-0 flex-1 bg-background">
 				{terminal}
 				{commandUi}
 				<ArtifactsPage
@@ -233,17 +276,15 @@ export function CouchviewApplicationView({
 					workspace={workspace}
 				/>
 				{toastUi}
-			</>
+			</View>
 		);
 	}
 
 	return (
-		<>
+		<View className="min-h-0 flex-1 bg-background">
 			{terminal}
 			{commandUi}
-			<main
-				className={`app-shell ${compactLandscape ? "compact-landscape" : ""} ${navigation.mode === "terminal" ? "terminal-active" : ""}`}
-			>
+			{navigation.mode === "review" ? (
 				<ReviewWorkspaceChrome
 					commandPaletteShortcut={commandPaletteShortcut}
 					compactLandscape={compactLandscape}
@@ -271,21 +312,21 @@ export function CouchviewApplicationView({
 					workspace={workspace}
 					workspaceMode={navigation.mode}
 				/>
-				<ReviewWorkspaceOverlays
-					commitMessageCapability={commitMessageCapability}
-					failureReporting={failure}
-					management={management}
-					onRemoteBridgeOpenChange={onRemoteBridgeOpenChange}
-					packages={packages}
-					remoteBridgeCapability={remoteBridgeCapability}
-					remoteBridgeOpen={remoteBridgeOpen}
-					showToast={showToast}
-					workflow={workflow}
-					workspace={workspace}
-				/>
-				{toastUi}
-				<RestartOverlay phase={management.restartPhase} />
-			</main>
-		</>
+			) : null}
+			<ReviewWorkspaceOverlays
+				commitMessageCapability={commitMessageCapability}
+				failureReporting={failure}
+				management={management}
+				onRemoteBridgeOpenChange={onRemoteBridgeOpenChange}
+				packages={packages}
+				remoteBridgeCapability={remoteBridgeCapability}
+				remoteBridgeOpen={remoteBridgeOpen}
+				showToast={showToast}
+				workflow={workflow}
+				workspace={workspace}
+			/>
+			{toastUi}
+			<RestartOverlay phase={management.restartPhase} />
+		</View>
 	);
 }

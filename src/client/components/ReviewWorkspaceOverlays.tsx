@@ -78,7 +78,6 @@ export function ReviewWorkspaceOverlays({
 
 			<SearchSheet
 				busy={search.busy}
-				inputRef={search.inputRef}
 				onClose={() => search.setOpen(false)}
 				onQueryChange={(query) => {
 					search.setQuery(query);
@@ -106,7 +105,7 @@ export function ReviewWorkspaceOverlays({
 				onClose={commit.closeComposer}
 				onGenerate={() => void commit.generateMessage()}
 				onMessageChange={commit.setMessage}
-				onSubmit={(event) => void commit.commit(event)}
+				onSubmit={() => void commit.commit()}
 				open={commit.open}
 				stagedCount={workspace.files.filter((file) => file.staged).length}
 			/>

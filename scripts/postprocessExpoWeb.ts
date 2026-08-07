@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { generateSW } from "workbox-build";
@@ -10,13 +10,6 @@ const EXECUTABLE_SCRIPT_TYPES = new Set([
 	"text/javascript",
 	"application/javascript",
 ]);
-const BUNDLED_FONT_FILES = [
-	"Iosevka-Regular.woff2",
-	"Iosevka-Bold.woff2",
-	"Iosevka-Italic.woff2",
-	"Iosevka-BoldItalic.woff2",
-] as const;
-
 export const expoWebManifest = {
 	id: "/",
 	name: "Couchview",
@@ -94,47 +87,13 @@ function injectWebMetadata(html: string): string {
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="mask-icon" href="/icon.svg" color="#101317" />
-    <script src="/theme-bootstrap.js"></script>
 `;
 	return withViewportFit.replace("</head>", `${metadata}</head>`);
 }
 
-async function installBundledFonts(outputRoot: string) {
-	const cssDirectory = path.join(outputRoot, "_expo/static/css");
-	const cssFiles = await readdir(cssDirectory).catch(() => []);
-	const foundationFile = cssFiles.find((file) => /^foundation-[a-f0-9]+\.css$/.test(file));
-	if (!foundationFile) return null;
-
-	const fontOutputDirectory = path.join(outputRoot, "_expo/static/assets/fonts");
-	await mkdir(fontOutputDirectory, { recursive: true });
-	let css = await readFile(path.join(cssDirectory, foundationFile), "utf8");
-	for (const filename of BUNDLED_FONT_FILES) {
-		const contents = await readFile(
-			path.resolve(import.meta.dir, "../src/client/assets/fonts", filename),
-		);
-		const digest = createHash("sha256").update(contents).digest("hex").slice(0, 24);
-		const fingerprintedFilename = filename.replace(".woff2", `-${digest}.woff2`);
-		await writeFile(path.join(fontOutputDirectory, fingerprintedFilename), contents);
-		css = css.replaceAll(filename, fingerprintedFilename);
-	}
-
-	const cssDigest = createHash("sha256").update(css).digest("hex").slice(0, 32);
-	const fingerprintedCssFile = `foundation-${cssDigest}.css`;
-	await rename(
-		path.join(cssDirectory, foundationFile),
-		path.join(cssDirectory, fingerprintedCssFile),
-	);
-	await writeFile(path.join(cssDirectory, fingerprintedCssFile), css, "utf8");
-	return { foundationFile, fingerprintedCssFile };
-}
-
 export async function postprocessExpoWeb(outputRoot: string): Promise<void> {
 	const indexPath = path.join(outputRoot, "index.html");
-	const installedFonts = await installBundledFonts(outputRoot);
 	let source = await readFile(indexPath, "utf8");
-	if (installedFonts) {
-		source = source.replaceAll(installedFonts.foundationFile, installedFonts.fingerprintedCssFile);
-	}
 	const withMetadata = injectWebMetadata(source);
 	const html = await extractInlineBootstrapScripts(withMetadata, outputRoot);
 	await Promise.all([

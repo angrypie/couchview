@@ -63,28 +63,40 @@ artifact suggestions and commit messages.
 ## Expo and React Native Web surfaces
 
 Expo Router owns the cross-platform route entry points in `app/`. Route files
-stay thin: the native layout composes safe-area, server-profile, and stack
-providers, while the web layout removes native navigation chrome. On web,
-`src/client/expo/ProductRoot.web.tsx` delegates to the established browser
-composition root. On iPhone and iPad, `src/client/expo/ProductRoot.tsx` keeps
-pairing and server management native, then delegates every product route to
-`NativeProductSurface`. That surface verifies the selected server identity with
-the SecureStore credential before its Expo DOM WebView opens the PWA at the
-paired origin. Review, commands, settings, history, artifacts, and terminal
-therefore use the same `App` composition, components, same-origin HTTP, event
-streams, downloads, browser history, and WebSocket behavior on mobile web and
-in the native shell.
+stay thin and render the same React Native composition on web and native. The
+root layout owns Jotai, safe-area, Uniwind theme, Gluestack overlay, native
+server-profile, and navigation providers. `ProductRoot.web.tsx` configures an
+optional Expo development API origin and renders React Native Web directly.
+`NativeProductRoot.tsx` verifies the selected paired server, configures the
+authenticated native transport, and then renders the same `App` directly. No
+route loads the product through a hosted page or full-application WebView.
 
-Native server profiles, secure credentials, pairing-link validation, API
-transport, identity preflight, and paired-origin URL construction belong to
-`src/client/features/nativeServers/`. Platform files separate AsyncStorage
-metadata from SecureStore credentials. The durable native-client token never
-enters the hosted PWA; it is used only by native transport to verify the paired
-server before navigation. The hosted page uses the browser session and the
-server's normal origin/CSRF protections. A native query marker disables PWA
-installation and service-worker lifecycle UI inside the shell and exposes a
-custom-scheme return to native server management. Native loading, error,
-pairing, and server-manager rendering belongs to `src/client/components/native/`.
+Reusable visual primitives, semantic variants, and third-party UI seams live in
+`src/client/components/ui/`. Product presentation may compose those primitives
+with React Native layout and static Uniwind classes. Stateful workflows remain
+in `src/client/features/`; feature code may not import presentation components.
+
+Pierre Diff and Ghostty are the only DOM boundaries. Pierre's renderer is an
+isolated Expo DOM component receiving serializable diff/display props and async
+callbacks. Ghostty's live terminal and typography preview are isolated Expo DOM
+components because they require WASM, canvas, browser keyboard events, and DOM
+measurement. React Native owns route navigation and the surrounding product
+surface. The Metro serializer keeps each native DOM document self-contained;
+normal web bundles retain split chunks.
+
+Native server profiles, pairing-link validation, identity preflight, and
+connection lifecycle belong to `src/client/features/nativeServers/`. Profile
+metadata uses the shared Jotai persistence seam. Durable native credentials
+remain in SecureStore and never enter the general-purpose KV store. Once a
+server is selected, the native client token authenticates every API request,
+event stream, terminal attachment, and artifact download. Browser production
+uses same-origin requests; Expo web development uses an explicitly allowed API
+origin with CORS.
+
+`src/client/lib/storage/` defines the asynchronous key/value contract. Its web
+implementation uses IndexedDB and BroadcastChannel; its native implementation
+uses Nitro-backed MMKV. `src/client/lib/store/` exposes hydration-safe persisted
+Jotai atoms so features never import either storage implementation directly.
 
 Browser-side Couchview app pairing state and API orchestration belong to
 `src/client/features/nativeClients/`; the pairing panel only renders its
@@ -96,14 +108,19 @@ socket closure after revocation.
 
 `bun run build` exports Expo web to `dist/`. The postprocessor adds install
 metadata, extracts inline executable bootstrap code for the existing CSP,
-fingerprints bundled terminal fonts, and generates a bounded app-shell service
-worker. Navigation and `/api` requests remain network-only, and repository
-responses are never placed in offline caches.
+and generates a bounded app-shell service worker. Navigation and `/api`
+requests remain network-only, and repository responses are never placed in
+offline caches. `bun run dev` runs the Bun API beside Expo/Metro web; Vite and
+the legacy ReactDOM entry are not part of the application.
 
-The shared mobile product surface reuses the complete web composition instead
-of maintaining two feature UIs. Platform-independent feature logic and shared
-contracts keep `window`, history, service workers, clipboard, streams, storage,
-and terminal/browser integrations behind platform-facing adapters.
+Platform-independent feature logic and shared contracts keep browser history,
+service workers, clipboard, streams, downloads, storage, and native dialogs
+behind platform-facing adapters. Imports that select between platform
+implementations must omit the file extension so Expo can select a
+`.native.ts(x)` implementation on native. The browser side may be an explicit
+`.web.ts(x)` file or the default `.ts(x)` file when a `.native.ts(x)` sibling
+provides the native override. Browser globals are allowed only in those browser
+implementations, PWA lifecycle code, tests, and the explicit DOM islands.
 
 ## Enforced limits
 

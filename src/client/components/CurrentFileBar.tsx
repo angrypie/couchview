@@ -1,6 +1,9 @@
-import { Settings2 } from "lucide-react";
+import { Settings2 } from "lucide-react-native";
+import { View } from "react-native";
+
 import type { FileChange, FileDiff } from "../../shared/contracts.ts";
 import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
+import { Badge, IconButton, Text } from "./ui";
 
 interface CurrentFileBarProps {
 	activeFile: FileChange | null;
@@ -11,36 +14,49 @@ interface CurrentFileBarProps {
 
 export function CurrentFileBar({ activeFile, diff, onOpenSettings, visible }: CurrentFileBarProps) {
 	if (!visible) return null;
+	const staged = activeFile ? stageLabel(activeFile) : null;
 
 	return (
-		<section className="file-bar" aria-label="Current file">
-			<div className="file-summary">
-				<div className="file-path" title={activeFile?.path}>
+		<View
+			accessibilityLabel="Current file"
+			className="min-h-12 flex-row items-center gap-3 border-b border-border bg-card px-3 py-2"
+			role="region"
+		>
+			<View className="min-w-0 flex-1 gap-1">
+				<Text className="font-mono text-sm" numberOfLines={1} selectable>
 					{activeFile?.path ?? "No changed file"}
-				</div>
-				{activeFile && (
-					<div className="file-meta">
-						<span className="status-pill">{changeLabel(activeFile)}</span>
-						<span className="additions">+{activeFile.additions ?? diff?.additions ?? 0}</span>
-						<span className="deletions">−{activeFile.deletions ?? diff?.deletions ?? 0}</span>
-						{activeFile.reviewed && <span className="status-pill reviewed">reviewed</span>}
-						{stageLabel(activeFile) && (
-							<span className={`status-pill ${stageLabel(activeFile)}`}>
-								{stageLabel(activeFile)}
-							</span>
-						)}
-					</div>
-				)}
-			</div>
-			<button
-				aria-label="Open settings"
-				className="icon-button settings-launch-button"
-				onClick={onOpenSettings}
-				title="Typography settings"
-				type="button"
-			>
-				<Settings2 size={18} />
-			</button>
-		</section>
+				</Text>
+				{activeFile ? (
+					<View className="flex-row flex-wrap items-center gap-1.5">
+						<Badge variant={activeFile.conflicted ? "destructive" : "outline"}>
+							{changeLabel(activeFile)}
+						</Badge>
+						<Text className="text-xs font-semibold text-success">
+							+{activeFile.additions ?? diff?.additions ?? 0}
+						</Text>
+						<Text className="text-xs font-semibold text-destructive">
+							−{activeFile.deletions ?? diff?.deletions ?? 0}
+						</Text>
+						{activeFile.reviewed ? <Badge variant="success">reviewed</Badge> : null}
+						{staged ? (
+							<Badge
+								variant={
+									staged === "staged" ? "primary" : staged === "partial" ? "warning" : "neutral"
+								}
+							>
+								{staged}
+							</Badge>
+						) : null}
+					</View>
+				) : null}
+			</View>
+			<IconButton
+				accessibilityLabel="Open settings"
+				icon={Settings2}
+				onPress={onOpenSettings}
+				size="sm"
+				variant="ghost"
+			/>
+		</View>
 	);
 }

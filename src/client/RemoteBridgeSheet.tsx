@@ -2,29 +2,38 @@ import {
 	Copy,
 	ExternalLink,
 	Laptop,
-	LoaderCircle,
 	Plus,
 	RefreshCw,
 	ShieldCheck,
 	Trash2,
-	X,
-} from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+} from "lucide-react-native";
+import { ScrollView, View } from "react-native";
 
-import type {
-	RemoteBridgeCapability,
-	RemoteBridgeDevice,
-	RemoteBridgePairingResponse,
-} from "../shared/contracts.ts";
-import {
-	remoteBridgeClaudeCommand,
-	remoteBridgeCodexCommand,
-	remoteBridgeTerminalCommand,
-	remoteBridgeZedCommand,
-	remoteBridgeZedUrl,
-} from "../shared/remoteBridgeCommands.ts";
-import { api } from "./api.ts";
+import type { RemoteBridgeCapability } from "../shared/contracts.ts";
 import { NativeAppPairingPanel } from "./components/NativeAppPairingPanel.tsx";
+import {
+	Button,
+	Card,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+	HStack,
+	Icon,
+	IconButton,
+	Input,
+	InputField,
+	Sheet,
+	Spinner,
+	Text,
+	VStack,
+} from "./components/ui";
+import {
+	type RemoteBridgeController,
+	type RemoteBridgeDeviceItem,
+	type RemoteBridgeLaunchCommand,
+	useRemoteBridgeController,
+} from "./features/nativeBridge";
 
 interface RemoteBridgeSheetProps {
 	capability: RemoteBridgeCapability;
@@ -37,37 +46,267 @@ interface RemoteBridgeSheetProps {
 	onNotice(message: string): void;
 }
 
-function messageOf(error: unknown): string {
-	return error instanceof Error ? error.message : "The native bridge request failed.";
+function CommandBlock({ children }: { children: string }) {
+	return (
+		<Text
+			className="rounded-lg border border-border bg-muted p-3 font-mono text-foreground"
+			selectable
+			size="xs"
+		>
+			{children}
+		</Text>
+	);
 }
 
-async function copyText(text: string): Promise<void> {
-	if (navigator.clipboard?.writeText) {
-		try {
-			await navigator.clipboard.writeText(text);
-			return;
-		} catch {
-			// Fall through for local HTTP and older browsers.
-		}
-	}
-	const field = document.createElement("textarea");
-	field.value = text;
-	field.setAttribute("readonly", "");
-	field.style.position = "fixed";
-	field.style.opacity = "0";
-	document.body.append(field);
-	field.select();
-	const copied = document.execCommand("copy");
-	field.remove();
-	if (!copied) throw new Error("Copy was blocked. Select and copy the command manually.");
+function LaunchCommand({
+	command,
+	onCopy,
+	onOpen,
+}: {
+	command: RemoteBridgeLaunchCommand;
+	onCopy(): void;
+	onOpen?(): void;
+}) {
+	return (
+		<VStack space="sm">
+			<HStack align="center" justify="between" space="sm">
+				<Text bold>{command.title}</Text>
+				<HStack space="sm">
+					{command.openUrl && onOpen ? (
+						<Button
+							accessibilityLabel={command.openLabel}
+							leftIcon={ExternalLink}
+							onPress={onOpen}
+							size="sm"
+							variant="outline"
+						>
+							Open
+						</Button>
+					) : null}
+					<IconButton
+						accessibilityLabel={command.copyLabel}
+						icon={Copy}
+						onPress={onCopy}
+						size="sm"
+						variant="ghost"
+					/>
+				</HStack>
+			</HStack>
+			<CommandBlock>{command.command}</CommandBlock>
+		</VStack>
+	);
 }
 
-function formatDeviceTime(value: string | null): string {
-	if (!value) return "Never connected";
-	return `Last used ${new Intl.DateTimeFormat(undefined, {
-		dateStyle: "medium",
-		timeStyle: "short",
-	}).format(new Date(value))}`;
+function PairedMac({
+	bridge,
+	device,
+}: {
+	bridge: RemoteBridgeController;
+	device: RemoteBridgeDeviceItem;
+}) {
+	const revoking = bridge.revokingId === device.id;
+	return (
+		<Card className="gap-4 bg-muted/30" size="sm">
+			<HStack align="center" space="sm">
+				<Icon as={Laptop} size={20} tone="muted" />
+				<VStack className="min-w-0 flex-1" space="xs">
+					<Text bold>{device.label}</Text>
+					<Text size="xs" tone="muted">
+						{device.lastUsedLabel}
+					</Text>
+				</VStack>
+				{revoking ? (
+					<Spinner accessibilityLabel={`Revoking ${device.label}`} />
+				) : (
+					<IconButton
+						accessibilityLabel={`Revoke ${device.label}`}
+						disabled={bridge.revokingId !== null}
+						icon={Trash2}
+						onPress={() => void bridge.revoke(device.raw)}
+						size="sm"
+						variant="destructive"
+					/>
+				)}
+			</HStack>
+			<VStack space="lg">
+				{device.commands.map((command) => (
+					<LaunchCommand
+						command={command}
+						key={command.id}
+						onCopy={() => void bridge.copyCommand(command.command, command.copyNotice)}
+						onOpen={
+							command.openUrl ? () => void bridge.openUrl(command.openUrl as string) : undefined
+						}
+					/>
+				))}
+			</VStack>
+		</Card>
+	);
+}
+
+function BridgeTransportCard({ capability }: { capability: RemoteBridgeCapability }) {
+	return (
+		<Card className="flex-row items-start gap-3 border-primary/30 bg-primary/10" size="sm">
+			<Icon as={ShieldCheck} size={20} tone="primary" />
+			<VStack className="min-w-0 flex-1" space="xs">
+				<Text bold>
+					{capability.p2pEnabled ? "Direct WebRTC preferred" : "Protected WebSocket transport"}
+				</Text>
+				<Text size="sm" tone="muted">
+					{capability.p2pEnabled
+						? "The configured origin carries signaling and automatic fallback."
+						: "IDE traffic stays on the Couchview origin WebSocket."}
+				</Text>
+			</VStack>
+		</Card>
+	);
+}
+
+function EnableBridgeCard({ bridge }: { bridge: RemoteBridgeController }) {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>Enable on the Couchview Mac</CardTitle>
+				<CardDescription>{bridge.capability.reason}</CardDescription>
+			</CardHeader>
+			<CardContent>
+				<Text size="sm" tone="muted">
+					Enable macOS Remote Login, stop this Couchview process, then relaunch it with these flags.
+					Do not start a second server on the same port.
+				</Text>
+				<CommandBlock>{bridge.enableCommand}</CommandBlock>
+				<Button
+					className="self-start"
+					leftIcon={Copy}
+					onPress={() => void bridge.copyCommand(bridge.enableCommand, "Enable command copied")}
+					variant="secondary"
+				>
+					Copy next-launch command
+				</Button>
+			</CardContent>
+		</Card>
+	);
+}
+
+function PairedMacsCard({ bridge }: { bridge: RemoteBridgeController }) {
+	return (
+		<Card>
+			<CardHeader className="flex-row items-start gap-3">
+				<VStack className="min-w-0 flex-1" space="xs">
+					<CardTitle>Paired Macs</CardTitle>
+					<CardDescription>
+						Pair once, then use the same Mac with every repository registered here.
+					</CardDescription>
+				</VStack>
+				<Button
+					accessibilityLabel="Refresh paired Macs"
+					leftIcon={RefreshCw}
+					loading={bridge.loading}
+					onPress={() => void bridge.refresh()}
+					size="sm"
+					variant="ghost"
+				>
+					Refresh
+				</Button>
+			</CardHeader>
+			<CardContent>
+				{bridge.deviceItems.map((device) => (
+					<PairedMac bridge={bridge} device={device} key={device.id} />
+				))}
+				{!bridge.loading && bridge.deviceItems.length === 0 ? (
+					<Text className="py-3 text-center" size="sm" tone="muted">
+						No development Macs are paired yet.
+					</Text>
+				) : null}
+			</CardContent>
+		</Card>
+	);
+}
+
+function pairingExpiry(expiresAt: string): string {
+	return new Intl.DateTimeFormat(undefined, {
+		hour: "numeric",
+		minute: "2-digit",
+	}).format(new Date(expiresAt));
+}
+
+function PairMacCard({ bridge }: { bridge: RemoteBridgeController }) {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>
+					{bridge.deviceItems.length > 0 ? "Pair another Mac" : "Pair this Mac"}
+				</CardTitle>
+				<CardDescription>
+					Generate a one-use command and run it once in Terminal on the development Mac. The pairing
+					works for every registered repository.
+				</CardDescription>
+			</CardHeader>
+			<CardContent>
+				<VStack space="sm">
+					<Text bold size="sm">
+						Device name
+					</Text>
+					<HStack className="flex-wrap" space="sm">
+						<Input className="min-w-48 flex-1">
+							<InputField
+								accessibilityLabel="Device name"
+								autoCapitalize="words"
+								autoCorrect={false}
+								maxLength={80}
+								onChangeText={bridge.setLabel}
+								onSubmitEditing={() => void bridge.createPairing()}
+								returnKeyType="done"
+								value={bridge.label}
+							/>
+						</Input>
+						<Button
+							disabled={!bridge.label.trim()}
+							leftIcon={Plus}
+							loading={bridge.creating}
+							onPress={() => void bridge.createPairing()}
+						>
+							Generate
+						</Button>
+					</HStack>
+				</VStack>
+				{bridge.pairing ? (
+					<VStack className="rounded-xl border border-border bg-muted/50 p-3" space="sm">
+						<CommandBlock>{bridge.pairing.command}</CommandBlock>
+						<Button
+							className="self-start"
+							leftIcon={Copy}
+							onPress={() =>
+								void bridge.copyCommand(bridge.pairing!.command, "Pairing command copied")
+							}
+							size="sm"
+							variant="outline"
+						>
+							Copy command
+						</Button>
+						<Text size="xs" tone="muted">
+							Expires {pairingExpiry(bridge.pairing.expiresAt)}. This panel refreshes when pairing
+							finishes.
+						</Text>
+					</VStack>
+				) : null}
+			</CardContent>
+		</Card>
+	);
+}
+
+function AvailableBridgeContent({ bridge }: { bridge: RemoteBridgeController }) {
+	return (
+		<>
+			<PairedMacsCard bridge={bridge} />
+			<PairMacCard bridge={bridge} />
+			<Text className="px-1" size="xs" tone="muted">
+				The bridge exposes only the host Mac’s loopback SSH service. SSH authentication and host-key
+				verification still apply; Couchview never stores your SSH private key. Revoking a Mac
+				removes its access to every repository on this Couchview host.
+			</Text>
+		</>
+	);
 }
 
 export function RemoteBridgeSheet({
@@ -80,375 +319,44 @@ export function RemoteBridgeSheet({
 	onClose,
 	onNotice,
 }: RemoteBridgeSheetProps) {
-	const [devices, setDevices] = useState<RemoteBridgeDevice[]>([]);
-	const [loading, setLoading] = useState(false);
-	const [busy, setBusy] = useState(false);
-	const [revokingId, setRevokingId] = useState<string | null>(null);
-	const [label, setLabel] = useState("My Mac");
-	const [pairing, setPairing] = useState<RemoteBridgePairingResponse | null>(null);
-	const [error, setError] = useState("");
-
-	const refresh = useCallback(
-		async (signal?: AbortSignal) => {
-			if (!capability.available) return;
-			setLoading(true);
-			try {
-				const response = await api.remoteBridgeDevices(repositoryId, signal);
-				setDevices(response.devices);
-				setError("");
-				setPairing((current) =>
-					current && response.devices.some((device) => device.sshAlias === current.sshAlias)
-						? null
-						: current,
-				);
-			} catch (nextError) {
-				if (!signal?.aborted) setError(messageOf(nextError));
-			} finally {
-				if (!signal?.aborted) setLoading(false);
-			}
-		},
-		[capability.available, repositoryId],
-	);
-
-	useEffect(() => {
-		if (!open) return;
-		const controller = new AbortController();
-		void refresh(controller.signal);
-		return () => controller.abort();
-	}, [open, refresh]);
-
-	useEffect(() => {
-		if (!open || !pairing) return;
-		const expiresAt = new Date(pairing.expiresAt).getTime();
-		const interval = window.setInterval(() => {
-			if (Date.now() >= expiresAt) {
-				setPairing(null);
-				setError("That pairing command expired. Generate a new one to continue.");
-				return;
-			}
-			void refresh();
-		}, 2_000);
-		return () => window.clearInterval(interval);
-	}, [open, pairing, refresh]);
-
-	const enableCommand = useMemo(() => {
-		const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
-		return `couchview serve ${quote(repositoryRoot)} --enable-remote-bridge --enable-remote-bridge-p2p`;
-	}, [repositoryRoot]);
-
-	const createPairing = async (event: FormEvent) => {
-		event.preventDefault();
-		if (!label.trim() || busy) return;
-		setBusy(true);
-		setError("");
-		try {
-			const response = await api.createRemoteBridgePairing(
-				repositoryId,
-				{ label: label.trim() },
-				csrfToken,
-			);
-			setPairing(response);
-			onNotice("Pairing command created");
-		} catch (nextError) {
-			setError(messageOf(nextError));
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const revoke = async (device: RemoteBridgeDevice) => {
-		if (revokingId) return;
-		if (!window.confirm(`Revoke native IDE access for ${device.label}?`)) return;
-		setRevokingId(device.id);
-		setError("");
-		try {
-			await api.revokeRemoteBridgeDevice(repositoryId, device.id, csrfToken);
-			setDevices((current) => current.filter((candidate) => candidate.id !== device.id));
-			onNotice(`Revoked ${device.label}`);
-		} catch (nextError) {
-			setError(messageOf(nextError));
-		} finally {
-			setRevokingId(null);
-		}
-	};
-
-	if (!open) return null;
-
+	const bridge = useRemoteBridgeController({
+		active: open,
+		capability,
+		csrfToken,
+		onNotice,
+		repositoryId,
+		repositoryRoot,
+	});
 	return (
-		<>
-			<button
-				aria-label="Close native IDE setup"
-				className="sheet-scrim"
-				onClick={onClose}
-				type="button"
-			/>
-			<section
-				aria-label="Native IDE setup"
-				aria-modal="true"
-				className="bottom-sheet remote-bridge-sheet"
-				role="dialog"
-			>
-				<span className="sheet-grabber" />
-				<header className="sheet-header">
-					<div>
-						<h2 className="sheet-title">Native IDE</h2>
-						<div className="repo-meta">{repositoryName} on this Mac</div>
-					</div>
-					<button
-						aria-label="Close native IDE setup"
-						className="icon-button"
-						onClick={onClose}
-						type="button"
-					>
-						<X size={19} />
-					</button>
-				</header>
-
-				<div className="remote-bridge-scroll">
+		<Sheet
+			description={`${repositoryName} on this Mac`}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) onClose();
+			}}
+			open={open}
+			testID="remote-bridge-sheet"
+			title="Native IDE"
+		>
+			<View accessibilityLabel="Native IDE setup" className="min-h-0 shrink" role="dialog">
+				<ScrollView
+					className="min-h-0 shrink"
+					contentContainerClassName="gap-4 pb-2"
+					keyboardShouldPersistTaps="handled"
+				>
 					<NativeAppPairingPanel csrfToken={csrfToken} onNotice={onNotice} open={open} />
-					<div className="remote-bridge-status">
-						<ShieldCheck size={18} />
-						<div>
-							<strong>
-								{capability.p2pEnabled
-									? "Direct WebRTC preferred"
-									: "Protected WebSocket transport"}
-							</strong>
-							<span>
-								{capability.p2pEnabled
-									? "The configured origin carries signaling and automatic fallback."
-									: "IDE traffic stays on the Couchview origin WebSocket."}
-							</span>
-						</div>
-					</div>
-
-					{!capability.available ? (
-						<section className="remote-bridge-card">
-							<h3>Enable on the Couchview Mac</h3>
-							<p>{capability.reason}</p>
-							<p>
-								Enable macOS Remote Login, stop this Couchview process, then relaunch it with these
-								flags. Do not start a second server on the same port.
-							</p>
-							<pre className="remote-bridge-command">{enableCommand}</pre>
-							<button
-								className="action-button secondary"
-								onClick={() =>
-									void copyText(enableCommand)
-										.then(() => onNotice("Enable command copied"))
-										.catch((nextError) => setError(messageOf(nextError)))
-								}
-								type="button"
-							>
-								<Copy size={15} /> Copy next-launch command
-							</button>
-						</section>
+					<BridgeTransportCard capability={capability} />
+					{bridge.available ? (
+						<AvailableBridgeContent bridge={bridge} />
 					) : (
-						<>
-							<section className="remote-bridge-card">
-								<div className="remote-bridge-card-heading">
-									<div>
-										<h3>Paired Macs</h3>
-										<p>Pair once, then use the same Mac with every repository registered here.</p>
-									</div>
-									<button
-										aria-label="Refresh paired Macs"
-										className="icon-button"
-										disabled={loading}
-										onClick={() => void refresh()}
-										type="button"
-									>
-										<RefreshCw className={loading ? "spinner" : ""} size={16} />
-									</button>
-								</div>
-								<div className="remote-bridge-devices">
-									{devices.map((device) => {
-										const zedUrl = remoteBridgeZedUrl(device.sshAlias, repositoryRoot);
-										const zedCommand = remoteBridgeZedCommand(device.sshAlias, repositoryRoot);
-										const codexCommand = remoteBridgeCodexCommand(device.sshAlias, repositoryRoot);
-										const terminalCommand = remoteBridgeTerminalCommand(
-											device.sshAlias,
-											repositoryRoot,
-										);
-										const claudeCommand = remoteBridgeClaudeCommand(
-											device.sshAlias,
-											repositoryRoot,
-										);
-										return (
-											<div className="remote-bridge-device" key={device.id}>
-												<Laptop className="remote-bridge-device-icon" size={18} />
-												<div className="remote-bridge-device-meta">
-													<strong>{device.label}</strong>
-													<span>{formatDeviceTime(device.lastUsedAt)}</span>
-												</div>
-												<button
-													aria-label={`Revoke ${device.label}`}
-													className="icon-button remote-bridge-revoke"
-													disabled={revokingId !== null}
-													onClick={() => void revoke(device)}
-													type="button"
-												>
-													{revokingId === device.id ? (
-														<LoaderCircle className="spinner" size={16} />
-													) : (
-														<Trash2 size={16} />
-													)}
-												</button>
-												<div className="remote-bridge-device-commands">
-													<div className="remote-bridge-launch-heading">
-														<strong>Zed</strong>
-														<a
-															className="remote-bridge-open"
-															href={zedUrl}
-															title={`Open ${repositoryName} through ${device.sshAlias}`}
-														>
-															<ExternalLink size={13} /> Open
-														</a>
-														<button
-															aria-label={`Copy Zed command for ${device.label}`}
-															className="icon-button remote-bridge-copy"
-															onClick={() =>
-																void copyText(zedCommand)
-																	.then(() => onNotice("Zed command copied"))
-																	.catch((nextError) => setError(messageOf(nextError)))
-															}
-															title="Copy Zed command"
-															type="button"
-														>
-															<Copy size={14} />
-														</button>
-													</div>
-													<pre className="remote-bridge-command">{zedCommand}</pre>
-													<div className="remote-bridge-launch-heading">
-														<strong>Codex</strong>
-														<button
-															aria-label={`Copy Codex command for ${device.label}`}
-															className="icon-button remote-bridge-copy"
-															onClick={() =>
-																void copyText(codexCommand)
-																	.then(() => onNotice("Codex command copied"))
-																	.catch((nextError) => setError(messageOf(nextError)))
-															}
-															title="Copy Codex command"
-															type="button"
-														>
-															<Copy size={14} />
-														</button>
-													</div>
-													<pre className="remote-bridge-command">{codexCommand}</pre>
-													<div className="remote-bridge-launch-heading">
-														<strong>Terminal</strong>
-														<button
-															aria-label={`Copy terminal command for ${device.label}`}
-															className="icon-button remote-bridge-copy"
-															onClick={() =>
-																void copyText(terminalCommand)
-																	.then(() => onNotice("Terminal command copied"))
-																	.catch((nextError) => setError(messageOf(nextError)))
-															}
-															title="Copy terminal command"
-															type="button"
-														>
-															<Copy size={14} />
-														</button>
-													</div>
-													<pre className="remote-bridge-command">{terminalCommand}</pre>
-													<div className="remote-bridge-launch-heading">
-														<strong>Claude Code Remote Control</strong>
-														<button
-															aria-label={`Copy Claude Code Remote Control command for ${device.label}`}
-															className="icon-button remote-bridge-copy"
-															onClick={() =>
-																void copyText(claudeCommand)
-																	.then(() => onNotice("Claude Code Remote Control command copied"))
-																	.catch((nextError) => setError(messageOf(nextError)))
-															}
-															title="Copy Claude Code Remote Control command"
-															type="button"
-														>
-															<Copy size={14} />
-														</button>
-													</div>
-													<pre className="remote-bridge-command">{claudeCommand}</pre>
-												</div>
-											</div>
-										);
-									})}
-									{!loading && devices.length === 0 && (
-										<p className="remote-bridge-empty">No development Macs are paired yet.</p>
-									)}
-								</div>
-							</section>
-
-							<section className="remote-bridge-card">
-								<h3>{devices.length > 0 ? "Pair another Mac" : "Pair this Mac"}</h3>
-								<p>
-									Generate a one-use command and run it once in Terminal on your MacBook Air. The
-									pairing works for every registered repository.
-								</p>
-								<form
-									className="remote-bridge-form"
-									onSubmit={(event) => void createPairing(event)}
-								>
-									<label htmlFor="remote-bridge-label">Device name</label>
-									<div>
-										<input
-											autoComplete="off"
-											id="remote-bridge-label"
-											maxLength={80}
-											onChange={(event) => setLabel(event.target.value)}
-											value={label}
-										/>
-										<button
-											className="action-button"
-											disabled={busy || !label.trim()}
-											type="submit"
-										>
-											{busy ? <LoaderCircle className="spinner" size={15} /> : <Plus size={15} />}
-											Generate
-										</button>
-									</div>
-								</form>
-								{pairing && (
-									<div className="remote-bridge-pairing">
-										<pre className="remote-bridge-command">{pairing.command}</pre>
-										<button
-											className="action-button secondary"
-											onClick={() =>
-												void copyText(pairing.command)
-													.then(() => onNotice("Pairing command copied"))
-													.catch((nextError) => setError(messageOf(nextError)))
-											}
-											type="button"
-										>
-											<Copy size={15} /> Copy command
-										</button>
-										<span>
-											Expires{" "}
-											{new Intl.DateTimeFormat(undefined, {
-												hour: "numeric",
-												minute: "2-digit",
-											}).format(new Date(pairing.expiresAt))}
-											. This panel refreshes when pairing finishes.
-										</span>
-									</div>
-								)}
-							</section>
-
-							<p className="remote-bridge-footnote">
-								The bridge exposes only the Mini’s loopback SSH service. SSH authentication and
-								host-key verification still apply; Couchview never stores your SSH private key.
-								Revoking a Mac removes its access to every repository on this Couchview host.
-							</p>
-						</>
+						<EnableBridgeCard bridge={bridge} />
 					)}
-					{error && (
-						<div className="remote-bridge-error" role="alert">
-							{error}
-						</div>
-					)}
-				</div>
-			</section>
-		</>
+					{bridge.error ? (
+						<Text accessibilityRole="alert" selectable size="sm" tone="destructive">
+							{bridge.error}
+						</Text>
+					) : null}
+				</ScrollView>
+			</View>
+		</Sheet>
 	);
 }

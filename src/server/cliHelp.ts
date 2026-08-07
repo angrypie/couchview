@@ -165,7 +165,7 @@ Security:
 }
 
 export function fishCompletionPath(
-	environment: NodeJS.ProcessEnv = process.env,
+	environment: Partial<NodeJS.ProcessEnv> = process.env,
 	userHome = homedir(),
 ): string {
 	const configuredHome = environment.XDG_CONFIG_HOME;

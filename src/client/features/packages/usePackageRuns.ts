@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ScrollView } from "react-native";
 import type {
 	BootstrapResponse,
 	PackageRunEvent,
@@ -10,6 +11,7 @@ import type {
 } from "../../../shared/contracts.ts";
 import { API_ROUTES } from "../../../shared/contracts.ts";
 import { ApiError, api } from "../../api.ts";
+import { type ServerEventSubscription, subscribeServerEvents } from "../../lib/api/serverEvents";
 import { messageOf } from "../../lib/failures.ts";
 import { emptyPackageScripts } from "./packageRuns.ts";
 
@@ -41,15 +43,15 @@ export function usePackageRuns({
 	const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 	const [snapshot, setSnapshot] = useState<PackageRunSnapshot | null>(null);
 	const [clock, setClock] = useState(() => Date.now());
-	const outputRef = useRef<HTMLPreElement>(null);
-	const eventSourceRef = useRef<EventSource | null>(null);
+	const outputRef = useRef<ScrollView>(null);
+	const streamRef = useRef<ServerEventSubscription | null>(null);
 	const requestRef = useRef<AbortController | null>(null);
 	const repositoryIdRef = useRef(repositoryId);
 	repositoryIdRef.current = repositoryId;
 
 	const reset = useCallback(() => {
-		eventSourceRef.current?.close();
-		eventSourceRef.current = null;
+		streamRef.current?.close();
+		streamRef.current = null;
 		requestRef.current?.abort();
 		requestRef.current = null;
 		setScripts(emptyPackageScripts);
@@ -96,54 +98,55 @@ export function usePackageRuns({
 
 	useEffect(() => {
 		if (!panelActive || !repositoryId || !repositoryReady) return;
-		const interval = window.setInterval(() => {
+		const interval = setInterval(() => {
 			void refreshRuns().catch(() => undefined);
 		}, 2_000);
-		return () => window.clearInterval(interval);
+		return () => clearInterval(interval);
 	}, [panelActive, refreshRuns, repositoryId, repositoryReady]);
 
 	useEffect(() => {
-		eventSourceRef.current?.close();
-		eventSourceRef.current = null;
+		streamRef.current?.close();
+		streamRef.current = null;
 		if (!repositoryId || !selectedRunId) {
 			setSnapshot(null);
 			return;
 		}
 
-		const stream = new EventSource(API_ROUTES.packageRunEvents(repositoryId, selectedRunId));
-		eventSourceRef.current = stream;
-		stream.onmessage = (message) => {
-			try {
-				const event = JSON.parse(message.data) as PackageRunEvent;
-				if (event.type === "snapshot") {
-					setSnapshot(event.snapshot);
-					setRuns((current) => [
-						event.snapshot.run,
-						...current.filter((run) => run.id !== event.snapshot.run.id),
-					]);
-					return;
+		const stream = subscribeServerEvents(API_ROUTES.packageRunEvents(repositoryId, selectedRunId), {
+			onMessage: (message) => {
+				try {
+					const event = JSON.parse(message.data) as PackageRunEvent;
+					if (event.type === "snapshot") {
+						setSnapshot(event.snapshot);
+						setRuns((current) => [
+							event.snapshot.run,
+							...current.filter((run) => run.id !== event.snapshot.run.id),
+						]);
+						return;
+					}
+					if (event.type === "output") {
+						setSnapshot((current) => {
+							if (!current || current.run.id !== selectedRunId) return current;
+							if (current.output.some((chunk) => chunk.sequence === event.chunk.sequence)) {
+								return current;
+							}
+							return { ...current, output: [...current.output, event.chunk] };
+						});
+						return;
+					}
+					setSnapshot((current) =>
+						current?.run.id === event.run.id ? { ...current, run: event.run } : current,
+					);
+					setRuns((current) => [event.run, ...current.filter((run) => run.id !== event.run.id)]);
+				} catch {
+					// Ignore malformed run events; the subscription will continue reconnecting.
 				}
-				if (event.type === "output") {
-					setSnapshot((current) => {
-						if (!current || current.run.id !== selectedRunId) return current;
-						if (current.output.some((chunk) => chunk.sequence === event.chunk.sequence)) {
-							return current;
-						}
-						return { ...current, output: [...current.output, event.chunk] };
-					});
-					return;
-				}
-				setSnapshot((current) =>
-					current?.run.id === event.run.id ? { ...current, run: event.run } : current,
-				);
-				setRuns((current) => [event.run, ...current.filter((run) => run.id !== event.run.id)]);
-			} catch {
-				// Ignore malformed run events; EventSource will continue reconnecting.
-			}
-		};
+			},
+		});
+		streamRef.current = stream;
 		return () => {
 			stream.close();
-			if (eventSourceRef.current === stream) eventSourceRef.current = null;
+			if (streamRef.current === stream) streamRef.current = null;
 		};
 	}, [repositoryId, selectedRunId]);
 
@@ -152,14 +155,12 @@ export function usePackageRuns({
 	useEffect(() => {
 		const active = selectedRun && ["running", "stopping"].includes(selectedRun.status);
 		if (!active) return;
-		const interval = window.setInterval(() => setClock(Date.now()), 1_000);
-		return () => window.clearInterval(interval);
+		const interval = setInterval(() => setClock(Date.now()), 1_000);
+		return () => clearInterval(interval);
 	}, [selectedRun]);
 
 	useEffect(() => {
-		const output = outputRef.current;
-		if (!output) return;
-		output.scrollTop = output.scrollHeight;
+		outputRef.current?.scrollToEnd({ animated: false });
 	}, [snapshot?.output]);
 
 	const start = useCallback(

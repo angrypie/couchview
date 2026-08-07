@@ -28,7 +28,6 @@ export function useRepositorySearch({
 	const [busy, setBusy] = useState(false);
 	const [sourcePreview, setSourcePreview] = useState<SourcePreviewResponse | null>(null);
 	const [sourceBusy, setSourceBusy] = useState(false);
-	const inputRef = useRef<HTMLInputElement>(null);
 	const searchRequestRef = useRef<AbortController | null>(null);
 	const sourceRequestRef = useRef<{
 		generation: number;
@@ -67,7 +66,7 @@ export function useRepositorySearch({
 		const currentPath = activeFile.path;
 		const controller = new AbortController();
 		searchRequestRef.current = controller;
-		const timeout = window.setTimeout(() => {
+		const timeout = setTimeout(() => {
 			setBusy(true);
 			void api
 				.search(repositoryId, normalizedQuery, currentPath, controller.signal)
@@ -92,7 +91,7 @@ export function useRepositorySearch({
 		}, 220);
 
 		return () => {
-			window.clearTimeout(timeout);
+			clearTimeout(timeout);
 			controller.abort();
 			if (searchRequestRef.current === controller) {
 				searchRequestRef.current = null;
@@ -112,7 +111,6 @@ export function useRepositorySearch({
 		setScope("current");
 		setSourcePreview(null);
 		setOpen(true);
-		window.setTimeout(() => inputRef.current?.focus(), 30);
 	}, []);
 
 	const showSource = useCallback(
@@ -161,7 +159,6 @@ export function useRepositorySearch({
 
 	return {
 		busy,
-		inputRef,
 		open,
 		openWithQuery,
 		query,

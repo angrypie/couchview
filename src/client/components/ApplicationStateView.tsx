@@ -1,8 +1,11 @@
-import { AlertTriangle, LoaderCircle, LogIn, RefreshCw, RotateCcw } from "lucide-react";
+import { AlertTriangle, LogIn, RefreshCw, RotateCcw } from "lucide-react-native";
 import type { ReactNode } from "react";
+import { Linking, View } from "react-native";
+
 import { API_ROUTES } from "../../shared/contracts.ts";
+import { absoluteApiHttpUrl, withQuery } from "../api.ts";
 import type { AppPhase } from "../features/repositories/useRepositoryWorkspace.ts";
-import { isNativeProductSurface, NATIVE_SERVER_MANAGER_URL } from "../lib/nativeProductSurface.ts";
+import { Button, Heading, Icon, Spinner, Text } from "./ui";
 
 interface ApplicationStateViewProps {
 	appCacheResetBusy: boolean;
@@ -11,8 +14,14 @@ interface ApplicationStateViewProps {
 	loadError: string;
 	loadErrorCode: string;
 	onLoad: () => Promise<void>;
+	onManageServers?: () => void;
 	onResetAppCache: () => Promise<void>;
 	phase: AppPhase;
+	repositoryId?: string | null;
+}
+
+function openApiPage(path: string): void {
+	void Linking.openURL(absoluteApiHttpUrl(path));
 }
 
 export function ApplicationStateView({
@@ -22,19 +31,29 @@ export function ApplicationStateView({
 	loadError,
 	loadErrorCode,
 	onLoad,
+	onManageServers,
 	onResetAppCache,
 	phase,
+	repositoryId,
 }: ApplicationStateViewProps) {
 	if (phase === "loading") {
 		return (
 			<>
-				<main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
-					<div className="loading-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
-						<LoaderCircle className="state-icon spinner" size={30} />
-						<h1 className="state-title">Opening repository…</h1>
-						<p className="state-copy">Reading changed files and restoring settings.</p>
-					</div>
-				</main>
+				<View
+					className={
+						compactLandscape
+							? "flex-1 items-center justify-center gap-3 bg-background px-4 py-3"
+							: "flex-1 items-center justify-center gap-3 bg-background px-6 py-10"
+					}
+				>
+					<Spinner accessibilityLabel="Opening repository" size="large" />
+					<Heading className="text-center" level={2}>
+						Opening repository…
+					</Heading>
+					<Text className="text-center text-muted-foreground">
+						Reading changed files and restoring settings.
+					</Text>
+				</View>
 				{commandUi}
 			</>
 		);
@@ -44,107 +63,97 @@ export function ApplicationStateView({
 	const authenticationRequired = loadErrorCode === "authentication_required";
 	const authenticationRefreshFailed = loadErrorCode === "authentication_refresh_failed";
 	const disconnected = loadErrorCode === "disconnected";
-	const nativeProductSurface = isNativeProductSurface();
-	const repositoryId = new URL(window.location.href).searchParams.get("repo");
-	const accessRefresh = new URL(API_ROUTES.accessRefresh, window.location.origin);
-	if (repositoryId) accessRefresh.searchParams.set("repo", repositoryId);
+	const accessRefresh = withQuery(API_ROUTES.accessRefresh, { repo: repositoryId });
+	const title = authenticationRefreshFailed
+		? "Sign-in didn’t complete"
+		: authenticationRequired
+			? "Sign-in expired"
+			: disconnected
+				? "Couchview is unavailable"
+				: "Couldn’t open Couchview";
+	const description = authenticationRefreshFailed
+		? "Cloudflare returned to Couchview, but this device still does not have a usable Access session."
+		: authenticationRequired
+			? "Sign in again to continue using Couchview."
+			: loadError;
 
 	return (
-		<main className={`app-shell ${compactLandscape ? "compact-landscape" : ""}`}>
-			<div className="error-state" style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}>
-				<AlertTriangle className="state-icon" size={32} />
-				<h1 className="state-title">
-					{authenticationRefreshFailed
-						? "Sign-in didn’t complete"
-						: authenticationRequired
-							? "Sign-in expired"
-							: disconnected
-								? "Couchview is unavailable"
-								: "Couldn’t open Couchview"}
-				</h1>
-				<p className="state-copy">
-					{authenticationRefreshFailed
-						? "Cloudflare returned to Couchview, but this browser still does not have a usable Access session."
-						: authenticationRequired
-							? "Sign in again to continue using Couchview."
-							: loadError}
-				</p>
-				<div className="state-actions">
-					{nativeProductSurface ? (
-						<>
-							<button className="action-button" onClick={() => void onLoad()} type="button">
-								<RefreshCw size={16} /> Retry
-							</button>
-							<a className="action-button secondary" href={NATIVE_SERVER_MANAGER_URL}>
-								Manage servers
-							</a>
-						</>
-					) : authenticationRefreshFailed ? (
-						<>
-							<a className="action-button" href={API_ROUTES.accessLogout}>
-								<RotateCcw size={16} /> Reset Cloudflare sign-in
-							</a>
-							<a
-								className="action-button secondary"
-								href={`${accessRefresh.pathname}${accessRefresh.search}`}
+		<View
+			accessibilityRole="alert"
+			className={
+				compactLandscape
+					? "flex-1 items-center justify-center gap-4 bg-background px-4 py-3"
+					: "flex-1 items-center justify-center gap-4 bg-background px-6 py-10"
+			}
+		>
+			<View className="size-14 items-center justify-center rounded-full bg-destructive/10">
+				<Icon as={AlertTriangle} size={28} tone="destructive" />
+			</View>
+			<View className="max-w-lg items-center gap-2">
+				<Heading className="text-center" level={2}>
+					{title}
+				</Heading>
+				<Text className="text-center text-muted-foreground" selectable>
+					{description}
+				</Text>
+			</View>
+			<View className="flex-row flex-wrap justify-center gap-2">
+				{onManageServers ? (
+					<>
+						<Button leftIcon={RefreshCw} onPress={() => void onLoad()}>
+							Retry
+						</Button>
+						<Button onPress={onManageServers} variant="outline">
+							Manage servers
+						</Button>
+					</>
+				) : authenticationRefreshFailed ? (
+					<>
+						<Button leftIcon={RotateCcw} onPress={() => openApiPage(API_ROUTES.accessLogout)}>
+							Reset Cloudflare sign-in
+						</Button>
+						<Button leftIcon={LogIn} onPress={() => openApiPage(accessRefresh)} variant="outline">
+							Try sign-in again
+						</Button>
+					</>
+				) : authenticationRequired ? (
+					<>
+						<Button leftIcon={LogIn} onPress={() => openApiPage(accessRefresh)}>
+							Sign in again
+						</Button>
+						<Button leftIcon={RefreshCw} onPress={() => void onLoad()} variant="outline">
+							Retry
+						</Button>
+					</>
+				) : (
+					<>
+						<Button leftIcon={RefreshCw} onPress={() => void onLoad()}>
+							Retry
+						</Button>
+						{disconnected ? (
+							<Button leftIcon={LogIn} onPress={() => openApiPage(accessRefresh)} variant="outline">
+								Sign in again
+							</Button>
+						) : null}
+						{disconnected ? (
+							<Button
+								leftIcon={RotateCcw}
+								loading={appCacheResetBusy}
+								onPress={() => void onResetAppCache()}
+								variant="outline"
 							>
-								<LogIn size={16} /> Try sign-in again
-							</a>
-						</>
-					) : authenticationRequired ? (
-						<>
-							<a
-								className="action-button"
-								href={`${accessRefresh.pathname}${accessRefresh.search}`}
-							>
-								<LogIn size={16} /> Sign in again
-							</a>
-							<button
-								className="action-button secondary"
-								onClick={() => void onLoad()}
-								type="button"
-							>
-								<RefreshCw size={16} /> Retry
-							</button>
-						</>
-					) : (
-						<>
-							<button className="action-button" onClick={() => void onLoad()} type="button">
-								<RefreshCw size={16} /> Retry
-							</button>
-							{disconnected && (
-								<a
-									className="action-button secondary"
-									href={`${accessRefresh.pathname}${accessRefresh.search}`}
-								>
-									<LogIn size={16} /> Sign in again
-								</a>
-							)}
-							{disconnected && (
-								<button
-									className="action-button secondary"
-									disabled={appCacheResetBusy}
-									onClick={() => void onResetAppCache()}
-									type="button"
-								>
-									{appCacheResetBusy ? (
-										<LoaderCircle className="spinner" size={16} />
-									) : (
-										<RotateCcw size={16} />
-									)}
-									Reset app cache
-								</button>
-							)}
-						</>
-					)}
-				</div>
-				{authenticationRefreshFailed && (
-					<p className="state-help">
-						Reset signs this browser out of every Cloudflare Access app. Return to Couchview and
-						sign in again.
-					</p>
+								Reset app cache
+							</Button>
+						) : null}
+					</>
 				)}
-			</div>
-		</main>
+			</View>
+			{authenticationRefreshFailed ? (
+				<Text className="max-w-lg text-center text-sm text-muted-foreground">
+					Reset signs this device out of every Cloudflare Access app. Return to Couchview and sign
+					in again.
+				</Text>
+			) : null}
+		</View>
 	);
 }

@@ -1,10 +1,11 @@
-import { Command } from "cmdk";
-import { Search } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Search } from "lucide-react-native";
+import { useEffect, useMemo, useState } from "react";
+import { ScrollView, View } from "react-native";
 
 import type { CommandId } from "../shared/settings.ts";
 import { COMMAND_CATEGORIES, type RuntimeCommand } from "./commands.ts";
-import { formatShortcut } from "./shortcutEngine.ts";
+import { Badge, Dialog, Icon, Input, InputField, ListItem, Text } from "./components/ui";
+import { formatShortcut } from "./shortcutEngine";
 
 interface CommandPaletteProps {
 	commands: Record<CommandId, RuntimeCommand>;
@@ -14,92 +15,84 @@ interface CommandPaletteProps {
 
 function ShortcutBadge({ command }: { command: RuntimeCommand }) {
 	return (
-		<kbd className={`command-shortcut ${command.binding ? "" : "unassigned"}`}>
-			{formatShortcut(command.binding)}
-		</kbd>
+		<Badge variant={command.binding ? "outline" : "neutral"}>
+			{formatShortcut(command.binding) || "Unassigned"}
+		</Badge>
 	);
 }
 
 export function CommandPalette({ commands, onOpenChange, open }: CommandPaletteProps) {
 	const [query, setQuery] = useState("");
-	const previouslyOpenRef = useRef(false);
-	const restoreFocusRef = useRef<HTMLElement | null>(null);
-	if (open && !previouslyOpenRef.current) {
-		restoreFocusRef.current =
-			document.activeElement instanceof HTMLElement ? document.activeElement : null;
-	}
-	useLayoutEffect(() => {
-		const previouslyOpen = previouslyOpenRef.current;
-		previouslyOpenRef.current = open;
-		if (open || !previouslyOpen) return;
-		const target = restoreFocusRef.current;
-		restoreFocusRef.current = null;
-		const frame = window.requestAnimationFrame(() => {
-			if (target?.isConnected) target.focus({ preventScroll: true });
-		});
-		return () => window.cancelAnimationFrame(frame);
-	}, [open]);
 	useEffect(() => {
 		if (!open) setQuery("");
 	}, [open]);
-	const visible = useMemo(
-		() => Object.values(commands).filter((command) => command.paletteVisible),
-		[commands],
-	);
+	const visible = useMemo(() => {
+		const normalizedQuery = query.trim().toLocaleLowerCase();
+		return Object.values(commands).filter((command) => {
+			if (!command.paletteVisible) return false;
+			if (!normalizedQuery) return true;
+			return `${command.title} ${command.keywords.join(" ")}`
+				.toLocaleLowerCase()
+				.includes(normalizedQuery);
+		});
+	}, [commands, query]);
 
 	return (
-		<Command.Dialog
-			className="command-palette"
-			label="Couchview command palette"
+		<Dialog
+			description="Search destinations and actions"
 			onOpenChange={onOpenChange}
 			open={open}
-			shouldFilter
+			title="Command palette"
 		>
-			<div className="command-palette-input-row">
-				<Search aria-hidden="true" size={18} />
-				<Command.Input
+			<Input>
+				<View className="pl-1">
+					<Icon as={Search} size={18} tone="muted" />
+				</View>
+				<InputField
+					accessibilityLabel="Search commands"
 					autoFocus
-					onValueChange={setQuery}
+					onChangeText={setQuery}
 					placeholder="Type a command or destination…"
+					returnKeyType="search"
 					value={query}
 				/>
-			</div>
-			<Command.List className="command-palette-list">
-				<Command.Empty className="command-palette-empty">No commands found.</Command.Empty>
+			</Input>
+			<ScrollView
+				className="max-h-[60vh]"
+				contentContainerClassName="gap-3"
+				keyboardShouldPersistTaps="handled"
+			>
+				{visible.length === 0 ? (
+					<Text className="py-6 text-center text-muted-foreground">No commands found.</Text>
+				) : null}
 				{COMMAND_CATEGORIES.map((category) => {
 					const categoryCommands = visible.filter((command) => command.category === category);
 					if (categoryCommands.length === 0) return null;
 					return (
-						<Command.Group heading={category} key={category}>
-							{categoryCommands.map((command) => {
-								const Icon = command.icon;
-								return (
-									<Command.Item
-										disabled={!command.enabled}
-										key={command.id}
-										keywords={command.keywords}
-										onSelect={() => {
-											if (!command.enabled) return;
-											onOpenChange(false);
-											window.setTimeout(command.perform, 0);
-										}}
-										value={`${command.title} ${command.keywords.join(" ")}`}
-									>
-										<Icon aria-hidden="true" size={17} />
-										<span className="command-palette-item-copy">
-											<span>{command.title}</span>
-											{!command.enabled && command.disabledReason && (
-												<small>{command.disabledReason}</small>
-											)}
-										</span>
-										<ShortcutBadge command={command} />
-									</Command.Item>
-								);
-							})}
-						</Command.Group>
+						<View className="gap-1" key={category}>
+							<Text className="px-3 uppercase tracking-wide text-muted-foreground" size="xs">
+								{category}
+							</Text>
+							{categoryCommands.map((command) => (
+								<ListItem
+									density="compact"
+									disabled={!command.enabled}
+									key={command.id}
+									leading={<Icon as={command.icon} size={18} tone="muted" />}
+									onPress={() => {
+										if (!command.enabled) return;
+										onOpenChange(false);
+										setTimeout(command.perform, 0);
+									}}
+									subtitle={!command.enabled ? command.disabledReason : undefined}
+									title={command.title}
+									trailing={<ShortcutBadge command={command} />}
+								/>
+							))}
+						</View>
 					);
 				})}
-			</Command.List>
-		</Command.Dialog>
+			</ScrollView>
+		</Dialog>
 	);
 }

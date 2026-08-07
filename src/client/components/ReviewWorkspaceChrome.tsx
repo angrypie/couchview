@@ -1,4 +1,6 @@
-import { WifiOff } from "lucide-react";
+import { WifiOff } from "lucide-react-native";
+import { View } from "react-native";
+
 import type { RemoteBridgeCapability, TerminalCapability } from "../../shared/contracts.ts";
 import type { ResolvedTheme } from "../../shared/theme.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
@@ -14,6 +16,7 @@ import { CurrentFileBar } from "./CurrentFileBar.tsx";
 import { DiffWorkspace } from "./DiffWorkspace.tsx";
 import { ReviewBottomBar } from "./ReviewBottomBar.tsx";
 import { ReviewTopBar } from "./ReviewTopBar.tsx";
+import { Icon, Text } from "./ui";
 
 interface ReviewWorkspaceChromeProps {
 	commandPaletteShortcut: string;
@@ -78,7 +81,7 @@ export function ReviewWorkspaceChrome({
 	const activeFileFullyStaged = Boolean(diff.activeFile?.staged && !diff.activeFile.unstaged);
 
 	return (
-		<>
+		<View className="min-h-0 flex-1 flex-row overflow-hidden bg-background">
 			<ChangedFilesDrawer
 				bulkReviewBusy={review.bulkBusy}
 				bulkStageBusy={staging.bulkBusy}
@@ -116,95 +119,104 @@ export function ReviewWorkspaceChrome({
 				view={drawerView}
 			/>
 
-			<ReviewTopBar
-				activeFile={diff.activeFile}
-				canNavigateNextHunk={diff.canNavigateNextHunk}
-				canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
-				commandPaletteShortcut={commandPaletteShortcut}
-				compactLandscape={compactLandscape}
-				connectionState={workspace.connectionState}
-				diff={diff.diff}
-				fileCount={workspace.files.length}
-				fontSize={display.fontSize}
-				lineNumbersVisible={display.lineNumbersVisible}
-				lineWrapEnabled={display.lineWrapEnabled}
-				onFontSizeChange={display.setFontSize}
-				onLineNumbersChange={display.setLineNumbersVisible}
-				onLineWrapChange={display.setLineWrapEnabled}
-				onNavigateHunk={diff.navigateHunk}
-				onOpenCommandPalette={onOpenCommandPalette}
-				onOpenDrawer={() => onDrawerOpenChange(true)}
-				onOpenArtifacts={onOpenArtifacts}
-				onOpenGitHistory={onOpenGitHistory}
-				onOpenRemoteBridge={onOpenRemoteBridge}
-				onOpenRepositoryPicker={management.openPicker}
-				onOpenSettings={onOpenSettings}
-				onOpenTerminal={onOpenTerminal}
-				remoteBridgeCapability={remoteBridgeCapability}
-				repository={workspace.repository}
-				repositoryId={workspace.repositoryId}
-				reviewedCount={filters.reviewedCount}
-				splitView={splitView}
-				terminalActive={workspaceMode === "terminal"}
-				terminalCapability={terminalCapability}
-			/>
+			<View className="min-w-0 flex-1 bg-background">
+				<ReviewTopBar
+					activeFile={diff.activeFile}
+					canNavigateNextHunk={diff.canNavigateNextHunk}
+					canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
+					commandPaletteShortcut={commandPaletteShortcut}
+					compactLandscape={compactLandscape}
+					connectionState={workspace.connectionState}
+					diff={diff.diff}
+					fileCount={workspace.files.length}
+					fontSize={display.fontSize}
+					lineNumbersVisible={display.lineNumbersVisible}
+					lineWrapEnabled={display.lineWrapEnabled}
+					onFontSizeChange={display.setFontSize}
+					onLineNumbersChange={display.setLineNumbersVisible}
+					onLineWrapChange={display.setLineWrapEnabled}
+					onNavigateHunk={diff.navigateHunk}
+					onOpenCommandPalette={onOpenCommandPalette}
+					onOpenDrawer={() => onDrawerOpenChange(true)}
+					onOpenArtifacts={onOpenArtifacts}
+					onOpenGitHistory={onOpenGitHistory}
+					onOpenRemoteBridge={onOpenRemoteBridge}
+					onOpenRepositoryPicker={management.openPicker}
+					onOpenSettings={onOpenSettings}
+					onOpenTerminal={onOpenTerminal}
+					remoteBridgeCapability={remoteBridgeCapability}
+					repository={workspace.repository}
+					repositoryId={workspace.repositoryId}
+					reviewedCount={filters.reviewedCount}
+					splitView={splitView}
+					terminalActive={workspaceMode === "terminal"}
+					terminalCapability={terminalCapability}
+				/>
 
-			{workspace.connectionState === "offline" && !compactLandscape && (
-				<div className="disconnected-banner" style={{ gridColumn: splitView ? 2 : undefined }}>
-					<WifiOff size={12} /> Offline — cannot reach the local server
-				</div>
-			)}
+				{workspace.connectionState === "offline" && !compactLandscape ? (
+					<View
+						accessibilityLiveRegion="polite"
+						className="flex-row items-center justify-center gap-1.5 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5"
+						role="status"
+					>
+						<Icon as={WifiOff} size={13} tone="destructive" />
+						<Text className="text-xs font-medium text-destructive">
+							Offline — cannot reach the local server
+						</Text>
+					</View>
+				) : null}
 
-			<CurrentFileBar
-				activeFile={diff.activeFile}
-				diff={diff.diff}
-				onOpenSettings={onOpenSettings}
-				visible={!compactLandscape}
-			/>
+				<CurrentFileBar
+					activeFile={diff.activeFile}
+					diff={diff.diff}
+					onOpenSettings={onOpenSettings}
+					visible={!compactLandscape}
+				/>
 
-			<DiffWorkspace
-				diff={diff.diff}
-				diffError={diff.error}
-				diffLoading={diff.loading}
-				failureAvailable={failureAvailable}
-				fileCount={workspace.files.length}
-				fontSize={display.fontSize}
-				lineNumbersVisible={display.lineNumbersVisible}
-				lineWrapEnabled={display.lineWrapEnabled}
-				onIdentifierClick={search.openWithQuery}
-				onOpenFailure={onOpenFailure}
-				onRetry={() => {
-					if (!diff.currentFileId) return;
-					const retryId = diff.currentFileId;
-					diff.setCurrentFileId(null);
-					window.setTimeout(() => diff.setCurrentFileId(retryId), 0);
-				}}
-				onVisibleLineChange={diff.handleVisibleLineChange}
-				retryAvailable={Boolean(diff.currentFileId)}
-				rowCount={diff.rows.length}
-				typography={display.typography.diff}
-				themeType={themeType}
-				viewerRef={diff.viewerRef}
-			/>
+				<DiffWorkspace
+					diff={diff.diff}
+					diffError={diff.error}
+					diffLoading={diff.loading}
+					failureAvailable={failureAvailable}
+					fileCount={workspace.files.length}
+					fontSize={display.fontSize}
+					lineNumbersVisible={display.lineNumbersVisible}
+					lineWrapEnabled={display.lineWrapEnabled}
+					onIdentifierClick={search.openWithQuery}
+					onOpenFailure={onOpenFailure}
+					onRetry={() => {
+						if (!diff.currentFileId) return;
+						const retryId = diff.currentFileId;
+						diff.setCurrentFileId(null);
+						setTimeout(() => diff.setCurrentFileId(retryId), 0);
+					}}
+					onVisibleLineChange={diff.handleVisibleLineChange}
+					retryAvailable={Boolean(diff.currentFileId)}
+					rowCount={diff.rows.length}
+					themeType={themeType}
+					typography={display.typography.diff}
+					viewerRef={diff.viewerRef}
+				/>
 
-			<ReviewBottomBar
-				activeFile={diff.activeFile}
-				activeFileFullyStaged={activeFileFullyStaged}
-				activeFileIndex={diff.activeFileIndex}
-				bulkStageBusy={staging.bulkBusy !== null}
-				canNavigateNextHunk={diff.canNavigateNextHunk}
-				canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
-				fileCount={workspace.files.length}
-				onNavigateFile={diff.navigateFile}
-				onNavigateHunk={diff.navigateHunk}
-				onReview={() =>
-					diff.activeFile &&
-					void review.setReviewed(diff.activeFile, !diff.activeFile.reviewed, true)
-				}
-				onToggleStage={() => void staging.toggleActiveFile()}
-				reviewBusy={review.busy}
-				stageBusy={staging.busy}
-			/>
-		</>
+				<ReviewBottomBar
+					activeFile={diff.activeFile}
+					activeFileFullyStaged={activeFileFullyStaged}
+					activeFileIndex={diff.activeFileIndex}
+					bulkStageBusy={staging.bulkBusy !== null}
+					canNavigateNextHunk={diff.canNavigateNextHunk}
+					canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
+					fileCount={workspace.files.length}
+					onNavigateFile={diff.navigateFile}
+					onNavigateHunk={diff.navigateHunk}
+					onReview={() =>
+						diff.activeFile &&
+						void review.setReviewed(diff.activeFile, !diff.activeFile.reviewed, true)
+					}
+					onToggleStage={() => void staging.toggleActiveFile()}
+					reviewBusy={review.busy}
+					stageBusy={staging.busy}
+				/>
+			</View>
+		</View>
 	);
 }

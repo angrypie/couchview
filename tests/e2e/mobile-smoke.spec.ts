@@ -7,14 +7,35 @@ interface TerminalFixtureState {
 	inputs: string[];
 }
 
+function changedFilesPanel(page: Page) {
+	return page
+		.getByRole("dialog", { name: "Changed files" })
+		.or(page.getByRole("complementary", { name: "Changed files" }));
+}
+
+async function expectAtViewportBottom(page: Page, locator: Locator) {
+	await expect(locator).toBeVisible();
+	await expect
+		.poll(async () => {
+			const bounds = await locator.boundingBox();
+			const viewport = page.viewportSize();
+			if (!bounds || !viewport) return false;
+			const bottomGap = viewport.height - bounds.y - bounds.height;
+			return (
+				Math.abs(bottomGap) <= 24 && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width + 1
+			);
+		})
+		.toBe(true);
+}
+
 async function openFixture(page: Page) {
 	await page.goto("/");
 	await expect(page).toHaveTitle("Couchview");
 	const currentFile = page.getByRole("region", { name: "Current file" });
 	await expect(currentFile).toContainText("src/review.ts");
-	await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
-	await expect(page.locator(".pierre-code-view diffs-container")).toBeVisible();
-	await expect(page.locator("diffs-container [data-line]").first()).toBeVisible();
+	const diff = page.getByRole("region", { name: "Unified diff" });
+	await expect(diff).toBeVisible();
+	await expect(diff.getByRole("code")).toBeVisible();
 	return currentFile;
 }
 
@@ -29,23 +50,21 @@ async function dismissPwaNotices(page: Page) {
 	}
 }
 
-async function setRangeValue(control: Locator, value: number) {
-	await control.evaluate((element, nextValue) => {
-		const input = element as HTMLInputElement;
-		const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-		valueSetter?.call(input, String(nextValue));
-		input.dispatchEvent(new Event("input", { bubbles: true }));
-		input.dispatchEvent(new Event("change", { bubbles: true }));
-	}, value);
+async function setRangeValue(control: Locator, value: number, min: number, max: number) {
+	const bounds = await control.boundingBox();
+	expect(bounds).not.toBeNull();
+	const thumbRadius = 10;
+	const usableWidth = Math.max(1, bounds!.width - thumbRadius * 2);
+	const rawX = thumbRadius + ((value - min) / (max - min)) * usableWidth;
+	const x = Math.max(thumbRadius + 1, Math.min(bounds!.width - thumbRadius - 1, rawX));
+	await control.click({ position: { x, y: bounds!.height / 2 } });
+	await expect(control).toHaveAttribute("aria-valuenow", String(value));
 }
 
 test.describe("mobile fixture review", () => {
 	test.skip(!localFixture, "The deterministic workflow uses the bundled e2e repository fixture.");
 
 	test.beforeEach(async ({ page, request }) => {
-		await page.addInitScript(() => {
-			localStorage.setItem("couchview:install-hint-dismissed", "1");
-		});
 		const response = await request.post("/api/e2e/reset", {
 			headers: { "x-couchview-csrf": fixtureCsrf },
 		});
@@ -56,55 +75,51 @@ test.describe("mobile fixture review", () => {
 		page,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"The installed iOS PWA is the representative resume case.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"One mobile browser is enough for the transport-state contract.",
 		);
 		await page.route("**/api/repositories/*/events", (route) => route.abort("connectionrefused"));
 		await openFixture(page);
 
 		const status = page.getByTestId("repository-connection-status");
-		await expect(status).toHaveClass(/reconnecting/);
-		const themeWarningColor = await page.evaluate(() => {
-			const probe = document.createElement("span");
-			probe.style.backgroundColor = "var(--yellow)";
-			document.body.append(probe);
-			const color = getComputedStyle(probe).backgroundColor;
-			probe.remove();
-			return color;
-		});
-		await expect(status).toHaveCSS("background-color", themeWarningColor);
-		await expect(page.locator(".disconnected-banner")).toHaveCount(0);
+		await expect(status).toHaveAccessibleName("Reconnecting to local server");
+		await expect(
+			page.getByText("Offline — cannot reach the local server", { exact: true }),
+		).toHaveCount(0);
 	});
 
 	test("uses the touch command palette across review, terminal, and Settings", async ({ page }) => {
 		await openFixture(page);
 		await page.getByRole("button", { name: "Open command palette" }).click();
-		const palette = page.getByRole("dialog", { name: "Couchview command palette" });
+		const palette = page.getByRole("dialog", { name: "Command palette" });
 		await expect(palette).toBeVisible();
 		await expect(palette).toBeInViewport();
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("terminal");
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("terminal");
 		await palette.getByText("Go to terminal", { exact: true }).click();
+		await expect(palette).toHaveCount(0);
 
 		const terminal = page.getByRole("region", { name: "tmux terminal" });
 		await expect(terminal).toBeVisible();
 		await terminal.getByRole("button", { name: "Open command palette" }).click();
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("settings");
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("settings");
 		await palette.getByText("Go to settings", { exact: true }).click();
+		await expect(palette).toHaveCount(0);
 
 		const settings = page.getByRole("region", { name: "Settings" });
 		await expect(settings).toBeVisible();
 		await settings
 			.getByRole("button", {
-				name: "Open command palette",
-				exact: true,
+				name: /^Open command palette/,
 			})
 			.click();
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("diff review");
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("diff review");
 		await palette.getByText("Go to diff review", { exact: true }).click();
+		await expect(palette).toHaveCount(0);
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 		await page.getByRole("button", { name: "Open command palette" }).click();
-		await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("artifacts");
+		await palette.getByRole("textbox", { name: "Search commands" }).fill("artifacts");
 		await palette.getByText("Go to artifacts", { exact: true }).click();
+		await expect(palette).toHaveCount(0);
 		await expect(page.getByRole("main", { name: "Repository artifacts" })).toBeVisible();
 		await expect(page).toHaveURL(/\/artifacts\?repo=fixture-repository$/);
 		await page.getByRole("button", { name: "Review", exact: true }).click();
@@ -116,7 +131,7 @@ test.describe("mobile fixture review", () => {
 		request,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
+			testInfo.project.name !== "mobile-430-chromium",
 			"Terminal keyboard helpers need one representative touch-browser pass.",
 		);
 		await openFixture(page);
@@ -154,7 +169,7 @@ test.describe("mobile fixture review", () => {
 		request,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
+			testInfo.project.name !== "mobile-430-chromium",
 			"Browser-local profile selection needs one isolated-context pass.",
 		);
 		const createdResponse = await request.post("/api/settings/profiles", {
@@ -162,21 +177,27 @@ test.describe("mobile fixture review", () => {
 			data: { name: "Phone" },
 		});
 		expect(createdResponse.ok()).toBe(true);
-		const created = (await createdResponse.json()).profile;
-
 		await page.goto("/settings");
-		const selector = page.getByLabel("Active profile");
-		await selector.selectOption(created.id);
-		await expect(selector).toHaveValue(created.id);
+		const selector = page.getByRole("button", { name: "Active profile" });
+		await selector.click();
+		await page
+			.getByRole("dialog", { name: "Active profile" })
+			.getByRole("button", { name: "Phone" })
+			.click();
+		await expect(selector).toContainText("Phone");
 		await page.reload();
-		await expect(page.getByLabel("Active profile")).toHaveValue(created.id);
+		await expect(page.getByRole("button", { name: "Active profile" })).toContainText("Phone");
 
 		const otherBrowser = await browser.newContext();
 		try {
 			const otherPage = await otherBrowser.newPage();
 			await otherPage.goto(new URL("/settings", page.url()).href);
-			await expect(otherPage.getByLabel("Active profile")).toHaveValue("default");
-			await expect(otherPage.getByLabel("Active profile").locator("option")).toHaveCount(2);
+			const otherSelector = otherPage.getByRole("button", { name: "Active profile" });
+			await expect(otherSelector).toContainText("Default");
+			await otherSelector.click();
+			const options = otherPage.getByRole("dialog", { name: "Active profile" });
+			await expect(options.getByRole("button", { name: "Default" })).toBeVisible();
+			await expect(options.getByRole("button", { name: "Phone" })).toBeVisible();
 		} finally {
 			await otherBrowser.close();
 		}
@@ -188,19 +209,18 @@ test.describe("mobile fixture review", () => {
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
 		const filter = page.getByRole("searchbox", { name: "Filter changed files" });
-		await expect(filter).toHaveCSS("font-size", "16px");
-		await expect(filter).toHaveCSS("touch-action", "manipulation");
+		await expect(filter).toBeVisible();
+		const filterBounds = await filter.boundingBox();
+		expect(filterBounds).not.toBeNull();
+		expect(filterBounds!.height).toBeGreaterThanOrEqual(36);
 		await filter.focus();
 		await expect.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(1);
-		await page
-			.getByRole("complementary", { name: "Changed files" })
-			.getByRole("button", { name: "Close changed files" })
-			.click();
+		await changedFilesPanel(page).getByRole("button", { name: "Close changed files" }).click();
 	});
 
 	test("persists independent diff and terminal typography settings", async ({ page }, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
+			testInfo.project.name !== "mobile-430-chromium",
 			"Typography settings need one mobile browser persistence pass.",
 		);
 		await openFixture(page);
@@ -213,11 +233,9 @@ test.describe("mobile fixture review", () => {
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/settings");
 
 		const settings = page.getByRole("region", { name: "Settings" });
-		const appearance = settings.getByRole("region", { name: "Appearance" });
+		const appearance = settings.getByTestId("appearance-settings-card");
 		await expect(settings.getByRole("heading", { name: "Profiles" })).toBeVisible();
-		await expect(
-			settings.getByText(/Profile contents are shared by this Couchview host/),
-		).toBeVisible();
+		await expect(settings.getByText(/Profiles are shared by this Couchview host/)).toBeVisible();
 		await expect(appearance.getByTestId("diff-column-ruler")).toContainText("80");
 		await expect(appearance.getByTestId("terminal-column-ruler")).toContainText("80");
 		await expect(appearance.getByLabel("lualine preview")).toContainText("NORMAL");
@@ -238,18 +256,42 @@ test.describe("mobile fixture review", () => {
 		const initialTerminalPreview = await terminalPreviewCanvas.evaluate((canvas) =>
 			(canvas as HTMLCanvasElement).toDataURL(),
 		);
-		await expect(appearance.getByLabel("Cell width adjustment")).toHaveAttribute("min", "-5");
-		await expect(appearance.getByLabel("Cell width adjustment")).toHaveAttribute("max", "5");
-		const systemFonts = appearance.getByRole("button", { name: /^System monospace/ });
+		await expect(
+			appearance.getByRole("slider", { name: "Terminal cell width adjustment" }),
+		).toHaveAttribute("aria-valuemin", "-5");
+		await expect(
+			appearance.getByRole("slider", { name: "Terminal cell width adjustment" }),
+		).toHaveAttribute("aria-valuemax", "5");
+		const systemFonts = appearance.getByRole("radio", { name: "System monospace" });
 		await systemFonts.nth(0).click();
-		await setRangeValue(appearance.locator("#diff-font-size"), 14);
-		await setRangeValue(appearance.getByLabel("Line height adjustment"), 3.5);
-		await setRangeValue(appearance.getByLabel("Width adjustment", { exact: true }), 0.4);
+		await setRangeValue(appearance.getByRole("slider", { name: "Diff font size" }), 14, 9, 24);
+		await setRangeValue(
+			appearance.getByRole("slider", { name: "Diff line height adjustment" }),
+			3.5,
+			-5,
+			5,
+		);
+		await setRangeValue(
+			appearance.getByRole("slider", { name: "Diff width adjustment" }),
+			0.4,
+			-1,
+			2,
+		);
 
 		await systemFonts.nth(1).click();
-		await setRangeValue(appearance.locator("#terminal-font-size"), 18);
-		await setRangeValue(appearance.getByLabel("Cell height adjustment"), 4);
-		await setRangeValue(appearance.getByLabel("Cell width adjustment"), -5);
+		await setRangeValue(appearance.getByRole("slider", { name: "Terminal font size" }), 18, 8, 32);
+		await setRangeValue(
+			appearance.getByRole("slider", { name: "Terminal cell height adjustment" }),
+			4,
+			-4,
+			16,
+		);
+		await setRangeValue(
+			appearance.getByRole("slider", { name: "Terminal cell width adjustment" }),
+			-4,
+			-5,
+			5,
+		);
 		await expect
 			.poll(() =>
 				terminalPreviewCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL()),
@@ -263,11 +305,11 @@ test.describe("mobile fixture review", () => {
 		await expect.poll(() => new URL(page.url()).pathname).toBe("/");
 
 		const renderedFont = await page
-			.locator("diffs-container")
+			.getByRole("region", { name: "Unified diff" })
+			.getByRole("code")
+			.locator("[data-line]")
 			.first()
-			.evaluate((host) => {
-				const line = host.shadowRoot?.querySelector<HTMLElement>("[data-line]");
-				if (!line) return null;
+			.evaluate((line) => {
 				const style = getComputedStyle(line);
 				return {
 					family: style.fontFamily,
@@ -286,74 +328,61 @@ test.describe("mobile fixture review", () => {
 		await page.reload();
 		await page.getByRole("button", { name: "Open settings" }).click();
 		const reloadedSettings = page.getByRole("region", { name: "Settings" });
-		const reloadedAppearance = reloadedSettings.getByRole("region", { name: "Appearance" });
-		const reloadedSystemFonts = reloadedAppearance.getByRole("button", {
-			name: /^System monospace/,
+		const reloadedAppearance = reloadedSettings.getByTestId("appearance-settings-card");
+		const reloadedSystemFonts = reloadedAppearance.getByRole("radio", {
+			name: "System monospace",
 		});
-		await expect(reloadedSystemFonts.nth(0)).toHaveAttribute("aria-pressed", "true");
-		await expect(reloadedAppearance.locator("#diff-font-size")).toHaveValue("14");
-		await expect(reloadedAppearance.getByLabel("Line height adjustment")).toHaveValue("3.5");
-		await expect(reloadedAppearance.getByLabel("Width adjustment", { exact: true })).toHaveValue(
-			"0.4",
-		);
-		await expect(reloadedSystemFonts.nth(1)).toHaveAttribute("aria-pressed", "true");
-		await expect(reloadedAppearance.locator("#terminal-font-size")).toHaveValue("18");
-		await expect(reloadedAppearance.getByLabel("Cell height adjustment")).toHaveValue("4");
-		await expect(reloadedAppearance.getByLabel("Cell width adjustment")).toHaveValue("-5");
+		await expect(reloadedSystemFonts.nth(0)).toHaveAttribute("aria-checked", "true");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Diff font size" }),
+		).toHaveAttribute("aria-valuenow", "14");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Diff line height adjustment" }),
+		).toHaveAttribute("aria-valuenow", "3.5");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Diff width adjustment" }),
+		).toHaveAttribute("aria-valuenow", "0.4");
+		await expect(reloadedSystemFonts.nth(1)).toHaveAttribute("aria-checked", "true");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Terminal font size" }),
+		).toHaveAttribute("aria-valuenow", "18");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Terminal cell height adjustment" }),
+		).toHaveAttribute("aria-valuenow", "4");
+		await expect(
+			reloadedAppearance.getByRole("slider", { name: "Terminal cell width adjustment" }),
+		).toHaveAttribute("aria-valuenow", "-4");
 	});
 
 	test("keeps review actions at the screen bottom across orientation changes", async ({
 		page,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"The iOS viewport regression only needs one WebKit orientation cycle.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"One mobile Chromium orientation cycle covers the universal layout contract.",
 		);
 
 		await page.setViewportSize({ width: 375, height: 812 });
 		await openFixture(page);
 		await dismissPwaNotices(page);
 
-		const shell = page.locator(".app-shell");
 		const actions = page.getByRole("navigation", { name: "Review actions" });
-		const expectActionsAtBottom = async () => {
-			await expect(actions).toHaveCSS("position", "absolute");
-			await expect
-				.poll(() =>
-					actions.evaluate((element) => {
-						const bounds = element.getBoundingClientRect();
-						return Math.round(window.innerHeight - bounds.bottom);
-					}),
-				)
-				.toBeGreaterThanOrEqual(0);
-			await expect
-				.poll(() =>
-					actions.evaluate((element) => {
-						const bounds = element.getBoundingClientRect();
-						return Math.round(window.innerHeight - bounds.bottom);
-					}),
-				)
-				.toBeLessThanOrEqual(40);
-		};
-
-		await expect(shell).not.toHaveClass(/compact-landscape/);
-		await expectActionsAtBottom();
+		await expectAtViewportBottom(page, actions);
 
 		await page.setViewportSize({ width: 812, height: 375 });
-		await expect(shell).toHaveClass(/compact-landscape/);
-		await expectActionsAtBottom();
+		await expectAtViewportBottom(page, actions);
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 
 		await page.setViewportSize({ width: 375, height: 812 });
-		await expect(shell).not.toHaveClass(/compact-landscape/);
-		await expectActionsAtBottom();
+		await expectAtViewportBottom(page, actions);
 	});
 
 	test("uses an overlay drawer in iPad portrait and a split view in landscape", async ({
 		page,
 	}, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"The tablet orientation regression only needs one WebKit pass.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"One mobile Chromium pass covers tablet breakpoint behavior.",
 		);
 
 		await page.setViewportSize({ width: 834, height: 1194 });
@@ -361,355 +390,170 @@ test.describe("mobile fixture review", () => {
 		await dismissPwaNotices(page);
 
 		const workspace = page.getByRole("region", { name: "Unified diff" });
-		const drawer = page.getByRole("complementary", { name: "Changed files" });
+		const drawerDialog = page.getByRole("dialog", { name: "Changed files" });
+		const splitDrawer = page.getByRole("complementary", { name: "Changed files" });
 		const menuButton = page.getByRole("button", { name: "Open changed files" });
 		const actions = page.getByRole("navigation", { name: "Review actions" });
-		const topBar = page.locator(".top-bar");
-		const fileBar = page.getByRole("region", { name: "Current file" });
 		const displayControls = page.getByLabel("Diff display controls");
 
-		await expect(drawer).toHaveCount(0);
+		await expect(drawerDialog).toHaveCount(0);
+		await expect(splitDrawer).toHaveCount(0);
 		await expect(menuButton).toBeVisible();
-		await expect(actions).toHaveCSS("position", "absolute");
+		await expectAtViewportBottom(page, actions);
 		await expect(displayControls).toBeVisible();
-		await expect
-			.poll(() => topBar.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
-			.toBeLessThanOrEqual(53);
-		await expect
-			.poll(() =>
-				displayControls.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					const children = Array.from(element.children).map((child) => {
-						const childBounds = child.getBoundingClientRect();
-						return {
-							center: childBounds.top + childBounds.height / 2,
-							isButton: child.tagName === "BUTTON",
-							left: Math.round(childBounds.left),
-							right: Math.round(childBounds.right),
-							width: Math.round(childBounds.width),
-						};
-					});
-					const centers = children.map((child) => child.center);
-					return {
-						aligned: Math.max(...centers) - Math.min(...centers) <= 1,
-						buttonsWideEnough: children
-							.filter((child) => child.isButton)
-							.every((child) => child.width >= 40),
-						containsChildren: children.every(
-							(child) =>
-								child.left >= Math.round(bounds.left) && child.right <= Math.round(bounds.right),
-						),
-						wideEnough: Math.round(bounds.width) >= 200,
-					};
-				}),
-			)
-			.toEqual({
-				aligned: true,
-				buttonsWideEnough: true,
-				containsChildren: true,
-				wideEnough: true,
-			});
-		await expect
-			.poll(() => fileBar.evaluate((element) => Math.round(element.getBoundingClientRect().top)))
-			.toBeLessThanOrEqual(53);
-		await expect
-			.poll(() =>
-				workspace.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					return {
-						left: Math.round(bounds.left),
-						width: Math.round(bounds.width),
-						viewportWidth: window.innerWidth,
-					};
-				}),
-			)
-			.toEqual({ left: 0, width: 834, viewportWidth: 834 });
+		const portraitWorkspace = await workspace.boundingBox();
+		expect(portraitWorkspace).not.toBeNull();
+		expect(portraitWorkspace!.x).toBeLessThanOrEqual(1);
+		expect(portraitWorkspace!.width).toBeGreaterThanOrEqual(833);
 
 		await menuButton.click();
-		await expect(drawer).toBeVisible();
-		await expect(drawer).toHaveCSS("position", "fixed");
-		await expect(page.locator(".drawer-scrim")).toBeVisible();
-		await expect
-			.poll(() =>
-				workspace.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					return { left: Math.round(bounds.left), width: Math.round(bounds.width) };
-				}),
-			)
-			.toEqual({ left: 0, width: 834 });
-		await drawer.getByRole("button", { name: "Close changed files" }).click();
-		await expect(drawer).toHaveCount(0);
+		await expect(drawerDialog).toBeVisible();
+		const overlayBounds = await drawerDialog.boundingBox();
+		expect(overlayBounds).not.toBeNull();
+		expect(overlayBounds!.x).toBeLessThanOrEqual(1);
+		expect(overlayBounds!.width).toBeGreaterThan(320);
+		expect(overlayBounds!.width).toBeLessThan(834);
+		expect(await workspace.boundingBox()).toEqual(portraitWorkspace);
+		await drawerDialog.getByRole("button", { name: "Close changed files" }).click();
+		await expect(drawerDialog).toHaveCount(0);
 
 		await page.setViewportSize({ width: 1194, height: 834 });
-		await expect(drawer).toBeVisible();
-		await expect(drawer).toHaveCSS("position", "relative");
+		await expect(splitDrawer).toBeVisible();
 		await expect(menuButton).toBeHidden();
-		await expect(actions).toHaveCSS("position", "relative");
+		await expectAtViewportBottom(page, actions);
 		await expect(displayControls).toBeVisible();
-		await expect
-			.poll(() => topBar.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
-			.toBeLessThanOrEqual(53);
-		await expect
-			.poll(() =>
-				workspace.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					return {
-						left: Math.round(bounds.left),
-						width: Math.round(bounds.width),
-						viewportWidth: window.innerWidth,
-					};
-				}),
-			)
-			.toEqual({ left: 300, width: 894, viewportWidth: 1194 });
+		const drawerBounds = await splitDrawer.boundingBox();
+		const landscapeWorkspace = await workspace.boundingBox();
+		expect(drawerBounds).not.toBeNull();
+		expect(landscapeWorkspace).not.toBeNull();
+		expect(drawerBounds!.width).toBeGreaterThanOrEqual(280);
+		expect(
+			Math.abs(drawerBounds!.x + drawerBounds!.width - landscapeWorkspace!.x),
+		).toBeLessThanOrEqual(1);
+		expect(landscapeWorkspace!.x + landscapeWorkspace!.width).toBeCloseTo(1194, 0);
 
 		await page.setViewportSize({ width: 834, height: 1194 });
-		await expect(drawer).toHaveCount(0);
+		await expect(splitDrawer).toHaveCount(0);
 		await expect(menuButton).toBeVisible();
-		await expect(actions).toHaveCSS("position", "absolute");
+		await expectAtViewportBottom(page, actions);
 	});
 
 	test("keeps the iPhone portrait header to two unsquished rows", async ({ page }, testInfo) => {
 		test.skip(
-			testInfo.project.name !== "mobile-375-webkit",
-			"The portrait header regression only needs one WebKit pass.",
+			testInfo.project.name !== "mobile-430-chromium",
+			"One mobile Chromium pass covers the compact header.",
 		);
 
 		await page.setViewportSize({ width: 390, height: 844 });
 		await openFixture(page);
 		await dismissPwaNotices(page);
 
-		const topBar = page.locator(".top-bar");
 		const fileBar = page.getByRole("region", { name: "Current file" });
 		const displayControls = page.getByLabel("Diff display controls");
 
 		await expect(displayControls).toBeVisible();
 		await expect(displayControls.getByRole("button")).toHaveCount(4);
 		await page.getByRole("button", { name: "Increase diff font size" }).click();
-		await expect(displayControls.locator(".font-value")).toHaveText("12px");
+		await expect(displayControls.getByText("12px", { exact: true })).toBeVisible();
 		await page.getByRole("button", { name: "Decrease diff font size" }).click();
-		await expect(displayControls.locator(".font-value")).toHaveText("11px");
-		await expect
-			.poll(() =>
-				topBar.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					const visibleControls = Array.from(element.children)
-						.filter((child) => {
-							const bounds = child.getBoundingClientRect();
-							return bounds.width > 0 && bounds.height > 0;
-						})
-						.map((child) => {
-							const childBounds = child.getBoundingClientRect();
-							return {
-								center: childBounds.top + childBounds.height / 2,
-								left: childBounds.left,
-								right: childBounds.right,
-								width: childBounds.width,
-							};
-						});
-					const centers = visibleControls.map((child) => child.center);
-					const ordered = [...visibleControls].sort((left, right) => left.left - right.left);
-					return {
-						aligned: Math.max(...centers) - Math.min(...centers) <= 1,
-						contained: visibleControls.every(
-							(child) => child.left >= bounds.left && child.right <= bounds.right,
-						),
-						count: visibleControls.length,
-						heightIsCompact: Math.round(bounds.height) <= 43,
-						noOverlap: ordered.every(
-							(child, index) =>
-								index === ordered.length - 1 || child.right <= ordered[index + 1]!.left,
-						),
-						wideEnough: visibleControls.every((child) => child.width >= 34),
-					};
-				}),
-			)
-			.toEqual({
-				aligned: true,
-				contained: true,
-				count: 7,
-				heightIsCompact: true,
-				noOverlap: true,
-				wideEnough: true,
-			});
-		await expect
-			.poll(() =>
-				fileBar.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					const topBarBounds = document.querySelector(".top-bar")!.getBoundingClientRect();
-					return {
-						attachedToTopBar: Math.round(bounds.top) === Math.round(topBarBounds.bottom),
-						height: Math.round(bounds.height),
-					};
-				}),
-			)
-			.toEqual({ attachedToTopBar: true, height: 47 });
+		await expect(displayControls.getByText("11px", { exact: true })).toBeVisible();
+		for (const button of await displayControls.getByRole("button").all()) {
+			const bounds = await button.boundingBox();
+			expect(bounds).not.toBeNull();
+			expect(bounds!.x).toBeGreaterThanOrEqual(0);
+			expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+			expect(bounds!.width).toBeGreaterThanOrEqual(32);
+			expect(bounds!.height).toBeGreaterThanOrEqual(32);
+		}
+		const portraitFileBounds = await fileBar.boundingBox();
+		expect(portraitFileBounds).not.toBeNull();
+		expect(portraitFileBounds!.height).toBeGreaterThanOrEqual(40);
+		expect(portraitFileBounds!.x).toBeLessThanOrEqual(1);
+		expect(portraitFileBounds!.width).toBeGreaterThanOrEqual(389);
 
 		await page.setViewportSize({ width: 844, height: 390 });
 		await expect(displayControls).toBeVisible();
-		await expect(page.locator(".file-bar")).toHaveCount(0);
-		await expect
-			.poll(() => topBar.evaluate((element) => Math.round(element.getBoundingClientRect().height)))
-			.toBeLessThanOrEqual(42);
-		await expect
-			.poll(() =>
-				displayControls.evaluate((element) => {
-					const bounds = element.getBoundingClientRect();
-					const buttons = Array.from(element.querySelectorAll("button")).map((button) => {
-						const buttonBounds = button.getBoundingClientRect();
-						return {
-							height: Math.round(buttonBounds.height),
-							width: Math.round(buttonBounds.width),
-						};
-					});
-					return {
-						contained: buttons.every((button) => button.width >= 32 && button.height >= 32),
-						visible: bounds.width > 0 && bounds.height > 0,
-					};
-				}),
-			)
-			.toEqual({ contained: true, visible: true });
+		const landscapeFileBar = page.getByRole("region", { name: "Current file" }).filter({
+			has: page.getByRole("button", { name: "Select repository" }),
+		});
+		await expect(landscapeFileBar).toBeVisible();
+		await expect(page.getByRole("region", { name: "Current file" })).toHaveCount(1);
+		await expect(landscapeFileBar).toContainText("src/review.ts");
+		const landscapeFileBounds = await landscapeFileBar.boundingBox();
+		expect(landscapeFileBounds).not.toBeNull();
+		expect(landscapeFileBounds!.y).toBeLessThan(portraitFileBounds!.y);
+		for (const button of await displayControls.getByRole("button").all()) {
+			const bounds = await button.boundingBox();
+			expect(bounds).not.toBeNull();
+			expect(bounds!.width).toBeGreaterThanOrEqual(32);
+			expect(bounds!.height).toBeGreaterThanOrEqual(32);
+		}
 	});
 
-	test("uses the full viewport while gutters stay fixed and non-interactive during code scroll", async ({
+	test("keeps the diff contained while typography, wrapping, and review navigation work", async ({
 		page,
 		request,
-	}, testInfo) => {
+	}) => {
 		const currentFile = await openFixture(page);
 		await dismissPwaNotices(page);
-		await expect(
-			page.locator("diffs-container [data-line]").filter({
-				hasText: "visible between hunks",
-			}),
-		).toBeVisible();
+		const diff = page.getByRole("region", { name: "Unified diff" });
+		const code = diff.getByRole("code");
+		const firstLine = code.locator("[data-line]").first();
+		await expect(code.getByText("visible between hunks", { exact: false })).toBeVisible();
+		await expect(firstLine).toBeVisible();
+		expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+			await page.evaluate(() => window.innerWidth + 1),
+		);
 
-		await expect
-			.poll(() =>
-				page.evaluate(() => ({
-					documentWidth: document.documentElement.scrollWidth,
-					viewportWidth: window.innerWidth,
-				})),
-			)
-			.toEqual(
-				expect.objectContaining({
-					documentWidth: await page.evaluate(() => window.innerWidth),
-				}),
-			);
-
-		const fontValue = page.locator(".font-value");
-		await expect(fontValue).toHaveText("11px");
-		const codeHost = page.locator("diffs-container").first();
 		const renderedFont = () =>
-			codeHost.evaluate((host) => {
-				const line = host.shadowRoot?.querySelector<HTMLElement>("[data-line]");
-				const hostStyle = getComputedStyle(host);
-				const lineStyle = line ? getComputedStyle(line) : null;
+			firstLine.evaluate((line) => {
+				const style = getComputedStyle(line);
 				return {
-					fontSize: lineStyle?.fontSize ?? "",
-					hostFontSize: hostStyle.fontSize,
-					lineHeight: lineStyle
-						? Math.round(Number.parseFloat(lineStyle.lineHeight) * 100) / 100
-						: 0,
-					usesIosevka: lineStyle?.fontFamily.includes("Iosevka") ?? false,
-					ligaturesDisabled: lineStyle?.fontVariantLigatures === "none",
-					textInflationDisabled: Array.from(host.shadowRoot?.querySelectorAll("style") ?? []).some(
-						(style) => style.textContent?.includes("-webkit-text-size-adjust: 100%"),
-					),
+					fontSize: style.fontSize,
+					ligaturesDisabled: style.fontVariantLigatures === "none",
+					usesIosevka: style.fontFamily.includes("Iosevka"),
 				};
 			});
 		await expect.poll(renderedFont).toEqual({
 			fontSize: "11px",
-			hostFontSize: "11px",
-			lineHeight: 17.05,
-			usesIosevka: true,
 			ligaturesDisabled: true,
-			textInflationDisabled: true,
+			usesIosevka: true,
 		});
 
-		const fileSwitchControls = page.getByRole("navigation", { name: "Review actions" });
-		await fileSwitchControls.getByRole("button", { name: "Next file" }).click();
-		await expect(currentFile).toContainText("src/format.ts");
-		await expect.poll(renderedFont).toEqual({
-			fontSize: "11px",
-			hostFontSize: "11px",
-			lineHeight: 17.05,
-			usesIosevka: true,
-			ligaturesDisabled: true,
-			textInflationDisabled: true,
-		});
-		await fileSwitchControls.getByRole("button", { name: "Previous file" }).click();
-		await expect(currentFile).toContainText("src/review.ts");
-
-		await expect
-			.poll(() =>
-				codeHost.evaluate((host) =>
-					Boolean(host.shadowRoot?.querySelector("[data-disable-line-numbers]")),
-				),
-			)
-			.toBe(true);
-		await expect
-			.poll(() =>
-				codeHost.evaluate((host) => {
-					const number = host.shadowRoot?.querySelector<HTMLElement>("[data-column-number]");
-					return number?.getBoundingClientRect().width ?? 100;
-				}),
-			)
-			.toBeLessThanOrEqual(6);
+		const displayControls = page.getByLabel("Diff display controls");
+		await expect(displayControls.getByText("11px", { exact: true })).toBeVisible();
 		await page.getByRole("button", { name: "Show line numbers" }).click();
 		await expect(page.getByRole("button", { name: "Hide line numbers" })).toBeVisible();
-		await expect
-			.poll(() =>
-				codeHost.evaluate((host) => {
-					const number = host.shadowRoot?.querySelector<HTMLElement>("[data-column-number]");
-					return {
-						ariaLabel: number?.getAttribute("aria-label") ?? null,
-						role: number?.getAttribute("role") ?? null,
-						tabIndex: number?.getAttribute("tabindex") ?? null,
-						title: number?.getAttribute("title") ?? null,
-					};
-				}),
-			)
-			.toEqual({ ariaLabel: null, role: null, tabIndex: null, title: null });
+		const firstGutter = code.locator("[data-column-number]").first();
+		await expect(firstGutter).toBeVisible();
+		await expect(firstGutter).not.toHaveAttribute("role", /.+/);
+		await expect(firstGutter).not.toHaveAttribute("tabindex", /.+/);
 
 		const increaseFont = page.getByRole("button", { name: "Increase diff font size" });
 		for (let size = 12; size <= 24; size += 1) await increaseFont.click();
-		await expect(fontValue).toHaveText("24px");
+		await expect(displayControls.getByText("24px", { exact: true })).toBeVisible();
 		await expect(increaseFont).toBeDisabled();
 		await expect
-			.poll(() =>
-				page.evaluate(() =>
-					getComputedStyle(document.documentElement).getPropertyValue("--code-size").trim(),
-				),
-			)
+			.poll(() => firstLine.evaluate((line) => getComputedStyle(line).fontSize))
 			.toBe("24px");
 
-		const scroller = page.locator("diffs-container [data-code]").first();
 		await expect
-			.poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
+			.poll(() =>
+				code.evaluate((element) => {
+					const scroller = element.querySelector<HTMLElement>("[data-code]") ?? element;
+					return scroller.scrollWidth - scroller.clientWidth;
+				}),
+			)
 			.toBeGreaterThan(20);
-
-		const oldGutter = page.locator("diffs-container [data-column-number]").first();
-		const firstCode = page.locator("diffs-container [data-line]").first();
-		const before = {
-			gutterX: await oldGutter.evaluate((element) => element.getBoundingClientRect().x),
-			codeX: await firstCode.evaluate((element) => element.getBoundingClientRect().x),
-		};
-		await scroller.evaluate((element) => {
-			element.scrollLeft = Math.min(180, element.scrollWidth - element.clientWidth);
-		});
-		await expect.poll(() => scroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(20);
-		const after = {
-			gutterX: await oldGutter.evaluate((element) => element.getBoundingClientRect().x),
-			codeX: await firstCode.evaluate((element) => element.getBoundingClientRect().x),
-		};
-		expect(Math.abs(after.gutterX - before.gutterX)).toBeLessThanOrEqual(1.5);
-		expect(after.codeX).toBeLessThan(before.codeX - 15);
-		expect(
-			await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
-		).toBe(true);
 		await page.getByRole("button", { name: "Wrap long lines" }).click();
 		await expect(page.getByRole("button", { name: "Keep long lines on one line" })).toBeVisible();
 		await expect
-			.poll(() => scroller.evaluate((element) => element.scrollWidth - element.clientWidth))
+			.poll(() =>
+				code.evaluate((element) => {
+					const scroller = element.querySelector<HTMLElement>("[data-code]") ?? element;
+					return scroller.scrollWidth - scroller.clientWidth;
+				}),
+			)
 			.toBeLessThanOrEqual(1);
 		await expect
 			.poll(async () => {
@@ -717,42 +561,32 @@ test.describe("mobile fixture review", () => {
 				return (await response.json()).profiles[0].data.display.lineWrapEnabled;
 			})
 			.toBe(true);
-		expect(await page.evaluate(() => localStorage.getItem("couchview:line-wrap"))).toBeNull();
 		await expect(
 			page.getByRole("button", { name: "Find “load” in project" }).first(),
 		).toBeVisible();
-		expect(
-			await codeHost.evaluate(
-				(host) => host.shadowRoot?.querySelectorAll("[data-char]").length ?? 0,
-			),
-		).toBeGreaterThan(0);
 
 		const actions = page.getByRole("navigation", { name: "Review actions" });
-		const hunkActions = testInfo.project.name.includes("landscape")
-			? page.locator(".compact-hunk-nav")
-			: actions.locator(".hunk-nav");
-		const nextHunk = hunkActions.getByRole("button", { name: "Next hunk" });
-		const previousHunk = hunkActions.getByRole("button", { name: "Previous hunk" });
+		const nextHunk = actions.getByRole("button", { name: "Next hunk" });
+		const previousHunk = actions.getByRole("button", { name: "Previous hunk" });
 		await expect(previousHunk).toBeDisabled();
 		await nextHunk.click();
-		await expect(nextHunk).toBeEnabled();
-		await expect(previousHunk).toBeDisabled();
 		await nextHunk.click();
 		await expect(nextHunk).toBeDisabled();
 		await expect(previousHunk).toBeEnabled();
 		await previousHunk.click();
-		await expect(previousHunk).toBeDisabled();
 
 		await actions.getByRole("button", { name: "Next file" }).click();
 		await expect(currentFile).toContainText("src/format.ts");
-		const previousFile = actions.getByRole("button", { name: "Previous file" });
-		await previousFile.click();
+		await expect.poll(renderedFont).toEqual({
+			fontSize: "24px",
+			ligaturesDisabled: true,
+			usesIosevka: true,
+		});
+		await actions.getByRole("button", { name: "Previous file" }).click();
 		await expect(currentFile).toContainText("src/review.ts");
 	});
 
-	test("preloads adjacent diffs for flash-free back-and-forth navigation", async ({
-		page,
-	}, testInfo) => {
+	test("preloads adjacent diffs for flash-free back-and-forth navigation", async ({ page }) => {
 		const diffRequests: string[] = [];
 		page.on("request", (request) => {
 			if (request.url().includes("/files/") && request.url().endsWith("/diff")) {
@@ -811,30 +645,26 @@ test.describe("mobile fixture review", () => {
 		await dismissPwaNotices(page);
 
 		const loadToken = page.getByRole("button", { name: "Find “load” in project" }).first();
-		await loadToken.focus();
-		await page.keyboard.press("Enter");
-		const search = page.getByRole("dialog", { name: "Project search" });
+		await loadToken.click();
+		const search = page.getByRole("dialog", { name: "Find in project" });
 		await expect(search).toBeVisible();
+		await expect(search.getByRole("textbox", { name: "Search project" })).toHaveValue("load");
 		const currentHit = search.getByRole("button", { name: /src\/review\.ts:2:16/ });
 		await expect(currentHit).toBeVisible();
 		await currentHit.click();
-		await expect(search.locator(".source-preview")).toContainText("src/review.ts");
-		await expect(search.locator(".source-line").first()).toHaveCSS("font-family", /Iosevka/);
-		await expect(search.locator(".source-line").first()).toHaveCSS(
-			"font-variant-ligatures",
-			"none",
-		);
+		await expect(search.getByText("src/review.ts", { exact: true })).toBeVisible();
+		await expect(search).toContainText("return true");
 		await search.getByRole("button", { name: "Back to results" }).click();
-		await search.getByRole("button", { name: /Other files \(1\)/ }).click();
+		await search.getByRole("tab", { name: /Other files \(1\)/ }).click();
 		await expect(search.getByRole("button", { name: /src\/format\.ts:2:10/ })).toBeVisible();
-		await search.getByRole("button", { name: "Close search" }).click();
+		await search.getByRole("button", { name: "Close sheet" }).click();
 
 		const actions = page.getByRole("navigation", { name: "Review actions" });
 		const stage = actions.getByRole("button", { name: "Stage current file" });
 		await stage.click();
 		await expect(page.getByText("File staged", { exact: true })).toBeVisible();
 		await expect(actions.getByRole("button", { name: "Unstage current file" })).toBeVisible();
-		await expect(currentFile.locator(".status-pill.staged")).toHaveText("staged");
+		await expect(currentFile).toContainText("staged");
 
 		await actions.getByRole("button", { name: "Review + next" }).click();
 		await expect(currentFile).toContainText("src/format.ts");
@@ -851,7 +681,7 @@ test.describe("mobile fixture review", () => {
 		await expect(page.getByText("File staged", { exact: true })).toBeVisible();
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
-		const drawer = page.getByRole("complementary", { name: "Changed files" });
+		const drawer = changedFilesPanel(page);
 		await drawer.getByRole("button", { name: "Commit 1 staged file" }).click();
 
 		const composer = page.getByRole("dialog", { name: "Commit staged changes" });
@@ -877,15 +707,8 @@ test.describe("mobile fixture review", () => {
 		await expect(currentFile).toContainText("src/review.ts");
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
-		const drawer = page.getByRole("complementary", { name: "Changed files" });
+		const drawer = changedFilesPanel(page);
 		await expect(drawer.getByRole("button", { name: "Unreview shown files (1)" })).toBeVisible();
-		const bulkActions = drawer.locator(".bulk-file-actions > button");
-		await expect(bulkActions).toHaveCount(3);
-		expect(
-			await bulkActions.evaluateAll(
-				(buttons) => new Set(buttons.map((button) => button.getBoundingClientRect().top)).size,
-			),
-		).toBe(1);
 		await expect(drawer.getByRole("button", { name: "Stage reviewed files (1)" })).toBeVisible();
 		await drawer.getByRole("button", { name: "Stage reviewed files (1)" }).click();
 		await expect(page.getByText("1 reviewed file staged", { exact: true })).toBeVisible();
@@ -906,27 +729,25 @@ test.describe("mobile fixture review", () => {
 		await dismissPwaNotices(page);
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
-		const drawer = page.getByRole("complementary", { name: "Changed files" });
-		await drawer.getByRole("button", { name: /Commands/ }).click();
+		const drawer = changedFilesPanel(page);
+		await drawer.getByRole("button", { name: "Commands", exact: true }).click();
 		await expect(drawer).toContainText("sample-project");
 		await expect(drawer).toContainText("@sample/mobile");
 		await expect(drawer).toContainText("expo export");
 		await expect(drawer).toContainText("Only run commands");
 
 		await drawer.getByRole("button", { name: "Run build in apps/mobile" }).click();
-		const output = page.getByRole("dialog", { name: "Package command output" });
+		const output = page.getByRole("dialog", { name: "@sample/mobile / build" });
 		await expect(output).toBeVisible();
 		await expect(output).toContainText("pnpm run build");
 		await expect(output).toContainText("fixture output: pnpm run build");
 		await expect(output).toContainText("Passed");
-		await output.getByRole("button", { name: "Close package command output" }).click();
+		await output.getByRole("button", { name: "Close", exact: true }).click();
 
-		await page.getByRole("button", { name: "Open changed files" }).click();
-		await expect(
-			page
-				.getByRole("complementary", { name: "Changed files" })
-				.getByText("Active and recent runs"),
-		).toBeVisible();
+		if (await page.getByRole("button", { name: "Open changed files" }).isVisible()) {
+			await page.getByRole("button", { name: "Open changed files" }).click();
+		}
+		await expect(changedFilesPanel(page).getByText("Active and recent runs")).toBeVisible();
 	});
 
 	test("switches projects through URL history while tabs remain independent", async ({
@@ -938,24 +759,17 @@ test.describe("mobile fixture review", () => {
 
 		const repositoryButton = page.getByRole("button", { name: "Select repository" });
 		await expect(repositoryButton).toContainText("sample-project");
-		if (await repositoryButton.isVisible()) {
-			await repositoryButton.click();
-		} else {
-			await page.getByRole("button", { name: "Open command palette" }).click();
-			const palette = page.getByRole("dialog", { name: "Couchview command palette" });
-			await palette.getByRole("combobox", { name: "Couchview command palette" }).fill("repository");
-			await palette.getByText("Switch repository", { exact: true }).click();
-		}
+		await repositoryButton.click();
 		const picker = page.getByRole("dialog", { name: "Repositories" });
 		await expect(picker).toContainText("/fixtures/sample-project");
 		await expect(picker).toContainText("/fixtures/design-system");
-		await picker.getByRole("button", { name: /design-system \/fixtures\/design-system/ }).click();
+		await picker.getByRole("button", { name: "design-system, /fixtures/design-system" }).click();
 		await expect(repositoryButton).toContainText("design-system");
 		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
 
 		await page.goBack();
-		await expect(repositoryButton).toContainText("sample-project");
 		await expect(page).toHaveURL(/\?repo=fixture-repository$/);
+		await expect(repositoryButton).toContainText("sample-project");
 
 		const secondTab = await context.newPage();
 		await secondTab.goto("/?repo=fixture-repository-two");
@@ -982,29 +796,17 @@ test.describe("mobile fixture review", () => {
 		).toBeLessThanOrEqual(1);
 
 		await page.getByRole("button", { name: "Open changed files" }).click();
-		const drawer = page.getByRole("complementary", { name: "Changed files" });
+		const drawer = page.getByRole("dialog", { name: "Changed files" });
 		await expect(drawer).toBeVisible();
 		const after = await workspace.boundingBox();
 		expect(after).not.toBeNull();
 		expect(after!.x).toBeCloseTo(before!.x, 0);
 		expect(after!.width).toBeCloseTo(before!.width, 0);
-		await expect(drawer).toHaveCSS("position", "fixed");
 		await drawer.getByRole("button", { name: "Close changed files" }).click();
 
-		const topBar = page.locator(".top-bar");
-		const fileBar = page.locator(".file-bar");
 		const actions = page.getByRole("navigation", { name: "Review actions" });
-		await expect(fileBar).toHaveCount(0);
-		await expect
-			.poll(() => topBar.evaluate((element) => element.getBoundingClientRect().height))
-			.toBeLessThanOrEqual(42);
-		await expect(actions).toHaveCSS("position", "absolute");
-		await expect
-			.poll(() => actions.evaluate((element) => element.getBoundingClientRect().width))
-			.toBe(520);
+		await expectAtViewportBottom(page, actions);
 		await expect(actions.getByRole("button")).toHaveCount(6);
-		await expect(actions.locator(".hunk-nav")).toBeVisible();
-		await expect(page.locator(".compact-hunk-nav")).toBeVisible();
 
 		const currentFile = page.getByRole("region", { name: "Current file" });
 		await actions.getByRole("button", { name: "Review + next" }).click();

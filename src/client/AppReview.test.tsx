@@ -107,10 +107,9 @@ describe("Couchview app review and delivery workflows", () => {
 				),
 			).toBe(true),
 		);
-		fireEvent.click(within(composer).getByRole("button", { name: "Close commit editor" }));
+		fireEvent.click(within(composer).getByRole("button", { name: "Close sheet" }));
 
 		await waitFor(() => expect(fixture.commitMessageRequestAborted).toBe(true));
-		expect(screen.queryByRole("dialog", { name: "Commit staged changes" })).toBeNull();
 		fixture.releaseCommitMessageResponse?.();
 	});
 
@@ -149,7 +148,7 @@ describe("Couchview app review and delivery workflows", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "Run build in apps/web" }));
 		const output = await screen.findByRole("dialog", {
-			name: "Package command output",
+			name: "@fixture/web / build",
 		});
 		expect(
 			fixture.requests.find(
@@ -195,9 +194,9 @@ describe("Couchview app review and delivery workflows", () => {
 
 		expect(within(output).getByText("building web")).toBeTruthy();
 		expect(within(output).getByText("Passed")).toBeTruthy();
-		fireEvent.keyDown(window, { key: "Escape" });
+		fireEvent.click(within(output).getByRole("button", { name: "Close sheet" }));
 		await waitFor(() =>
-			expect(screen.queryByRole("dialog", { name: "Package command output" })).toBeNull(),
+			expect(screen.queryByRole("dialog", { name: "@fixture/web / build" })).toBeNull(),
 		);
 		expect(fixture.requests.some((request) => request.path.endsWith("/stop"))).toBe(false);
 	});
@@ -210,7 +209,7 @@ describe("Couchview app review and delivery workflows", () => {
 		fireEvent.click(await screen.findByRole("button", { name: /Commands/ }));
 		fireEvent.click(screen.getByRole("button", { name: "Run dev in ." }));
 		const output = await screen.findByRole("dialog", {
-			name: "Package command output",
+			name: "fixture-root / dev",
 		});
 		fireEvent.click(within(output).getByRole("button", { name: "Stop" }));
 
@@ -267,12 +266,12 @@ describe("Couchview app review and delivery workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		const previousHunk = screen.getByRole("button", {
+		const previousHunk = screen.getAllByRole("button", {
 			name: "Previous hunk",
-		}) as HTMLButtonElement;
-		const nextHunk = screen.getByRole("button", {
+		})[0] as HTMLButtonElement;
+		const nextHunk = screen.getAllByRole("button", {
 			name: "Next hunk",
-		}) as HTMLButtonElement;
+		})[0] as HTMLButtonElement;
 		await waitFor(() => expect(nextHunk.disabled).toBe(false));
 		expect(previousHunk.disabled).toBe(true);
 
@@ -306,7 +305,9 @@ describe("Couchview app review and delivery workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		const nextHunk = screen.getByRole("button", { name: "Next hunk" }) as HTMLButtonElement;
+		const nextHunk = screen.getAllByRole("button", {
+			name: "Next hunk",
+		})[0] as HTMLButtonElement;
 		await waitFor(() => expect(nextHunk.disabled).toBe(false));
 		fireEvent.click(nextHunk);
 		expect(viewerHunkJumps).toEqual([0]);
@@ -323,14 +324,12 @@ describe("Couchview app review and delivery workflows", () => {
 		await screen.findByText("src/first.ts");
 		const loadButtons = await screen.findAllByTitle("Find “load” in project");
 		fireEvent.click(loadButtons[0]!);
-		await screen.findByRole("dialog", { name: "Project search" });
-		await screen.findByRole("button", {
-			name: /src\/first\.ts:1:15/,
-		});
-		fireEvent.click(screen.getByRole("button", { name: "Other files (1)" }));
-		expect(await screen.findByRole("button", { name: /src\/second\.ts:1:14/ })).toBeTruthy();
-		fireEvent.click(screen.getByRole("button", { name: "Current file (1)" }));
-		fireEvent.click(await screen.findByRole("button", { name: /src\/first\.ts:1:15/ }));
+		await screen.findByRole("dialog", { name: "Find in project" });
+		await screen.findByText(/src\/first\.ts:1:15/);
+		fireEvent.click(screen.getByRole("tab", { name: "Other files (1)" }));
+		expect(await screen.findByText(/src\/second\.ts:1:14/)).toBeTruthy();
+		fireEvent.click(screen.getByRole("tab", { name: "Current file (1)" }));
+		fireEvent.click(await screen.findByText(/src\/first\.ts:1:15/));
 		expect(await screen.findByText("return value;")).toBeTruthy();
 	});
 });

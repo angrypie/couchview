@@ -1,5 +1,6 @@
-import { Save, Sparkles, X } from "lucide-react";
+import { Save, Sparkles, X } from "lucide-react-native";
 import { useMemo, useState } from "react";
+import { View } from "react-native";
 
 import {
 	type ArtifactDefinition,
@@ -9,6 +10,23 @@ import {
 	parseArtifactCommandLine,
 	quoteArtifactInvocation,
 } from "../../../shared/contracts.ts";
+import {
+	Button,
+	Card,
+	CardContent,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+	HStack,
+	Icon,
+	IconButton,
+	Input,
+	InputField,
+	type InputFieldProps,
+	Select,
+	Text,
+	VStack,
+} from "../ui/index.ts";
 
 interface ArtifactDefinitionFormProps {
 	busy: boolean;
@@ -27,6 +45,38 @@ interface ArtifactDraft {
 	outputKind: "file" | "directory";
 	outputPath: string;
 	workingDirectory: string;
+}
+
+interface ArtifactFieldProps extends Omit<InputFieldProps, "onChangeText" | "value"> {
+	error?: string | null;
+	label: string;
+	onChangeText(value: string): void;
+	value: string;
+}
+
+const ARTIFACT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+function ArtifactField({ error, label, onChangeText, value, ...props }: ArtifactFieldProps) {
+	return (
+		<VStack space="xs">
+			<Text className="font-medium" size="sm">
+				{label}
+			</Text>
+			<Input className={error ? "border-destructive" : undefined}>
+				<InputField
+					accessibilityLabel={label}
+					onChangeText={onChangeText}
+					value={value}
+					{...props}
+				/>
+			</Input>
+			{error ? (
+				<Text accessibilityRole="alert" size="xs" tone="destructive">
+					{error}
+				</Text>
+			) : null}
+		</VStack>
+	);
 }
 
 function draftFor(definition?: ArtifactDefinition): ArtifactDraft {
@@ -76,15 +126,26 @@ export function ArtifactDefinitionForm({
 	const [proposalRequest, setProposalRequest] = useState("");
 	const [proposalResult, setProposalResult] = useState<ArtifactProposalResponse | null>(null);
 	const command = useMemo(() => parsedCommand(draft.command), [draft.command]);
-	const save = async (event: React.FormEvent) => {
-		event.preventDefault();
-		if (!draft.name || !draft.outputPath || command.argv.length === 0 || command.error) return;
+	const nameError =
+		draft.name && !ARTIFACT_NAME_PATTERN.test(draft.name)
+			? "Use letters, numbers, dots, underscores, or hyphens."
+			: null;
+	const canSave = Boolean(
+		draft.name &&
+			draft.outputPath &&
+			draft.workingDirectory &&
+			command.argv.length &&
+			!command.error &&
+			!nameError,
+	);
+	const save = async () => {
+		if (!canSave) return;
 		await onSave({
-			name: draft.name,
 			argv: command.argv,
-			workingDirectory: draft.workingDirectory || ".",
-			outputPath: draft.outputPath,
+			name: draft.name,
 			outputKind: draft.outputKind,
+			outputPath: draft.outputPath,
+			workingDirectory: draft.workingDirectory || ".",
 		});
 	};
 	const propose = async () => {
@@ -97,180 +158,187 @@ export function ArtifactDefinitionForm({
 	};
 
 	return (
-		<form
-			aria-label={definition ? `Edit ${definition.name} artifact` : "Create artifact"}
-			className="artifact-form"
-			onSubmit={(event) => void save(event)}
+		<Card
+			accessibilityLabel={definition ? `Edit ${definition.name} artifact` : "Create artifact"}
+			role="form"
 		>
-			<header className="artifact-form-header">
-				<div>
-					<h2>{definition ? `Edit ${definition.name}` : "New artifact"}</h2>
-					<p>Type a familiar command. Couchview parses exact arguments and never uses a shell.</p>
-				</div>
-				<div className="artifact-form-header-actions">
-					<button
-						className="text-button artifact-magic-button"
-						disabled={!proposalCapability.available || proposalBusy}
-						onClick={() => setProposalOpen((open) => !open)}
-						title={proposalCapability.reason ?? "Suggest from repository configuration"}
-						type="button"
-					>
-						<Sparkles size={14} /> {proposalBusy ? "Reading configs…" : "Suggest with Codex"}
-					</button>
-					<button
-						aria-label="Cancel artifact editing"
-						className="icon-button"
-						onClick={onCancel}
-						type="button"
-					>
-						<X size={17} />
-					</button>
-				</div>
-			</header>
-			{proposalOpen && (
-				<section className="artifact-proposal" aria-label="Codex artifact suggestion">
-					<label htmlFor="artifact-proposal-request">What should this artifact produce?</label>
-					<div>
-						<input
-							autoFocus
-							id="artifact-proposal-request"
-							maxLength={2_000}
-							onChange={(event) => setProposalRequest(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key !== "Enter") return;
-								event.preventDefault();
-								void propose();
-							}}
-							placeholder="Optional · static build, or compile with Bun"
-							value={proposalRequest}
-						/>
-						<button
-							className="action-button"
+			<CardHeader>
+				<HStack align="start" space="sm">
+					<VStack className="min-w-0 flex-1" space="xs">
+						<CardTitle>{definition ? `Edit ${definition.name}` : "New artifact"}</CardTitle>
+						<Text className="leading-5" size="sm" tone="muted">
+							Type a familiar command. Couchview parses exact arguments and never uses a shell.
+						</Text>
+					</VStack>
+					<IconButton
+						accessibilityLabel="Cancel artifact editing"
+						icon={X}
+						onPress={onCancel}
+						size="sm"
+					/>
+				</HStack>
+				<Button
+					disabled={!proposalCapability.available || proposalBusy}
+					leftIcon={Sparkles}
+					loading={proposalBusy}
+					onPress={() => setProposalOpen((open) => !open)}
+					size="sm"
+					variant="outline"
+				>
+					{proposalBusy ? "Reading configs…" : "Suggest with Codex"}
+				</Button>
+				{proposalCapability.reason ? (
+					<Text size="xs" tone="muted">
+						{proposalCapability.reason}
+					</Text>
+				) : null}
+			</CardHeader>
+
+			<CardContent>
+				{proposalOpen ? (
+					<VStack className="rounded-xl border border-primary/30 bg-accent p-3" space="sm">
+						<Text bold size="sm">
+							What should this artifact produce?
+						</Text>
+						<Input>
+							<InputField
+								accessibilityLabel="What should this artifact produce?"
+								autoFocus
+								maxLength={2_000}
+								onChangeText={setProposalRequest}
+								onSubmitEditing={() => void propose()}
+								placeholder="Optional · static build, or compile with Bun"
+								returnKeyType="go"
+								value={proposalRequest}
+							/>
+						</Input>
+						<Button
 							disabled={proposalBusy}
-							onClick={() => void propose()}
-							type="button"
+							leftIcon={Sparkles}
+							loading={proposalBusy}
+							onPress={() => void propose()}
 						>
-							<Sparkles size={14} /> {proposalBusy ? "Suggesting…" : "Fill form"}
-						</button>
-					</div>
-					<p>
-						Leave this empty for the project’s most useful default. Only recognized, shallow build
-						configuration is read. Model and reasoning are controlled in Settings.
-					</p>
-				</section>
-			)}
-			{proposalResult && (
-				<div className="artifact-proposal-result" role="status">
-					<Sparkles size={14} />
-					<div>
-						<strong>Codex filled an editable suggestion</strong>
-						<span>{proposalResult.summary}</span>
-						<small>
-							{proposalResult.configurationFiles.length
-								? `Read ${proposalResult.configurationFiles.join(", ")}`
-								: "No recognized build configuration was found"}
-						</small>
-					</div>
-				</div>
-			)}
-			<div className="artifact-form-grid">
-				<label>
-					<span>Name</span>
-					<input
+							Fill form
+						</Button>
+						<Text className="leading-5" size="xs" tone="muted">
+							Leave this empty for the project’s most useful default. Only recognized, shallow build
+							configuration is read. Model and reasoning are controlled in Settings.
+						</Text>
+					</VStack>
+				) : null}
+
+				{proposalResult ? (
+					<HStack
+						accessibilityRole="summary"
+						align="start"
+						className="rounded-xl border border-success/30 bg-success/10 p-3"
+						space="sm"
+					>
+						<Icon as={Sparkles} size={16} tone="success" />
+						<VStack className="min-w-0 flex-1" space="xs">
+							<Text bold size="sm">
+								Codex filled an editable suggestion
+							</Text>
+							<Text size="sm">{proposalResult.summary}</Text>
+							<Text size="xs" tone="muted">
+								{proposalResult.configurationFiles.length
+									? `Read ${proposalResult.configurationFiles.join(", ")}`
+									: "No recognized build configuration was found"}
+							</Text>
+						</VStack>
+					</HStack>
+				) : null}
+
+				<View className="gap-4">
+					<ArtifactField
 						autoCapitalize="none"
-						autoCorrect="off"
+						autoCorrect={false}
+						error={nameError}
+						label="Name"
 						maxLength={64}
-						onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-						pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+						onChangeText={(name) => setDraft((current) => ({ ...current, name }))}
 						placeholder="couchview-cli"
-						required
 						value={draft.name}
 					/>
-				</label>
-				<label>
-					<span>Output kind</span>
-					<select
-						onChange={(event) =>
-							setDraft((current) => ({
-								...current,
-								outputKind: event.target.value as ArtifactDraft["outputKind"],
-							}))
-						}
-						value={draft.outputKind}
-					>
-						<option value="file">File</option>
-						<option value="directory">Directory (.tar.gz)</option>
-					</select>
-				</label>
-				<label className="artifact-command-field">
-					<span>Command</span>
-					<input
-						aria-describedby={command.error ? "artifact-command-error" : undefined}
-						aria-invalid={command.error ? true : undefined}
+					<VStack space="xs">
+						<Text className="font-medium" size="sm">
+							Output kind
+						</Text>
+						<Select
+							accessibilityLabel="Output kind"
+							onValueChange={(outputKind) =>
+								setDraft((current) => ({
+									...current,
+									outputKind: outputKind as ArtifactDraft["outputKind"],
+								}))
+							}
+							options={[
+								{ label: "File", value: "file" },
+								{ label: "Directory (.tar.gz)", value: "directory" },
+							]}
+							value={draft.outputKind}
+						/>
+					</VStack>
+					<View>
+						<ArtifactField
+							autoCapitalize="none"
+							autoCorrect={false}
+							error={command.error}
+							label="Command"
+							onChangeText={(nextCommand) =>
+								setDraft((current) => ({ ...current, command: nextCommand }))
+							}
+							placeholder={'bun build src/cli.ts --compile --outfile "dist/couchview"'}
+							value={draft.command}
+						/>
+					</View>
+					<ArtifactField
 						autoCapitalize="none"
-						autoCorrect="off"
-						onChange={(event) =>
-							setDraft((current) => ({ ...current, command: event.target.value }))
-						}
-						placeholder='bun build src/cli.ts --compile --outfile "dist/couchview"'
-						required
-						value={draft.command}
-					/>
-					{command.error && (
-						<small className="artifact-field-error" id="artifact-command-error" role="alert">
-							{command.error}
-						</small>
-					)}
-				</label>
-				<label>
-					<span>Working directory</span>
-					<input
-						autoCapitalize="none"
-						autoCorrect="off"
-						onChange={(event) =>
-							setDraft((current) => ({ ...current, workingDirectory: event.target.value }))
+						autoCorrect={false}
+						label="Working directory"
+						onChangeText={(workingDirectory) =>
+							setDraft((current) => ({ ...current, workingDirectory }))
 						}
 						placeholder="."
-						required
 						value={draft.workingDirectory}
 					/>
-				</label>
-				<label>
-					<span>Exact output path</span>
-					<input
+					<ArtifactField
 						autoCapitalize="none"
-						autoCorrect="off"
-						onChange={(event) =>
-							setDraft((current) => ({ ...current, outputPath: event.target.value }))
-						}
+						autoCorrect={false}
+						label="Exact output path"
+						onChangeText={(outputPath) => setDraft((current) => ({ ...current, outputPath }))}
 						placeholder="dist/couchview"
-						required
 						value={draft.outputPath}
 					/>
-				</label>
-			</div>
-			<div className="artifact-invocation">
-				<span>Parsed invocation</span>
-				<code>
-					{command.argv.length
-						? quoteArtifactInvocation(command.argv)
-						: command.error
-							? "Fix the command above"
-							: "Enter a command"}
-				</code>
-			</div>
-			<footer className="artifact-form-actions">
-				<button className="action-button secondary" onClick={onCancel} type="button">
+				</View>
+
+				<VStack className="rounded-xl bg-muted p-3" space="xs">
+					<Text className="font-medium uppercase tracking-wide" size="xs" tone="muted">
+						Parsed invocation
+					</Text>
+					<Text className="font-mono leading-5" selectable size="sm">
+						{command.argv.length
+							? quoteArtifactInvocation(command.argv)
+							: command.error
+								? "Fix the command above"
+								: "Enter a command"}
+					</Text>
+				</VStack>
+			</CardContent>
+
+			<CardFooter className="justify-end">
+				<Button disabled={busy} onPress={onCancel} variant="secondary">
 					Cancel
-				</button>
-				<button
-					className="action-button"
-					disabled={busy || proposalBusy || Boolean(command.error)}
-					type="submit"
+				</Button>
+				<Button
+					disabled={busy || proposalBusy || !canSave}
+					leftIcon={Save}
+					loading={busy}
+					onPress={() => void save()}
 				>
-					<Save size={15} /> {busy ? "Saving…" : definition ? "Save changes" : "Create artifact"}
-				</button>
-			</footer>
-		</form>
+					{definition ? "Save changes" : "Create artifact"}
+				</Button>
+			</CardFooter>
+		</Card>
 	);
 }

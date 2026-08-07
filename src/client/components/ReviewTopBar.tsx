@@ -12,7 +12,9 @@ import {
 	Settings2,
 	SquareTerminal,
 	WrapText,
-} from "lucide-react";
+} from "lucide-react-native";
+import { Pressable, ScrollView, View } from "react-native";
+
 import type {
 	FileChange,
 	FileDiff,
@@ -23,6 +25,7 @@ import type {
 import type { RepositoryConnectionState } from "../features/repositories/types.ts";
 import { changeLabel, stageLabel } from "../features/staging/changeFiles.ts";
 import { TYPOGRAPHY_LIMITS } from "../typographyPreferences.ts";
+import { Badge, Button, Icon, IconButton, Text } from "./ui";
 
 interface ReviewTopBarProps {
 	activeFile: FileChange | null;
@@ -57,10 +60,59 @@ interface ReviewTopBarProps {
 	terminalCapability: TerminalCapability;
 }
 
+const connectionDotClass: Record<RepositoryConnectionState, string> = {
+	connected: "size-2 rounded-full bg-success",
+	offline: "size-2 rounded-full bg-destructive",
+	reconnecting: "size-2 rounded-full bg-warning",
+};
+
 function connectionTitle(connectionState: RepositoryConnectionState): string {
 	if (connectionState === "connected") return "Connected";
 	if (connectionState === "reconnecting") return "Reconnecting to local server";
 	return "Offline — local server unavailable";
+}
+
+function FileContext({
+	activeFile,
+	diff,
+}: {
+	activeFile: FileChange | null;
+	diff: FileDiff | null;
+}) {
+	if (!activeFile) {
+		return (
+			<Text className="min-w-0 flex-1 text-sm text-muted-foreground" numberOfLines={1}>
+				No changed file
+			</Text>
+		);
+	}
+	const staged = stageLabel(activeFile);
+	return (
+		<View className="min-w-0 flex-1 gap-1">
+			<Text className="font-mono text-sm" numberOfLines={1} selectable>
+				{activeFile.path}
+			</Text>
+			<View className="flex-row flex-wrap items-center gap-1">
+				<Badge variant={activeFile.conflicted ? "destructive" : "outline"}>
+					{changeLabel(activeFile)}
+				</Badge>
+				<Text className="text-xs font-semibold text-success">
+					+{activeFile.additions ?? diff?.additions ?? 0}
+				</Text>
+				<Text className="text-xs font-semibold text-destructive">
+					−{activeFile.deletions ?? diff?.deletions ?? 0}
+				</Text>
+				{activeFile.reviewed ? <Badge variant="success">reviewed</Badge> : null}
+				{staged ? (
+					<Badge
+						variant={staged === "staged" ? "primary" : staged === "partial" ? "warning" : "neutral"}
+					>
+						{staged}
+					</Badge>
+				) : null}
+			</View>
+		</View>
+	);
 }
 
 export function ReviewTopBar({
@@ -95,230 +147,198 @@ export function ReviewTopBar({
 	terminalActive,
 	terminalCapability,
 }: ReviewTopBarProps) {
+	const hasRepository = Boolean(repositoryId && repository);
+	const decreaseFont = () =>
+		onFontSizeChange(
+			Math.max(
+				TYPOGRAPHY_LIMITS.diff.fontSize.min,
+				fontSize - TYPOGRAPHY_LIMITS.diff.fontSize.step,
+			),
+		);
+	const increaseFont = () =>
+		onFontSizeChange(
+			Math.min(
+				TYPOGRAPHY_LIMITS.diff.fontSize.max,
+				fontSize + TYPOGRAPHY_LIMITS.diff.fontSize.step,
+			),
+		);
+
 	return (
-		<header className="top-bar">
-			<button
-				aria-label="Open changed files"
-				className="icon-button menu-button"
-				onClick={onOpenDrawer}
-				type="button"
-			>
-				<Menu size={20} />
-			</button>
+		<View
+			className={
+				compactLandscape
+					? "min-h-11 flex-row items-center gap-1 border-b border-border bg-card px-2 py-1 pt-safe"
+					: "min-h-14 flex-row items-center gap-2 border-b border-border bg-card px-3 py-2 pt-safe"
+			}
+		>
+			{!splitView ? (
+				<IconButton
+					accessibilityLabel="Open changed files"
+					icon={Menu}
+					onPress={onOpenDrawer}
+					size={compactLandscape ? "sm" : "md"}
+				/>
+			) : null}
 			{compactLandscape ? (
-				<div aria-label="Current file" className="compact-file-context" role="region">
-					<span
-						className={`connection-dot ${connectionState}`}
-						data-testid="repository-connection-status"
-						title={connectionTitle(connectionState)}
-					/>
-					<button
-						aria-label="Select repository"
-						aria-haspopup="dialog"
-						className="compact-repo-name repository-trigger"
-						onClick={onOpenRepositoryPicker}
-						title={`${repository?.name ?? "Couchview"} · ${repository?.branch ?? "detached"}`}
-						type="button"
+				<View
+					accessibilityLabel="Current file"
+					className="min-w-0 flex-1 flex-row items-center gap-2"
+					role="region"
+				>
+					<Pressable
+						accessibilityHint={`${repository?.name ?? "Couchview"}, ${repository?.branch ?? "detached"}`}
+						accessibilityLabel="Select repository"
+						accessibilityRole="button"
+						className="max-w-36 flex-row items-center gap-1 rounded-lg px-1.5 py-1 active:bg-muted"
+						onPress={onOpenRepositoryPicker}
 					>
-						<span>{repository?.name ?? "Couchview"}</span>
-						<ChevronDown size={12} />
-					</button>
-					<span className="compact-context-divider">/</span>
-					<span className="file-path" title={activeFile?.path}>
-						{activeFile?.path ?? "No changed file"}
-					</span>
-					{activeFile && (
-						<div className="compact-file-meta">
-							<span className="status-pill compact-change-kind">{changeLabel(activeFile)}</span>
-							<span className="additions">+{activeFile.additions ?? diff?.additions ?? 0}</span>
-							<span className="deletions">−{activeFile.deletions ?? diff?.deletions ?? 0}</span>
-							{activeFile.reviewed && <span className="status-pill reviewed">reviewed</span>}
-							{stageLabel(activeFile) && (
-								<span className={`status-pill ${stageLabel(activeFile)}`}>
-									{stageLabel(activeFile)}
-								</span>
-							)}
-						</div>
-					)}
-				</div>
-			) : (
-				<div className="repo-heading">
-					<button
-						aria-label="Select repository"
-						aria-haspopup="dialog"
-						className="repo-name repository-trigger"
-						onClick={onOpenRepositoryPicker}
-						type="button"
-					>
-						<span
-							className={`connection-dot ${connectionState}`}
-							data-testid="repository-connection-status"
-							title={connectionTitle(connectionState)}
+						<View
+							accessibilityLabel={connectionTitle(connectionState)}
+							className={connectionDotClass[connectionState]}
+							testID="repository-connection-status"
 						/>
-						<span>{repository?.name ?? "Couchview"}</span>
-						<ChevronDown size={13} />
-					</button>
-					<div className="repo-meta">
-						<GitBranch size={10} />
-						<span>{repository?.branch ?? "detached"}</span>
-						<span>·</span>
-						<span>
-							{reviewedCount}/{fileCount} reviewed
-						</span>
-					</div>
-				</div>
+						<Text className="min-w-0 text-xs font-semibold" numberOfLines={1}>
+							{repository?.name ?? "Couchview"}
+						</Text>
+						<Icon as={ChevronDown} size={12} tone="muted" />
+					</Pressable>
+					<Text className="text-muted-foreground">/</Text>
+					<FileContext activeFile={activeFile} diff={diff} />
+				</View>
+			) : (
+				<Pressable
+					accessibilityHint={`${repository?.branch ?? "detached"}, ${reviewedCount} of ${fileCount} reviewed`}
+					accessibilityLabel="Select repository"
+					accessibilityRole="button"
+					className="min-w-0 flex-1 flex-row items-center gap-2 rounded-lg px-1 py-1 active:bg-muted sm:max-w-64"
+					onPress={onOpenRepositoryPicker}
+				>
+					<View
+						accessibilityLabel={connectionTitle(connectionState)}
+						className={connectionDotClass[connectionState]}
+						testID="repository-connection-status"
+					/>
+					<View className="min-w-0 flex-1">
+						<View className="flex-row items-center gap-1">
+							<Text className="min-w-0 font-semibold" numberOfLines={1}>
+								{repository?.name ?? "Couchview"}
+							</Text>
+							<Icon as={ChevronDown} size={13} tone="muted" />
+						</View>
+						<View className="flex-row items-center gap-1">
+							<Icon as={GitBranch} size={11} tone="muted" />
+							<Text className="text-xs text-muted-foreground" numberOfLines={1}>
+								{repository?.branch ?? "detached"} · {reviewedCount}/{fileCount} reviewed
+							</Text>
+						</View>
+					</View>
+				</Pressable>
 			)}
-			{compactLandscape && (
-				<div className="landscape-tools">
-					<div className="compact-hunk-nav" aria-label="Hunk navigation">
-						<button
-							aria-label="Previous hunk"
-							className="icon-button"
+			<ScrollView
+				contentContainerClassName="flex-row items-center gap-1"
+				horizontal
+				showsHorizontalScrollIndicator={false}
+			>
+				{compactLandscape ? (
+					<View className="flex-row gap-1">
+						<IconButton
+							accessibilityLabel="Previous hunk"
 							disabled={!canNavigatePreviousHunk}
-							onClick={() => onNavigateHunk(-1)}
-							title="Previous hunk (K)"
-							type="button"
-						>
-							<ChevronUp size={16} />
-						</button>
-						<button
-							aria-label="Next hunk"
-							className="icon-button"
+							icon={ChevronUp}
+							onPress={() => onNavigateHunk(-1)}
+							size="sm"
+						/>
+						<IconButton
+							accessibilityLabel="Next hunk"
 							disabled={!canNavigateNextHunk}
-							onClick={() => onNavigateHunk(1)}
-							title="Next hunk (J)"
-							type="button"
-						>
-							<ChevronDown size={16} />
-						</button>
-					</div>
-				</div>
-			)}
-			<button
-				aria-label="Open command palette"
-				className="icon-button command-palette-trigger"
-				onClick={onOpenCommandPalette}
-				title={`Open command palette (${commandPaletteShortcut})`}
-				type="button"
-			>
-				<Search size={18} />
-				{splitView && <kbd>{commandPaletteShortcut}</kbd>}
-			</button>
-			<button
-				aria-label="Open repository artifacts"
-				className="icon-button artifacts-launch-button"
-				disabled={!repositoryId || !repository}
-				onClick={onOpenArtifacts}
-				title="Build and download repository artifacts"
-				type="button"
-			>
-				<Archive size={18} />
-			</button>
-			<button
-				aria-label="Open Git history"
-				className="icon-button git-history-launch-button"
-				disabled={!repositoryId || !repository}
-				onClick={onOpenGitHistory}
-				title="Git history and repository actions"
-				type="button"
-			>
-				<GitGraph size={18} />
-			</button>
-			<button
-				aria-label="Set up native IDE"
-				className="icon-button remote-bridge-launch-button"
-				disabled={!repositoryId || !repository}
-				onClick={onOpenRemoteBridge}
-				title={
-					remoteBridgeCapability.available
-						? "Pair a Mac and open this repository in Zed"
-						: (remoteBridgeCapability.reason ?? "Native remote development is unavailable")
-				}
-				type="button"
-			>
-				<MonitorUp size={18} />
-			</button>
-			<button
-				aria-label="Open tmux terminal"
-				aria-pressed={terminalActive}
-				className="icon-button terminal-launch-button"
-				disabled={!terminalCapability.available || !repositoryId}
-				onClick={onOpenTerminal}
-				title={
-					terminalCapability.available
-						? "Open persistent tmux terminal"
-						: (terminalCapability.reason ?? "The browser tmux terminal is unavailable")
-				}
-				type="button"
-			>
-				<SquareTerminal size={18} />
-			</button>
-			{compactLandscape && (
-				<button
-					aria-label="Open settings"
-					className="icon-button settings-launch-button"
-					onClick={onOpenSettings}
-					title="Typography settings"
-					type="button"
-				>
-					<Settings2 size={18} />
-				</button>
-			)}
-			<div className="font-controls" aria-label="Diff display controls">
-				<button
-					aria-label={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
-					aria-pressed={lineNumbersVisible}
-					className={`number-toggle ${lineNumbersVisible ? "active" : ""}`}
-					onClick={() => onLineNumbersChange(!lineNumbersVisible)}
-					title={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
-					type="button"
-				>
-					123
-				</button>
-				<button
-					aria-label={lineWrapEnabled ? "Keep long lines on one line" : "Wrap long lines"}
-					aria-pressed={lineWrapEnabled}
-					className={`wrap-toggle ${lineWrapEnabled ? "active" : ""}`}
-					onClick={() => onLineWrapChange(!lineWrapEnabled)}
-					title={lineWrapEnabled ? "Keep long lines on one line" : "Wrap long lines"}
-					type="button"
-				>
-					<WrapText aria-hidden="true" size={16} />
-				</button>
-				<button
-					aria-label="Decrease diff font size"
-					className="icon-button compact-button"
-					disabled={fontSize <= TYPOGRAPHY_LIMITS.diff.fontSize.min}
-					onClick={() =>
-						onFontSizeChange(
-							Math.max(
-								TYPOGRAPHY_LIMITS.diff.fontSize.min,
-								fontSize - TYPOGRAPHY_LIMITS.diff.fontSize.step,
-							),
-						)
-					}
-					type="button"
-				>
-					<Minus size={15} />
-				</button>
-				<span className="font-value">{fontSize}px</span>
-				<button
-					aria-label="Increase diff font size"
-					className="icon-button compact-button"
-					disabled={fontSize >= TYPOGRAPHY_LIMITS.diff.fontSize.max}
-					onClick={() =>
-						onFontSizeChange(
-							Math.min(
-								TYPOGRAPHY_LIMITS.diff.fontSize.max,
-								fontSize + TYPOGRAPHY_LIMITS.diff.fontSize.step,
-							),
-						)
-					}
-					type="button"
-				>
-					<Plus size={15} />
-				</button>
-			</div>
-		</header>
+							icon={ChevronDown}
+							onPress={() => onNavigateHunk(1)}
+							size="sm"
+						/>
+					</View>
+				) : null}
+				<IconButton
+					accessibilityHint={`Shortcut: ${commandPaletteShortcut}`}
+					accessibilityLabel="Open command palette"
+					icon={Search}
+					onPress={onOpenCommandPalette}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityLabel="Open repository artifacts"
+					disabled={!hasRepository}
+					icon={Archive}
+					onPress={onOpenArtifacts}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityLabel="Open Git history"
+					disabled={!hasRepository}
+					icon={GitGraph}
+					onPress={onOpenGitHistory}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityHint={remoteBridgeCapability.reason ?? undefined}
+					accessibilityLabel="Set up native IDE"
+					disabled={!hasRepository}
+					icon={MonitorUp}
+					onPress={onOpenRemoteBridge}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityHint={terminalCapability.reason ?? undefined}
+					accessibilityLabel="Open tmux terminal"
+					accessibilityState={{ selected: terminalActive }}
+					disabled={!terminalCapability.available || !repositoryId}
+					icon={SquareTerminal}
+					onPress={onOpenTerminal}
+					size="sm"
+					variant={terminalActive ? "secondary" : "ghost"}
+				/>
+				{compactLandscape ? (
+					<IconButton
+						accessibilityLabel="Open settings"
+						icon={Settings2}
+						onPress={onOpenSettings}
+						size="sm"
+					/>
+				) : null}
+				<View accessibilityLabel="Diff display controls" className="flex-row items-center gap-1">
+					<Button
+						accessibilityLabel={lineNumbersVisible ? "Hide line numbers" : "Show line numbers"}
+						accessibilityState={{ selected: lineNumbersVisible }}
+						onPress={() => onLineNumbersChange(!lineNumbersVisible)}
+						size="sm"
+						variant={lineNumbersVisible ? "secondary" : "ghost"}
+					>
+						123
+					</Button>
+					<IconButton
+						accessibilityLabel={lineWrapEnabled ? "Keep long lines on one line" : "Wrap long lines"}
+						accessibilityState={{ selected: lineWrapEnabled }}
+						icon={WrapText}
+						onPress={() => onLineWrapChange(!lineWrapEnabled)}
+						size="sm"
+						variant={lineWrapEnabled ? "secondary" : "ghost"}
+					/>
+					<IconButton
+						accessibilityLabel="Decrease diff font size"
+						disabled={fontSize <= TYPOGRAPHY_LIMITS.diff.fontSize.min}
+						icon={Minus}
+						onPress={decreaseFont}
+						size="sm"
+					/>
+					<Text className="min-w-10 text-center text-xs text-muted-foreground">{fontSize}px</Text>
+					<IconButton
+						accessibilityLabel="Increase diff font size"
+						disabled={fontSize >= TYPOGRAPHY_LIMITS.diff.fontSize.max}
+						icon={Plus}
+						onPress={increaseFont}
+						size="sm"
+					/>
+				</View>
+			</ScrollView>
+		</View>
 	);
 }

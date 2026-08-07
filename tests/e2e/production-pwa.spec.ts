@@ -1,7 +1,30 @@
-import { expect, test } from "@playwright/test";
+import { type BrowserContext, expect, type Page, type Request, test } from "@playwright/test";
 
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
+
+async function expectButtonOpensUrl(
+	context: BrowserContext,
+	page: Page,
+	name: string,
+	expectedPath: string,
+) {
+	const expectedUrl = new URL(expectedPath, page.url()).href;
+	const navigationUrls: string[] = [];
+	const recordNavigation = (request: Request) => {
+		if (request.isNavigationRequest()) navigationUrls.push(request.url());
+	};
+	context.on("request", recordNavigation);
+	const openedPagePromise = context.waitForEvent("page");
+	try {
+		await page.getByRole("button", { name, exact: true }).click();
+		const openedPage = await openedPagePromise;
+		await expect.poll(() => navigationUrls).toContain(expectedUrl);
+		await openedPage.close();
+	} finally {
+		context.off("request", recordNavigation);
+	}
+}
 
 test.describe("production PWA", () => {
 	test.beforeEach(async ({ request }) => {
@@ -13,6 +36,7 @@ test.describe("production PWA", () => {
 	});
 
 	test("guides an expired Cloudflare Access session back through sign-in", async ({
+		context,
 		page,
 	}, testInfo) => {
 		test.skip(
@@ -32,8 +56,10 @@ test.describe("production PWA", () => {
 		await page.goto("/?repo=fixture-repository-two");
 		await expect(page.getByRole("heading", { name: "Sign-in expired" })).toBeVisible();
 		await expect(page.getByText("Sign in again to continue using Couchview.")).toBeVisible();
-		await expect(page.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
-			"href",
+		await expectButtonOpensUrl(
+			context,
+			page,
+			"Sign in again",
 			"/api/access/refresh?repo=fixture-repository-two",
 		);
 		await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
@@ -42,6 +68,7 @@ test.describe("production PWA", () => {
 	});
 
 	test("recognizes a missing Access cookie from its opaque login redirect", async ({
+		context,
 		page,
 	}, testInfo) => {
 		test.skip(
@@ -59,13 +86,16 @@ test.describe("production PWA", () => {
 
 		await page.goto("/?repo=fixture-repository-two");
 		await expect(page.getByRole("heading", { name: "Sign-in expired" })).toBeVisible();
-		await expect(page.getByRole("link", { name: "Sign in again" })).toHaveAttribute(
-			"href",
+		await expectButtonOpensUrl(
+			context,
+			page,
+			"Sign in again",
 			"/api/access/refresh?repo=fixture-repository-two",
 		);
 	});
 
 	test("stops an unsuccessful Access refresh from bouncing silently", async ({
+		context,
 		page,
 	}, testInfo) => {
 		test.skip(
@@ -82,50 +112,74 @@ test.describe("production PWA", () => {
 
 		await page.goto("/?repo=fixture-repository-two&access_refresh=1");
 		await expect(page.getByRole("heading", { name: "Sign-in didn’t complete" })).toBeVisible();
-		await expect(page.getByRole("link", { name: "Reset Cloudflare sign-in" })).toHaveAttribute(
-			"href",
-			"/api/access/logout",
-		);
-		await expect(page.getByRole("link", { name: "Try sign-in again" })).toHaveAttribute(
-			"href",
+		await expectButtonOpensUrl(context, page, "Reset Cloudflare sign-in", "/api/access/logout");
+		await expectButtonOpensUrl(
+			context,
+			page,
+			"Try sign-in again",
 			"/api/access/refresh?repo=fixture-repository-two",
 		);
 		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
 	});
 
-	test("uses the full mobile product surface without PWA lifecycle UI in the native shell", async ({
+	test("guards dirty settings across browser Back", async ({ page }, testInfo) => {
+		test.skip(
+			testInfo.project.name !== "mobile-430-chromium",
+			"The History API regression only needs one real Chromium project.",
+		);
+		await page.goto("/?repo=fixture-repository");
+		await page.getByRole("button", { name: "Open settings" }).click();
+		await expect(page).toHaveURL(/\/settings\?repo=fixture-repository$/);
+
+		const wrap = page.getByRole("switch", { name: "Wrap long lines" });
+		await expect(wrap).not.toBeChecked();
+		await wrap.click();
+		await expect(wrap).toBeChecked();
+		await expect(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
+		expect(
+			await page.evaluate(() => {
+				const event = new Event("beforeunload", { cancelable: true });
+				return { allowed: window.dispatchEvent(event), prevented: event.defaultPrevented };
+			}),
+		).toEqual({ allowed: false, prevented: true });
+
+		const cancelDialog = page.waitForEvent("dialog");
+		const cancelledBack = page.goBack();
+		const cancel = await cancelDialog;
+		expect(cancel.message()).toBe("Discard the unsaved profile changes and leave settings?");
+		await cancel.dismiss();
+		await cancelledBack;
+		await expect(page).toHaveURL(/\/settings\?repo=fixture-repository$/);
+		await expect(wrap).toBeChecked();
+		await expect(page.getByRole("button", { name: "Save changes" })).toBeEnabled();
+
+		const confirmDialog = page.waitForEvent("dialog");
+		const confirmedBack = page.goBack();
+		const confirm = await confirmDialog;
+		expect(confirm.message()).toBe("Discard the unsaved profile changes and leave settings?");
+		await confirm.accept();
+		await confirmedBack;
+		await expect(page).toHaveURL(/\/\?repo=fixture-repository$/);
+		await expect(page.getByRole("button", { name: "Open Git history" })).toBeVisible();
+	});
+
+	test("routes the universal RN-web surface through Expo without native-only controls", async ({
 		page,
 	}, testInfo) => {
 		test.skip(
 			testInfo.project.name !== "mobile-375-webkit",
-			"The native shell hosts the iOS mobile surface.",
+			"One browser is enough for the Expo web platform boundary.",
 		);
-		await page.goto("/?couchviewNative=1");
+		await page.goto("/settings?repo=fixture-repository");
 
+		await expect(page.getByRole("region", { name: "Settings" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Manage paired servers" })).toHaveCount(0);
+		await page.getByRole("button", { name: "Review", exact: true }).click();
+		await expect(page).toHaveURL(/\/\?repo=fixture-repository$/);
 		await expect(page.getByRole("button", { name: "Open command palette" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Open repository artifacts" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Open Git history" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Open settings" })).toBeVisible();
-		await page.getByRole("button", { name: "Open settings" }).click();
-		await expect(page.getByRole("link", { name: "Manage paired servers" })).toHaveAttribute(
-			"href",
-			"couchview://servers",
-		);
-		await expect(page).toHaveURL(/\/settings\?.*couchviewNative=1/);
-		await page.evaluate(() => {
-			const event = new Event("beforeinstallprompt", { cancelable: true });
-			Object.defineProperties(event, {
-				prompt: { value: async () => undefined },
-				userChoice: { value: Promise.resolve({ outcome: "dismissed" }) },
-			});
-			window.dispatchEvent(event);
-		});
-		await expect(page.getByText("Install Couchview for full-screen access.")).toHaveCount(0);
-		await expect
-			.poll(() =>
-				page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length),
-			)
-			.toBe(0);
 	});
 
 	test("keeps documents and APIs network-only without prompting over unsaved work", async ({
@@ -204,7 +258,7 @@ test.describe("production PWA", () => {
 			cachePaths.some((pathname) => /\/_expo\/static\/js\/web\/entry-[^/]+\.js$/.test(pathname)),
 		).toBe(true);
 		expect(
-			cachePaths.some((pathname) => /\/_expo\/static\/css\/foundation-[^/]+\.css$/.test(pathname)),
+			cachePaths.some((pathname) => /\/_expo\/static\/css\/native-[^/]+\.css$/.test(pathname)),
 		).toBe(true);
 		expect(
 			cachePaths.some(

@@ -7,7 +7,7 @@
 ## Build, Test, and Development Commands
 
 - `bun install` installs the exact versions recorded in `bun.lock`.
-- `bun run dev -- --repo /path/to/repo` starts the Bun API and Vite UI for development.
+- `bun run dev -- --repo /path/to/repo` starts the Bun API and Expo/Metro web UI for development.
 - `bun run build` creates the production PWA in `dist/`.
 - `bun run typecheck` checks strict TypeScript without emitting files.
 - `bun run lint` runs the direct Biome 2.5 policy; `bun run format:check` verifies formatting and import organization in the adopted client areas.

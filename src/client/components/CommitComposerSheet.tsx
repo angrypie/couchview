@@ -1,6 +1,7 @@
-import { GitCommitHorizontal, LoaderCircle, Sparkles, X } from "lucide-react";
-import type { FormEvent } from "react";
+import { GitCommitHorizontal, Sparkles } from "lucide-react-native";
+
 import type { CommitMessageCapability } from "../../shared/contracts.ts";
+import { Button, Sheet, Text, TextArea } from "./ui";
 
 interface CommitComposerSheetProps {
 	busy: boolean;
@@ -10,7 +11,7 @@ interface CommitComposerSheetProps {
 	onClose: () => void;
 	onGenerate: () => void;
 	onMessageChange: (message: string) => void;
-	onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+	onSubmit: () => void;
 	open: boolean;
 	stagedCount: number;
 }
@@ -27,95 +28,55 @@ export function CommitComposerSheet({
 	open,
 	stagedCount,
 }: CommitComposerSheetProps) {
-	if (!open) return null;
-
 	return (
-		<>
-			<button
-				aria-label="Close commit editor"
-				className="sheet-scrim"
-				onClick={onClose}
-				type="button"
-			/>
-			<form
-				aria-label="Commit staged changes"
-				aria-modal="true"
-				className="bottom-sheet"
-				onSubmit={onSubmit}
-				role="dialog"
-			>
-				<span className="sheet-grabber" />
-				<header className="sheet-header">
-					<div>
-						<h2 className="sheet-title">Commit staged changes</h2>
-						<div className="repo-meta">
-							{stagedCount} staged {stagedCount === 1 ? "file" : "files"} · unstaged edits stay
-							local
-						</div>
-					</div>
-					<button
-						aria-label="Close commit editor"
-						className="icon-button"
-						onClick={onClose}
-						type="button"
+		<Sheet
+			description={`${stagedCount} staged ${stagedCount === 1 ? "file" : "files"} · unstaged edits stay local`}
+			footer={
+				<>
+					<Button
+						disabled={!capability.available || messageBusy || busy || stagedCount === 0}
+						leftIcon={Sparkles}
+						loading={messageBusy}
+						onPress={onGenerate}
+						variant="secondary"
 					>
-						<X size={19} />
-					</button>
-				</header>
-				<div style={{ minHeight: 0, overflow: "auto", padding: 9 }}>
-					<textarea
-						autoFocus
-						className="composer-input commit-input"
-						maxLength={20_000}
-						onChange={(event) => onMessageChange(event.target.value)}
-						placeholder="Commit message…"
-						readOnly={messageBusy}
-						value={message}
-					/>
-				</div>
-				<div />
-				<footer className="sheet-footer commit-footer">
-					<div className="commit-actions">
-						<button
-							className="action-button secondary"
-							disabled={!capability.available || messageBusy || busy || stagedCount === 0}
-							onClick={onGenerate}
-							title={capability.reason ?? undefined}
-							type="button"
-						>
-							{messageBusy ? (
-								<LoaderCircle className="spinner" size={16} />
-							) : (
-								<Sparkles size={16} />
-							)}
-							{messageBusy
-								? "Generating…"
-								: message.trim()
-									? "Regenerate with Codex"
-									: "Generate with Codex"}
-						</button>
-						<button
-							className="action-button"
-							disabled={!message.trim() || busy || messageBusy}
-							type="submit"
-						>
-							{busy ? (
-								<LoaderCircle className="spinner" size={16} />
-							) : (
-								<GitCommitHorizontal size={16} />
-							)}
-							Commit staged changes
-						</button>
-					</div>
-					<div className="progress-label commit-generation-copy">
-						{capability.available
-							? messageBusy
-								? "Generating a one-line Conventional Commit from staged changes…"
-								: "Only staged changes are sent to Codex. Committing remains a separate action."
-							: capability.reason}
-					</div>
-				</footer>
-			</form>
-		</>
+						{messageBusy
+							? "Generating…"
+							: message.trim()
+								? "Regenerate with Codex"
+								: "Generate with Codex"}
+					</Button>
+					<Button
+						disabled={!message.trim() || busy || messageBusy}
+						leftIcon={GitCommitHorizontal}
+						loading={busy}
+						onPress={onSubmit}
+					>
+						Commit staged changes
+					</Button>
+				</>
+			}
+			onOpenChange={(nextOpen) => {
+				if (!nextOpen) onClose();
+			}}
+			open={open}
+			title="Commit staged changes"
+		>
+			<TextArea
+				autoFocus
+				editable={!messageBusy}
+				maxLength={20_000}
+				onChangeText={onMessageChange}
+				placeholder="Commit message…"
+				value={message}
+			/>
+			<Text className="text-muted-foreground" size="xs">
+				{capability.available
+					? messageBusy
+						? "Generating a one-line Conventional Commit from staged changes…"
+						: "Only staged changes are sent to Codex. Committing remains a separate action."
+					: capability.reason}
+			</Text>
+		</Sheet>
 	);
 }

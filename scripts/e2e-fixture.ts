@@ -1,6 +1,6 @@
 import { resolve, sep } from "node:path";
 
-import type { SettingsProfile } from "../src/shared/contracts.ts";
+import { API_ROUTES, type SettingsProfile } from "../src/shared/contracts.ts";
 import {
 	createDefaultSettingsProfileData,
 	DEFAULT_SETTINGS_PROFILE_ID,
@@ -8,6 +8,7 @@ import {
 } from "../src/shared/settings.ts";
 import { alternateRepository, files, initialFiles, repository, reviews } from "./e2eFixtureData.ts";
 import { fixtureJson, fixtureSecurityHeaders, requireFixtureCsrf } from "./e2eFixtureHttp.ts";
+import { authorizeFixtureNativeRequest } from "./e2eFixtureNativeClients.ts";
 import { handleFixtureReadRoute } from "./e2eFixtureReadRoutes.ts";
 import { handleFixtureReviewMutation } from "./e2eFixtureReviewMutations.ts";
 import type { FixtureMutableState, FixtureRequestContext } from "./e2eFixtureRouteTypes.ts";
@@ -50,6 +51,8 @@ const state: FixtureMutableState = {
 			revokedAt: null,
 		},
 	],
+	nativeClientTokens: new Map(),
+	nativePairings: new Map(),
 	nativePairingCounter: 0,
 	operationRevision: "fixture-operation-1",
 	packageRuns: [],
@@ -82,6 +85,8 @@ const state: FixtureMutableState = {
 				revokedAt: null,
 			},
 		];
+		this.nativeClientTokens.clear();
+		this.nativePairings.clear();
 		this.nativePairingCounter = 0;
 		this.terminal.reset();
 	},
@@ -162,6 +167,8 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 				context.selectedRepository !== null,
 			);
 		}
+		const nativeAuthorization = authorizeFixtureNativeRequest(state, context);
+		if (nativeAuthorization.error) return nativeAuthorization.error;
 
 		const readResponse = handleFixtureReadRoute(state, context);
 		if (readResponse) return readResponse;
@@ -177,8 +184,13 @@ const server = Bun.serve<FixtureTerminalSocketData>({
 			);
 		}
 		if (context.url.pathname.startsWith("/api/") && request.method !== "GET") {
-			const csrfError = requireFixtureCsrf(request);
-			if (csrfError) return csrfError;
+			const nativeClientClaim =
+				context.url.pathname === API_ROUTES.nativeClientPairingClaim && request.method === "POST";
+			const fixtureControlMutation = context.url.pathname.startsWith("/api/e2e/");
+			if (fixtureControlMutation || (!nativeAuthorization.clientId && !nativeClientClaim)) {
+				const csrfError = requireFixtureCsrf(request);
+				if (csrfError) return csrfError;
+			}
 		}
 
 		const systemResponse = await handleFixtureSystemMutation(state, context);

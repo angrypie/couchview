@@ -6,7 +6,7 @@ import { HttpError } from "./errors.ts";
 import type { RemoteBridgeService, RemoteBridgeSocketData } from "./remoteBridgeService.ts";
 import type { RepositoryManager } from "./repositories.ts";
 import { decodeSegment, normalizeOrigin, normalizeRequestHost } from "./serverHttp.ts";
-import { addSecurityHeaders, errorResponse } from "./serverResponses.ts";
+import { addCorsHeaders, addSecurityHeaders, errorResponse } from "./serverResponses.ts";
 import {
 	TERMINAL_PROTOCOL,
 	type TerminalSessionService,
@@ -98,6 +98,7 @@ export function createRequestHandler(context: RequestHandlerContext) {
 		const terminalSocketRoute = /^\/api\/repositories\/([^/]+)\/terminal\/socket$/.exec(
 			url.pathname,
 		);
+		let corsOrigin: string | null = null;
 		let response: Response;
 		try {
 			let normalizedHost: string;
@@ -131,6 +132,7 @@ export function createRequestHandler(context: RequestHandlerContext) {
 							"Origin is not allowed by the local server",
 						);
 				}
+				corsOrigin = normalizedOrigin;
 			}
 			if (terminalSocketRoute && request.method === "GET") {
 				if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
@@ -203,14 +205,20 @@ export function createRequestHandler(context: RequestHandlerContext) {
 				return undefined;
 			}
 
+			const apiRoute = url.pathname === "/api" || url.pathname.startsWith("/api/");
 			response =
-				url.pathname === "/api" || url.pathname.startsWith("/api/")
-					? await handleApi(request, url)
-					: await serveStatic(url);
+				apiRoute && request.method === "OPTIONS"
+					? new Response(null, { status: 204 })
+					: apiRoute
+						? await handleApi(request, url)
+						: await serveStatic(url);
 		} catch (error) {
 			response = errorResponse(error);
 		}
-		return addSecurityHeaders(response);
+		const secured = addSecurityHeaders(response);
+		return corsOrigin && url.pathname.startsWith("/api/")
+			? addCorsHeaders(secured, corsOrigin)
+			: secured;
 	};
 
 	return handleRequest;

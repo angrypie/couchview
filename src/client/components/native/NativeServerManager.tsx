@@ -1,20 +1,15 @@
-import { Host, List, ListItem } from "@expo/ui";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView } from "react-native";
-import { useResolveClassNames } from "uniwind";
-import { useNativePreferences } from "../../features/nativePreferences/NativePreferencesProvider.tsx";
 import { useNativeServer } from "../../features/nativeServers/NativeServerProvider.tsx";
 import { Card } from "../ui/card";
 import { Input, InputField } from "../ui/input";
+import { NativeHostedButton, NativeHostedList, NativeHostedListItem } from "../ui/native-control";
 import { Text } from "../ui/text";
 import { VStack } from "../ui/vstack";
-import { NativeHostedButton } from "./NativeControlHost.tsx";
 
 export function NativeServerManager() {
 	const { profiles } = useNativeServer();
-	const { resolvedTheme } = useNativePreferences();
-	const { color: seedColor } = useResolveClassNames("text-primary");
 	const router = useRouter();
 	const directPairing = useLocalSearchParams<{
 		protocol?: string;
@@ -101,24 +96,17 @@ export function NativeServerManager() {
 					<Text bold selectable size="lg">
 						Paired servers
 					</Text>
-					<Host
-						colorScheme={resolvedTheme}
-						seedColor={seedColor}
-						style={{ minHeight: profiles.profiles.length * 64 }}
-						useViewportSizeMeasurement
-					>
-						<List>
-							{profiles.profiles.map((profile) => (
-								<ListItem
-									key={profile.id}
-									onPress={() => void profiles.activate(profile.id).then(() => router.replace("/"))}
-									supportingText={profile.baseUrl}
-								>
-									{profile.name}
-								</ListItem>
-							))}
-						</List>
-					</Host>
+					<NativeHostedList minimumHeight={profiles.profiles.length * 64}>
+						{profiles.profiles.map((profile) => (
+							<NativeHostedListItem
+								key={profile.id}
+								onPress={() => void profiles.activate(profile.id).then(() => router.replace("/"))}
+								supportingText={profile.baseUrl}
+							>
+								{profile.name}
+							</NativeHostedListItem>
+						))}
+					</NativeHostedList>
 					{profiles.profiles.map((profile) => (
 						<Pressable
 							accessibilityLabel={`Remove ${profile.name}`}

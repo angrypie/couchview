@@ -1,5 +1,5 @@
 export const ARTIFACTS_PATH = "/artifacts";
 
-export function isArtifactsPath(pathname = window.location.pathname): boolean {
+export function isArtifactsPath(pathname: string): boolean {
 	return pathname.replace(/\/+$/, "") === ARTIFACTS_PATH;
 }

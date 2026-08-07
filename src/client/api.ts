@@ -54,6 +54,17 @@ import {
 	type UpdateSettingsProfileRequest,
 } from "../shared/contracts.ts";
 import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
+import { fetchApi } from "./lib/api/runtime.ts";
+
+export {
+	absoluteApiDownloadUrl,
+	absoluteApiHttpUrl,
+	absoluteApiWebSocketUrl,
+	apiRequestHeaders,
+	apiRequestUrl,
+	configureApiRuntime,
+	resetApiRuntime,
+} from "./lib/api/runtime.ts";
 
 export class ApiError extends Error {
 	readonly status: number;
@@ -86,8 +97,7 @@ export async function request<T>(path: string, init?: RequestInit, csrfToken?: s
 
 	let response: Response;
 	try {
-		response = await fetch(path, {
-			credentials: "same-origin",
+		response = await fetchApi(path, {
 			...init,
 			headers,
 			// A missing Cloudflare Access cookie can produce a cross-origin login

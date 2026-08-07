@@ -1,4 +1,3 @@
-import { useWorkerPool } from "@pierre/diffs/react";
 import {
 	type SetStateAction,
 	useCallback,
@@ -10,7 +9,6 @@ import {
 } from "react";
 import type { FileChange, FileDiff } from "../../../shared/contracts.ts";
 import { api } from "../../api.ts";
-import { preloadFileDiffRendering } from "../../diffAdapter.ts";
 import type { FailureState } from "../../lib/failures.ts";
 import { diffCacheKey, readCachedDiff, rememberDiff } from "./diffCache.ts";
 import {
@@ -35,7 +33,6 @@ export function useDiffReview({
 	reportFailure,
 	repositoryId,
 }: UseDiffReviewOptions) {
-	const workerPool = useWorkerPool();
 	const [currentFileId, setCurrentFileIdState] = useState<string | null>(null);
 	const [diff, setDiff] = useState<FileDiff | null>(null);
 	const [error, setError] = useState("");
@@ -107,22 +104,10 @@ export function useDiffReview({
 		setDiff(nextDiff);
 	}, []);
 
-	const primeRendering = useCallback(
-		(nextDiff: FileDiff) => {
-			try {
-				preloadFileDiffRendering(nextDiff, workerPool);
-			} catch {
-				// Background preloading is best-effort; the visible viewer reports its own errors.
-			}
-		},
-		[workerPool],
-	);
-
 	const prefetchDiff = useCallback(
 		(activeRepositoryId: string, file: FileChange): Promise<FileDiff | null> => {
 			const cached = readCachedDiff(cacheRef.current, activeRepositoryId, file);
 			if (cached) {
-				primeRendering(cached);
 				return Promise.resolve(cached);
 			}
 			const key = diffCacheKey(activeRepositoryId, file.id, file.contentRevision);
@@ -141,7 +126,6 @@ export function useDiffReview({
 						return null;
 					}
 					rememberDiff(cacheRef.current, activeRepositoryId, response.diff);
-					primeRendering(response.diff);
 					return response.diff;
 				})
 				.catch(() => null)
@@ -151,7 +135,7 @@ export function useDiffReview({
 			prefetchRef.current.set(key, pending);
 			return pending;
 		},
-		[primeRendering],
+		[],
 	);
 
 	const loadDiff = useCallback(
@@ -173,7 +157,6 @@ export function useDiffReview({
 				if (resetPosition) {
 					setHunkNavigation(navigationBeforeFirstHunk());
 				}
-				primeRendering(cached);
 				setDiffState(cached);
 				setLoading(false);
 				return;
@@ -194,7 +177,6 @@ export function useDiffReview({
 					return;
 				}
 				rememberDiff(cacheRef.current, activeRepositoryId, nextDiff);
-				primeRendering(nextDiff);
 				if (resetPosition) {
 					setHunkNavigation(navigationBeforeFirstHunk());
 				}
@@ -208,7 +190,7 @@ export function useDiffReview({
 				if (requestRef.current?.generation === generation) setLoading(false);
 			}
 		},
-		[primeRendering, reportFailure, setDiffState],
+		[reportFailure, setDiffState],
 	);
 
 	useLayoutEffect(() => {
@@ -229,7 +211,6 @@ export function useDiffReview({
 				: null;
 		if (cached) {
 			requestRef.current?.controller.abort();
-			primeRendering(cached);
 			setDiffState(cached);
 			setLoading(false);
 			return;
@@ -241,7 +222,7 @@ export function useDiffReview({
 				requestRef.current?.controller.abort();
 			}
 		};
-	}, [currentFileId, loadDiff, primeRendering, setDiffState]);
+	}, [currentFileId, loadDiff, setDiffState]);
 
 	useEffect(() => {
 		if (!repositoryId || !currentFileId) return;
@@ -250,11 +231,11 @@ export function useDiffReview({
 		const neighbors = [files[index + 1], files[index - 1]].filter((file): file is FileChange =>
 			Boolean(file),
 		);
-		const timeout = window.setTimeout(() => {
+		const timeout = setTimeout(() => {
 			if (repositoryIdRef.current !== repositoryId) return;
 			for (const file of neighbors) void prefetchDiff(repositoryId, file);
 		}, 0);
-		return () => window.clearTimeout(timeout);
+		return () => clearTimeout(timeout);
 	}, [currentFileId, files, prefetchDiff, repositoryId]);
 
 	const selectFile = useCallback(

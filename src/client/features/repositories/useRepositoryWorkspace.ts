@@ -8,13 +8,30 @@ import type {
 } from "../../../shared/contracts.ts";
 import { ApiError, api } from "../../api.ts";
 import { messageOf } from "../../lib/failures.ts";
-import { clearPwaStorage } from "../../offlineApp.ts";
+import { clearPwaStorage } from "../../offlineApp";
 import type { RepositoryConnectionState } from "./types.ts";
 
 export type AppPhase = "loading" | "ready" | "error";
 export type RepositoryHistoryMode = "none" | "push" | "replace";
 
-export function useRepositoryWorkspace() {
+interface RepositoryWorkspaceOptions {
+	accessRefreshAttempted?: boolean;
+	onAccessRefreshHandled?: () => void;
+	onReload?: () => void;
+	onRepositorySelection?: (
+		repositoryId: string | null,
+		historyMode: Exclude<RepositoryHistoryMode, "none">,
+	) => void;
+	requestedRepositoryId?: string | null;
+}
+
+export function useRepositoryWorkspace({
+	accessRefreshAttempted = false,
+	onAccessRefreshHandled,
+	onReload,
+	onRepositorySelection,
+	requestedRepositoryId = null,
+}: RepositoryWorkspaceOptions = {}) {
 	const [phase, setPhase] = useState<AppPhase>("loading");
 	const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
 	const [repositoryId, setRepositoryId] = useState<string | null>(null);
@@ -31,9 +48,19 @@ export function useRepositoryWorkspace() {
 	const catalogRef = useRef<RepositoryCatalogEntry[]>([]);
 	const loadGenerationRef = useRef(0);
 	const requestRef = useRef<AbortController | null>(null);
+	const requestedRepositoryIdRef = useRef(requestedRepositoryId);
+	const accessRefreshAttemptedRef = useRef(accessRefreshAttempted);
+	const previousAccessRefreshAttemptedRef = useRef(accessRefreshAttempted);
+	const routeCallbacksRef = useRef({
+		onAccessRefreshHandled,
+		onReload,
+		onRepositorySelection,
+	});
 
 	repositoryIdRef.current = repositoryId;
 	operationRevisionRef.current = operationRevision;
+	requestedRepositoryIdRef.current = requestedRepositoryId;
+	routeCallbacksRef.current = { onAccessRefreshHandled, onReload, onRepositorySelection };
 
 	const applyOperationRevision = useCallback((nextRevision: string) => {
 		operationRevisionRef.current = nextRevision;
@@ -80,6 +107,14 @@ export function useRepositoryWorkspace() {
 
 	const loadRepository = useCallback(
 		async (nextRepositoryId: string, historyMode: RepositoryHistoryMode) => {
+			if (
+				historyMode !== "none" &&
+				routeCallbacksRef.current.onRepositorySelection &&
+				requestedRepositoryIdRef.current !== nextRepositoryId
+			) {
+				routeCallbacksRef.current.onRepositorySelection(nextRepositoryId, historyMode);
+				return;
+			}
 			const generation = loadGenerationRef.current + 1;
 			const showLoadingState = repositoryIdRef.current === null;
 			loadGenerationRef.current = generation;
@@ -105,13 +140,6 @@ export function useRepositoryWorkspace() {
 				setRepository(changes.repository);
 				setFiles(changes.files);
 				applyOperationRevision(changes.operationRevision);
-				if (historyMode !== "none") {
-					const url = new URL(window.location.href);
-					if (url.searchParams.get("repo") !== nextRepositoryId) {
-						url.searchParams.set("repo", nextRepositoryId);
-						window.history[historyMode === "push" ? "pushState" : "replaceState"](null, "", url);
-					}
-				}
 				setConnectionState("connected");
 				setPhase("ready");
 			} catch (error) {
@@ -139,29 +167,26 @@ export function useRepositoryWorkspace() {
 		applyOperationRevision("");
 		setLoadError("");
 		setLoadErrorCode("");
-		const url = new URL(window.location.href);
-		url.searchParams.delete("repo");
-		window.history.replaceState(null, "", url);
+		routeCallbacksRef.current.onRepositorySelection?.(null, "replace");
 		setPhase("ready");
 	}, [applyOperationRevision]);
 
 	const loadApp = useCallback(async () => {
+		const refreshAttempted = accessRefreshAttemptedRef.current;
 		setPhase("loading");
 		setLoadError("");
 		setLoadErrorCode("");
-		const currentUrl = new URL(window.location.href);
-		const accessRefreshAttempted = currentUrl.searchParams.get("access_refresh") === "1";
 		const clearAccessRefreshMarker = () => {
-			if (!accessRefreshAttempted) return;
-			currentUrl.searchParams.delete("access_refresh");
-			window.history.replaceState(null, "", currentUrl);
+			if (!refreshAttempted) return;
+			accessRefreshAttemptedRef.current = false;
+			routeCallbacksRef.current.onAccessRefreshHandled?.();
 		};
 		try {
 			const nextBootstrap = await api.bootstrap();
 			clearAccessRefreshMarker();
 			catalogRef.current = nextBootstrap.repositories;
 			setBootstrap(nextBootstrap);
-			const requestedId = currentUrl.searchParams.get("repo");
+			const requestedId = requestedRepositoryIdRef.current;
 			const selected =
 				nextBootstrap.repositories.find((item) => item.id === requestedId && item.available) ??
 				nextBootstrap.repositories.find(
@@ -178,7 +203,7 @@ export function useRepositoryWorkspace() {
 			setLoadError(messageOf(error));
 			const errorCode = error instanceof ApiError ? error.code : "unknown";
 			setLoadErrorCode(
-				errorCode === "authentication_required" && accessRefreshAttempted
+				errorCode === "authentication_required" && refreshAttempted
 					? "authentication_refresh_failed"
 					: errorCode,
 			);
@@ -188,19 +213,37 @@ export function useRepositoryWorkspace() {
 		}
 	}, [clearRepositorySelection, loadRepository, markConnectionFailure]);
 
+	useEffect(() => {
+		const previouslyAttempted = previousAccessRefreshAttemptedRef.current;
+		previousAccessRefreshAttemptedRef.current = accessRefreshAttempted;
+		if (previouslyAttempted || !accessRefreshAttempted) return;
+		accessRefreshAttemptedRef.current = true;
+		void loadApp();
+	}, [accessRefreshAttempted, loadApp]);
+
+	useEffect(() => {
+		if (!bootstrap) return;
+		if (!requestedRepositoryId || requestedRepositoryId === repositoryIdRef.current) return;
+		const selected = bootstrap.repositories.find(
+			(item) => item.id === requestedRepositoryId && item.available,
+		);
+		if (selected) void loadRepository(selected.id, "none");
+	}, [bootstrap, loadRepository, requestedRepositoryId]);
+
 	const resetAppCache = useCallback(async () => {
 		if (appCacheResetBusy) return;
 		setAppCacheResetBusy(true);
 		try {
 			await clearPwaStorage();
-			window.location.reload();
+			if (routeCallbacksRef.current.onReload) routeCallbacksRef.current.onReload();
+			else await loadApp();
 		} catch {
 			setLoadError(
 				"Couchview could not reset its app cache. Remove its website data in browser settings, then reload.",
 			);
 			setAppCacheResetBusy(false);
 		}
-	}, [appCacheResetBusy]);
+	}, [appCacheResetBusy, loadApp]);
 
 	useEffect(() => {
 		void loadApp();

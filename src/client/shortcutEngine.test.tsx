@@ -8,14 +8,18 @@ import {
 	createDefaultSettingsProfileData,
 	effectiveKeybindings,
 } from "../shared/settings.ts";
-import { COMMAND_DEFINITIONS, type RuntimeCommand } from "./commands.ts";
-import { formatShortcut, shortcutStrokeFromEvent, useShortcutEngine } from "./shortcutEngine.ts";
+import "./appTestNativeRuntime.tsx";
+import type { RuntimeCommand } from "./commands.ts";
 
 if (!GlobalRegistrator.isRegistered) {
 	GlobalRegistrator.register({ url: "http://127.0.0.1:4173/" });
 }
 
 const { act, cleanup, fireEvent, render, screen } = await import("@testing-library/react");
+const { COMMAND_DEFINITIONS } = await import("./commands.ts");
+const { formatShortcut, shortcutStrokeFromEvent, useShortcutEngine } = await import(
+	"./shortcutEngine.ts"
+);
 
 afterEach(cleanup);
 

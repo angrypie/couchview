@@ -70,7 +70,7 @@ export type UpdateSettingsProfileResult =
 	| { status: "stale"; profile: SettingsProfile };
 
 export function resolveStateDatabasePath(
-	environment: NodeJS.ProcessEnv = process.env,
+	environment: Partial<NodeJS.ProcessEnv> = process.env,
 	homeDirectory = homedir(),
 ): string {
 	const configured = environment.XDG_DATA_HOME;

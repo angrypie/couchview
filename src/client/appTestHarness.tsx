@@ -13,6 +13,7 @@ import {
 import {
 	cleanup,
 	EventSourceStub,
+	nativeTestRuntime,
 	originalFetch,
 	originalWebSocket,
 	testThemeRuntime,
@@ -35,6 +36,7 @@ export {
 	cleanup,
 	EventSourceStub,
 	fireEvent,
+	nativeTestRuntime,
 	render,
 	screen,
 	viewerHunkJumps,
@@ -95,6 +97,7 @@ export function createAppTestHarness() {
 		terminalAvailable: false,
 		remoteBridgeAvailable: false,
 		remoteBridgeDevices: [] as Array<Record<string, unknown>>,
+		nativeClientDevices: [] as Array<Record<string, unknown>>,
 		settingsProfiles: [] as SettingsProfile[],
 		staleNextSettingsSave: false,
 		bootstrapFailureStatus: null as number | null,
@@ -142,6 +145,7 @@ export function createAppTestHarness() {
 		fixture.terminalAvailable = false;
 		fixture.remoteBridgeAvailable = false;
 		fixture.remoteBridgeDevices = [];
+		fixture.nativeClientDevices = [];
 		fixture.settingsProfiles = [
 			{
 				id: DEFAULT_SETTINGS_PROFILE_ID,
@@ -158,6 +162,7 @@ export function createAppTestHarness() {
 		resetRendererState();
 		resetFakeTerminalWebSockets();
 		testThemeRuntime.reset();
+		nativeTestRuntime.reset();
 		EventSourceStub.instances.length = 0;
 		viewerHunkJumps.length = 0;
 		viewerState.visibleLineChange = null;
@@ -216,6 +221,28 @@ export function createAppTestHarness() {
 			const method = init?.method ?? "GET";
 			const body = init?.body ? JSON.parse(String(init.body)) : null;
 			fixture.requests.push({ path: url.pathname, method, body });
+
+			if (url.pathname === "/api/native-clients" && method === "GET") {
+				return Response.json({ devices: fixture.nativeClientDevices });
+			}
+			if (url.pathname === "/api/native-clients/pairings" && method === "POST") {
+				return Response.json({
+					baseUrl: "http://127.0.0.1:4173",
+					code: "ABCD2345",
+					deepLink: "couchview://pair?code=ABCD2345",
+					expiresAt: "2026-08-07T10:05:00.000Z",
+					protocol: "couchview-native-v1",
+					serverId: "server-one",
+				});
+			}
+			const nativeClientRoute = /^\/api\/native-clients\/([^/]+)$/.exec(url.pathname);
+			if (nativeClientRoute && method === "DELETE") {
+				const clientId = decodeURIComponent(nativeClientRoute[1]!);
+				fixture.nativeClientDevices = fixture.nativeClientDevices.filter(
+					(device) => device.id !== clientId,
+				);
+				return new Response(null, { status: 204 });
+			}
 
 			const repositoryRoute = /^\/api\/repositories\/([^/]+)(?:\/(.*))?$/.exec(url.pathname);
 			const requestedRepositoryId = repositoryRoute?.[1]

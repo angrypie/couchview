@@ -2,6 +2,8 @@ import { mock } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { FileDiff } from "../shared/contracts.ts";
 import type { ResolvedTheme } from "../shared/theme.ts";
+import type { AppRouteConfiguration } from "./App.tsx";
+import { nativeTestRuntime } from "./appTestNativeRuntime.tsx";
 import { terminalPreviewRendererFactory, terminalRendererFactory } from "./terminalTestFakes.ts";
 import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 
@@ -94,7 +96,9 @@ mock.module("uniwind", () => ({
 			});
 		},
 	},
+	useResolveClassNames: () => ({ color: "#111827" }),
 	useUniwind: useTestUniwind,
+	withUniwind: <Component,>(component: Component) => component,
 }));
 
 export const viewerHunkJumps: number[] = [];
@@ -241,7 +245,23 @@ Object.defineProperty(window, "ResizeObserver", {
 export const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import(
 	"@testing-library/react"
 );
-export const { App } = await import("./App.tsx");
+export { nativeTestRuntime };
+
+const { App: ProductApp } = await import("./App.tsx");
+const { ThemeProvider } = await import("./features/settings/ThemeProvider.tsx");
+const { AppStoreProvider, createAppStore } = await import("./lib/store/appStore.tsx");
+
+export function App(props: AppRouteConfiguration = {}) {
+	const [store] = React.useState(createAppStore);
+	return (
+		<AppStoreProvider store={store}>
+			<ThemeProvider>
+				<ProductApp {...props} />
+			</ThemeProvider>
+		</AppStoreProvider>
+	);
+}
+
 export const originalFetch = globalThis.fetch;
 export const originalWebSocket = globalThis.WebSocket;
 

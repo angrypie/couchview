@@ -5,15 +5,12 @@ import {
 	ChevronRight,
 	ChevronUp,
 	GitPullRequestArrow,
-	LoaderCircle,
 	Undo2,
-} from "lucide-react";
-import type { FileChange } from "../../shared/contracts.ts";
+} from "lucide-react-native";
+import { View } from "react-native";
 
-const BUTTON_MOTION_CLASSES =
-	"group transition-colors transition-transform duration-150 active:scale-[0.98]";
-const GROUP_CONTENT_MOTION_CLASSES =
-	"transition-opacity duration-150 group-active:opacity-80 group-focus:opacity-90";
+import type { FileChange } from "../../shared/contracts.ts";
+import { Button, IconButton } from "./ui";
 
 interface ReviewBottomBarProps {
 	activeFile: FileChange | null;
@@ -47,92 +44,67 @@ export function ReviewBottomBar({
 	stageBusy,
 }: ReviewBottomBarProps) {
 	return (
-		<nav
-			className="bottom-bar min-h-[57px] px-safe-or-1 pt-1 pb-safe-offset-1"
-			aria-label="Review actions"
+		<View
+			accessibilityLabel="Review actions"
+			className="min-h-14 flex-row items-center justify-center gap-1 border-t border-border bg-card px-safe-or-1 pb-safe-offset-1 pt-1"
+			role="navigation"
 		>
-			<div className="nav-pair file-nav" aria-label="File navigation">
-				<button
-					aria-label="Previous file"
-					className={`icon-button ${BUTTON_MOTION_CLASSES}`}
+			<View accessibilityLabel="File navigation" className="flex-row gap-1">
+				<IconButton
+					accessibilityLabel="Previous file"
 					disabled={activeFileIndex <= 0}
-					onClick={() => onNavigateFile(-1)}
-					type="button"
-				>
-					<ChevronLeft className={GROUP_CONTENT_MOTION_CLASSES} size={18} />
-				</button>
-				<button
-					aria-label="Next file"
-					className={`icon-button ${BUTTON_MOTION_CLASSES}`}
+					icon={ChevronLeft}
+					onPress={() => onNavigateFile(-1)}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityLabel="Next file"
 					disabled={activeFileIndex < 0 || activeFileIndex >= fileCount - 1}
-					onClick={() => onNavigateFile(1)}
-					type="button"
-				>
-					<ChevronRight className={GROUP_CONTENT_MOTION_CLASSES} size={18} />
-				</button>
-			</div>
-			<div className="nav-pair hunk-nav" aria-label="Hunk navigation">
-				<button
-					aria-label="Previous hunk"
-					className={`icon-button ${BUTTON_MOTION_CLASSES}`}
+					icon={ChevronRight}
+					onPress={() => onNavigateFile(1)}
+					size="sm"
+				/>
+			</View>
+			<View accessibilityLabel="Hunk navigation" className="flex-row gap-1">
+				<IconButton
+					accessibilityLabel="Previous hunk"
 					disabled={!canNavigatePreviousHunk}
-					onClick={() => onNavigateHunk(-1)}
-					title="Previous hunk (K)"
-					type="button"
-				>
-					<ChevronUp className={GROUP_CONTENT_MOTION_CLASSES} size={18} />
-				</button>
-				<button
-					aria-label="Next hunk"
-					className={`icon-button ${BUTTON_MOTION_CLASSES}`}
+					icon={ChevronUp}
+					onPress={() => onNavigateHunk(-1)}
+					size="sm"
+				/>
+				<IconButton
+					accessibilityLabel="Next hunk"
 					disabled={!canNavigateNextHunk}
-					onClick={() => onNavigateHunk(1)}
-					title="Next hunk (J)"
-					type="button"
-				>
-					<ChevronDown className={GROUP_CONTENT_MOTION_CLASSES} size={18} />
-				</button>
-			</div>
-			<button
-				aria-label={activeFile?.reviewed ? "Unreview current file" : "Review + next"}
-				className={`action-button review-action ${BUTTON_MOTION_CLASSES} ${activeFile?.reviewed ? "success" : ""}`}
-				disabled={!activeFile || reviewBusy}
-				onClick={onReview}
-				title="Mark reviewed and advance"
-				type="button"
+					icon={ChevronDown}
+					onPress={() => onNavigateHunk(1)}
+					size="sm"
+				/>
+			</View>
+			<Button
+				accessibilityLabel={activeFile?.reviewed ? "Unreview current file" : "Review + next"}
+				className="min-w-20 flex-1 sm:max-w-44"
+				disabled={!activeFile}
+				leftIcon={activeFile?.reviewed ? Undo2 : Check}
+				loading={reviewBusy}
+				onPress={onReview}
+				size="sm"
+				variant={activeFile?.reviewed ? "outline" : "primary"}
 			>
-				{reviewBusy ? (
-					<LoaderCircle className="spinner" size={16} />
-				) : activeFile?.reviewed ? (
-					<Undo2 className={GROUP_CONTENT_MOTION_CLASSES} size={16} />
-				) : (
-					<Check className={GROUP_CONTENT_MOTION_CLASSES} size={16} />
-				)}
-				<span className={`action-copy ${GROUP_CONTENT_MOTION_CLASSES}`}>
-					{activeFile?.reviewed ? "Unreview" : "Review + next"}
-				</span>
-			</button>
-			<button
-				aria-label={activeFileFullyStaged ? "Unstage current file" : "Stage current file"}
-				className={`icon-button stage-action ${BUTTON_MOTION_CLASSES}`}
-				disabled={!activeFile || stageBusy || bulkStageBusy}
-				onClick={onToggleStage}
-				title={activeFileFullyStaged ? "Unstage file" : "Stage file"}
-				type="button"
+				{activeFile?.reviewed ? "Unreview" : "Review"}
+			</Button>
+			<Button
+				accessibilityLabel={activeFileFullyStaged ? "Unstage current file" : "Stage current file"}
+				className="min-w-20 sm:max-w-36"
+				disabled={!activeFile || bulkStageBusy}
+				leftIcon={GitPullRequestArrow}
+				loading={stageBusy}
+				onPress={onToggleStage}
+				size="sm"
+				variant={activeFileFullyStaged ? "primary" : "outline"}
 			>
-				{stageBusy || bulkStageBusy ? (
-					<LoaderCircle className="spinner" size={19} />
-				) : (
-					<GitPullRequestArrow
-						className={GROUP_CONTENT_MOTION_CLASSES}
-						color={activeFile?.staged ? "var(--accent)" : undefined}
-						size={19}
-					/>
-				)}
-				<span className={`stage-copy ${GROUP_CONTENT_MOTION_CLASSES}`}>
-					{activeFileFullyStaged ? "Unstage" : "Stage"}
-				</span>
-			</button>
-		</nav>
+				{activeFileFullyStaged ? "Unstage" : "Stage"}
+			</Button>
+		</View>
 	);
 }

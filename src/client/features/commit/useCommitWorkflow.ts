@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
 	CodexGenerationPreferences,
 	CommitMessageCapability,
@@ -128,66 +128,62 @@ export function useCommitWorkflow({
 		stagedCount,
 	]);
 
-	const commit = useCallback(
-		async (event?: FormEvent) => {
-			event?.preventDefault();
-			const normalizedMessage = message.trim();
-			if (!normalizedMessage || !csrfToken || !repositoryId || busy || stagedCount === 0) {
+	const commit = useCallback(async () => {
+		const normalizedMessage = message.trim();
+		if (!normalizedMessage || !csrfToken || !repositoryId || busy || stagedCount === 0) {
+			return;
+		}
+		const activeRepositoryId = repositoryId;
+		const controller = new AbortController();
+		commitRequestRef.current?.abort();
+		commitRequestRef.current = controller;
+		setBusy(true);
+		try {
+			const response = await api.commit(
+				activeRepositoryId,
+				{ message: normalizedMessage, operationRevision },
+				csrfToken,
+				controller.signal,
+			);
+			if (controller.signal.aborted || repositoryIdRef.current !== activeRepositoryId) {
 				return;
 			}
-			const activeRepositoryId = repositoryId;
-			const controller = new AbortController();
-			commitRequestRef.current?.abort();
-			commitRequestRef.current = controller;
-			setBusy(true);
-			try {
-				const response = await api.commit(
-					activeRepositoryId,
-					{ message: normalizedMessage, operationRevision },
-					csrfToken,
-					controller.signal,
-				);
-				if (controller.signal.aborted || repositoryIdRef.current !== activeRepositoryId) {
-					return;
-				}
-				operationRevisionRef.current = response.operationRevision;
-				onOperationRevision(response.operationRevision);
-				setOpen(false);
-				setMessage("");
-				await Promise.all([refreshChanges(), onCommittedStateRefresh()]);
-				if (controller.signal.aborted || repositoryIdRef.current !== activeRepositoryId) {
-					return;
-				}
-				showToast(`Committed ${response.commit.slice(0, 7)}`);
-			} catch (error) {
-				if (
-					controller.signal.aborted ||
-					repositoryIdRef.current !== activeRepositoryId ||
-					isAbortError(error)
-				) {
-					return;
-				}
-				reportFailure(error, "Commit staged changes");
-				if (error instanceof ApiError && error.status === 409) void refreshChanges();
-			} finally {
-				if (commitRequestRef.current === controller) commitRequestRef.current = null;
-				if (repositoryIdRef.current === activeRepositoryId) setBusy(false);
+			operationRevisionRef.current = response.operationRevision;
+			onOperationRevision(response.operationRevision);
+			setOpen(false);
+			setMessage("");
+			await Promise.all([refreshChanges(), onCommittedStateRefresh()]);
+			if (controller.signal.aborted || repositoryIdRef.current !== activeRepositoryId) {
+				return;
 			}
-		},
-		[
-			busy,
-			csrfToken,
-			message,
-			onCommittedStateRefresh,
-			onOperationRevision,
-			operationRevision,
-			refreshChanges,
-			reportFailure,
-			repositoryId,
-			showToast,
-			stagedCount,
-		],
-	);
+			showToast(`Committed ${response.commit.slice(0, 7)}`);
+		} catch (error) {
+			if (
+				controller.signal.aborted ||
+				repositoryIdRef.current !== activeRepositoryId ||
+				isAbortError(error)
+			) {
+				return;
+			}
+			reportFailure(error, "Commit staged changes");
+			if (error instanceof ApiError && error.status === 409) void refreshChanges();
+		} finally {
+			if (commitRequestRef.current === controller) commitRequestRef.current = null;
+			if (repositoryIdRef.current === activeRepositoryId) setBusy(false);
+		}
+	}, [
+		busy,
+		csrfToken,
+		message,
+		onCommittedStateRefresh,
+		onOperationRevision,
+		operationRevision,
+		refreshChanges,
+		reportFailure,
+		repositoryId,
+		showToast,
+		stagedCount,
+	]);
 
 	return {
 		busy,

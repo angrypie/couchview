@@ -1,13 +1,17 @@
-import { type Dispatch, type MutableRefObject, type SetStateAction, useEffect } from "react";
+import {
+	type Dispatch,
+	type MutableRefObject,
+	type SetStateAction,
+	useEffect,
+	useRef,
+} from "react";
 
 import {
-	API_ROUTES,
 	TERMINAL_ENDED_CLOSE_CODE,
 	TERMINAL_LEASE_EXPIRED_CLOSE_CODE,
 	TERMINAL_P2P_FAILED_CLOSE_CODE,
 	type TerminalWebRtcConfiguration,
 } from "../../../shared/contracts.ts";
-import { ApiError, api } from "../../api.ts";
 import type { BrowserTerminalRenderer } from "../../ghosttyTerminal.ts";
 import {
 	type TerminalKeyLatencySummary,
@@ -16,6 +20,11 @@ import {
 	TerminalRoundTripTracker,
 } from "../../terminalLatency.ts";
 import { type TerminalTransportStatus, TerminalWebRtcUpgrade } from "../../terminalWebRtc.ts";
+import {
+	type TerminalDomHostActions,
+	TerminalDomRequestError,
+	unwrapTerminalDomResult,
+} from "./terminalDomContract.ts";
 
 const LEASE_RETRY_INTERVAL_MS = 5_000;
 
@@ -29,11 +38,14 @@ export type ConnectionState =
 	| "ended"
 	| "error";
 
-interface TerminalAttachmentOptions {
+interface TerminalAttachmentOptions
+	extends Pick<
+		TerminalDomHostActions,
+		"confirm" | "createAttachment" | "renewLease" | "terminalWebSocketUrl"
+	> {
 	activeRef: MutableRefObject<boolean>;
 	available: boolean;
 	clientIdRef: MutableRefObject<string | null>;
-	csrfToken: string;
 	expectedCloseRef: MutableRefObject<boolean>;
 	latencyEnabledRef: MutableRefObject<boolean>;
 	latencyTrackerRef: MutableRefObject<TerminalLatencyTracker | null>;
@@ -58,17 +70,18 @@ interface TerminalAttachmentOptions {
 	webRtcRef: MutableRefObject<TerminalWebRtcUpgrade | null>;
 }
 
-function terminalWebSocketUrl(repositoryId: string): string {
-	const url = new URL(API_ROUTES.terminalSocket(repositoryId), window.location.href);
-	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	return url.toString();
+function useLatestRef<Value>(value: Value): MutableRefObject<Value> {
+	const ref = useRef(value);
+	ref.current = value;
+	return ref;
 }
 
 export function useTerminalAttachment({
 	activeRef,
 	available,
 	clientIdRef,
-	csrfToken,
+	confirm,
+	createAttachment,
 	expectedCloseRef,
 	latencyEnabledRef,
 	latencyTrackerRef,
@@ -78,6 +91,7 @@ export function useTerminalAttachment({
 	rendererGeneration,
 	rendererReady,
 	rendererRef,
+	renewLease,
 	repositoryId,
 	requestReconnect,
 	retryP2pRef,
@@ -89,9 +103,16 @@ export function useTerminalAttachment({
 	setTransportStatus,
 	socketRef,
 	suppressAutomaticP2pRef,
+	terminalWebSocketUrl,
 	webRtcConfigurationRef,
 	webRtcRef,
 }: TerminalAttachmentOptions) {
+	// Expo DOM callback proxies may receive a new identity on every parent render.
+	// Keep the live bridge targets current without treating identity churn as a
+	// reason to dispose a healthy terminal attachment.
+	const confirmRef = useLatestRef(confirm);
+	const createAttachmentRef = useLatestRef(createAttachment);
+	const renewLeaseRef = useLatestRef(renewLease);
 	useEffect(() => {
 		if (!rendererReady || !available) return;
 		let disposed = false;
@@ -121,13 +142,9 @@ export function useTerminalAttachment({
 				leaseTimer = null;
 				if (disposed || !directActive || !webRtcConfiguration) return;
 				leaseAbort = new AbortController();
-				void api
-					.renewTerminalLease(
-						repositoryId,
-						{ clientId: clientIdRef.current! },
-						csrfToken,
-						leaseAbort.signal,
-					)
+				void renewLeaseRef
+					.current({ clientId: clientIdRef.current! })
+					.then(unwrapTerminalDomResult)
 					.then(() => {
 						leaseAbort = null;
 						if (!disposed && directActive && webRtcConfiguration) {
@@ -137,7 +154,7 @@ export function useTerminalAttachment({
 					.catch((error) => {
 						leaseAbort = null;
 						const retryable =
-							!(error instanceof ApiError) ||
+							!(error instanceof TerminalDomRequestError) ||
 							error.status === 408 ||
 							error.status === 425 ||
 							error.status === 429 ||
@@ -195,16 +212,14 @@ export function useTerminalAttachment({
 			const renderer = rendererRef.current;
 			if (!renderer || disposed) return;
 			try {
-				const attachment = await api.createTerminalAttachment(
-					repositoryId,
-					{
+				const attachment = unwrapTerminalDomResult(
+					await createAttachmentRef.current({
 						clientId: clientIdRef.current!,
 						profileId: "tmux",
 						cols: Math.max(2, renderer.cols || 80),
 						rows: Math.max(1, renderer.rows || 24),
 						takeover,
-					},
-					csrfToken,
+					}),
 				);
 				if (disposed) return;
 				webRtcConfiguration = attachment.webRtc ?? null;
@@ -212,7 +227,7 @@ export function useTerminalAttachment({
 				setTransportStatus(
 					webRtcConfiguration && suppressAutomaticP2pRef.current ? "fallback" : "websocket",
 				);
-				socket = new WebSocket(terminalWebSocketUrl(repositoryId), [
+				socket = new WebSocket(terminalWebSocketUrl, [
 					attachment.protocol,
 					`couchview-ticket.${attachment.ticket}`,
 				]);
@@ -338,9 +353,9 @@ export function useTerminalAttachment({
 				});
 			} catch (error) {
 				if (disposed) return;
-				if (error instanceof ApiError && error.code === "terminal_in_use") {
+				if (error instanceof TerminalDomRequestError && error.code === "terminal_in_use") {
 					setConnectionState("in-use");
-					const confirmed = window.confirm(
+					const confirmed = await confirmRef.current(
 						"The tmux terminal is active in another browser tab. Take control here?",
 					);
 					if (confirmed) await connect(true);
@@ -349,7 +364,7 @@ export function useTerminalAttachment({
 				const message = error instanceof Error ? error.message : "The terminal connection failed.";
 				setConnectionError(message);
 				if (
-					error instanceof ApiError &&
+					error instanceof TerminalDomRequestError &&
 					["terminal_disabled", "terminal_unavailable", "terminal_size_invalid"].includes(
 						error.code,
 					)
@@ -377,11 +392,11 @@ export function useTerminalAttachment({
 		};
 	}, [
 		available,
-		csrfToken,
 		reconnectNonce,
 		rendererGeneration,
 		rendererReady,
 		repositoryId,
 		requestReconnect,
+		terminalWebSocketUrl,
 	]);
 }

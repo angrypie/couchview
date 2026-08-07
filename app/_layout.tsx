@@ -1,24 +1,28 @@
-import { Stack } from "expo-router/stack";
+import { Slot, usePathname } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { useResolveClassNames } from "uniwind";
 
 import { GluestackUIProvider } from "../src/client/components/ui/gluestack-ui-provider";
-import {
-	NativePreferencesProvider,
-	useNativePreferences,
-} from "../src/client/features/nativePreferences/NativePreferencesProvider.tsx";
+import { ProductRoot } from "../src/client/expo/ProductRoot";
+import type { ProductRouteMode } from "../src/client/expo/productRouteMode.ts";
 import { NativeServerProvider } from "../src/client/features/nativeServers/NativeServerProvider.tsx";
+import { ThemeProvider, useAppTheme } from "../src/client/features/settings/ThemeProvider.tsx";
+import { AppStoreProvider } from "../src/client/lib/store";
 import "../native.css";
 
-function NativeNavigation() {
-	const { hydrated, resolvedTheme } = useNativePreferences();
-	const contentStyle = useResolveClassNames("bg-background");
-	const headerStyle = useResolveClassNames("bg-card");
-	const headerTitleStyle = useResolveClassNames("text-foreground");
-	const headerTintColor =
-		typeof headerTitleStyle.color === "string" ? headerTitleStyle.color : undefined;
+const WORKSPACE_MODE_BY_PATH: Readonly<Record<string, ProductRouteMode>> = {
+	"/": "review",
+	"/artifacts": "artifacts",
+	"/history": "history",
+	"/settings": "settings",
+	"/terminal": "terminal",
+};
+
+function AppNavigation() {
+	const { hydrated, resolvedTheme } = useAppTheme();
+	const pathname = usePathname();
+	const workspaceMode = WORKSPACE_MODE_BY_PATH[pathname];
 	if (!hydrated) {
 		return (
 			<GluestackUIProvider>
@@ -28,7 +32,7 @@ function NativeNavigation() {
 					accessibilityRole="progressbar"
 					className="flex-1 items-center justify-center bg-background"
 				>
-					<ActivityIndicator color={headerTintColor} />
+					<ActivityIndicator />
 				</View>
 			</GluestackUIProvider>
 		);
@@ -38,23 +42,10 @@ function NativeNavigation() {
 		<GluestackUIProvider>
 			<NativeServerProvider>
 				<StatusBar style={resolvedTheme === "dark" ? "light" : "dark"} />
-				<Stack
-					screenOptions={{
-						contentStyle,
-						headerBackButtonDisplayMode: "minimal",
-						headerShadowVisible: false,
-						headerStyle,
-						headerTintColor,
-					}}
-				>
-					<Stack.Screen name="index" options={{ headerShown: false, title: "Couchview" }} />
-					<Stack.Screen name="history" options={{ headerShown: false, title: "History" }} />
-					<Stack.Screen name="artifacts" options={{ headerShown: false, title: "Artifacts" }} />
-					<Stack.Screen name="settings" options={{ headerShown: false, title: "Settings" }} />
-					<Stack.Screen name="servers" options={{ presentation: "formSheet", title: "Servers" }} />
-					<Stack.Screen name="pair" options={{ presentation: "formSheet", title: "Pair server" }} />
-					<Stack.Screen name="terminal" options={{ headerShown: false, title: "Terminal" }} />
-				</Stack>
+				<View className="min-h-0 flex-1 bg-background">
+					{workspaceMode ? <ProductRoot mode={workspaceMode} /> : null}
+					<Slot />
+				</View>
 			</NativeServerProvider>
 		</GluestackUIProvider>
 	);
@@ -62,10 +53,12 @@ function NativeNavigation() {
 
 export default function RootLayout() {
 	return (
-		<SafeAreaProvider>
-			<NativePreferencesProvider>
-				<NativeNavigation />
-			</NativePreferencesProvider>
-		</SafeAreaProvider>
+		<AppStoreProvider>
+			<SafeAreaProvider>
+				<ThemeProvider>
+					<AppNavigation />
+				</ThemeProvider>
+			</SafeAreaProvider>
+		</AppStoreProvider>
 	);
 }

@@ -1,17 +1,19 @@
+import { Text } from "./ui";
+
 interface HighlightedMatchProps {
 	text: string;
 	query: string;
 }
 
 export function HighlightedMatch({ text, query }: HighlightedMatchProps) {
-	if (!query) return text;
+	if (!query) return <Text>{text}</Text>;
 	const start = text.indexOf(query);
-	if (start < 0) return text;
+	if (start < 0) return <Text>{text}</Text>;
 	return (
-		<>
+		<Text>
 			{text.slice(0, start)}
-			<mark className="match">{text.slice(start, start + query.length)}</mark>
+			<Text highlight>{text.slice(start, start + query.length)}</Text>
 			{text.slice(start + query.length)}
-		</>
+		</Text>
 	);
 }

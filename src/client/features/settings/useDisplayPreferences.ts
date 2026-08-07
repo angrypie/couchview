@@ -1,11 +1,11 @@
-import { useCallback, useLayoutEffect, useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
 	effectiveKeybindings,
 	type SettingsProfile,
 	type SettingsProfileData,
 } from "../../../shared/settings.ts";
 import type { ResolvedTheme } from "../../../shared/theme.ts";
-import { codeFontStack, terminalRendererConfig } from "../../typographyPreferences.ts";
+import { terminalRendererConfig } from "../../typographyPreferences.ts";
 
 interface UseDisplayPreferencesOptions {
 	profile: SettingsProfile;
@@ -63,14 +63,6 @@ export function useDisplayPreferences({
 		},
 		[updateProfileData],
 	);
-
-	useLayoutEffect(() => {
-		document.documentElement.style.setProperty("--code-size", `${typography.diff.fontSize}px`);
-		document.documentElement.style.setProperty(
-			"--code-font-family",
-			codeFontStack(typography.diff.fontFamily),
-		);
-	}, [typography.diff.fontFamily, typography.diff.fontSize]);
 
 	return {
 		commandBindings,
