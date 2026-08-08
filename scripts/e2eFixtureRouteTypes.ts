@@ -27,6 +27,7 @@ export interface FixtureMutableState {
 	packageRuns: PackageRunSummary[];
 	settingsProfileCounter: number;
 	settingsProfiles: SettingsProfile[];
+	speechReady: boolean;
 	terminal: FixtureTerminal;
 	reset(): void;
 }

@@ -58,6 +58,7 @@ const state: FixtureMutableState = {
 	packageRuns: [],
 	settingsProfileCounter: 0,
 	settingsProfiles: [defaultSettingsProfile()],
+	speechReady: false,
 	terminal: new FixtureTerminal(),
 	reset() {
 		for (const timer of this.artifactTimers) clearTimeout(timer);
@@ -72,6 +73,7 @@ const state: FixtureMutableState = {
 		this.packageRuns = [];
 		this.settingsProfileCounter = 0;
 		this.settingsProfiles = [defaultSettingsProfile()];
+		this.speechReady = false;
 		this.operationRevision = "fixture-operation-1";
 		this.gitDetached = false;
 		this.gitHead = repository.head;

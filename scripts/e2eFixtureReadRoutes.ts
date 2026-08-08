@@ -145,6 +145,14 @@ export function handleFixtureReadRoute(
 				reason: null,
 				p2pEnabled: true,
 			},
+			speech: {
+				enabled: state.speechReady,
+				ready: state.speechReady,
+				model: "parakeet-tdt-0.6b-v3-int8",
+				maxDurationMs: 300_000,
+				maxUploadBytes: 32 * 1024 * 1024,
+				reason: state.speechReady ? null : "Speech is disabled in the browser fixture.",
+			},
 			settingsProfiles: state.settingsProfiles,
 		} satisfies BootstrapResponse);
 	}

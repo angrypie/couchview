@@ -30,6 +30,8 @@ import { handleRepositoryApi } from "./serverRepositoryRoutes.ts";
 import { createRequestHandler } from "./serverRequestHandler.ts";
 import { addSecurityHeaders, errorResponse } from "./serverResponses.ts";
 import { authorizeApiRequest, handleSystemApi } from "./serverSystemRoutes.ts";
+import { SpeechService, type SpeechServiceOptions } from "./speech/SpeechService.ts";
+import { handleSpeechApi } from "./speech/speechRoute.ts";
 import {
 	TerminalSessionService,
 	type TerminalSocketData,
@@ -37,7 +39,7 @@ import {
 } from "./terminalSessions.ts";
 
 const _encoder = new TextEncoder();
-export const INSTANCE_PROTOCOL_VERSION = 5;
+export const INSTANCE_PROTOCOL_VERSION = 6;
 const APP_VERSION = packageJson.version;
 
 export interface CouchviewAppOptions {
@@ -75,6 +77,7 @@ export interface CouchviewAppOptions {
 	remoteBridgeService?: RemoteBridgeService;
 	nativeClientService?: NativeClientService;
 	artifactStore?: ArtifactStore;
+	speech?: SpeechServiceOptions;
 }
 
 export type CouchviewSocketData = TerminalSocketData | RemoteBridgeSocketData;
@@ -89,6 +92,7 @@ export interface CouchviewApp {
 	terminalSessions: TerminalSessionService;
 	remoteBridge: RemoteBridgeService;
 	nativeClients: NativeClientService;
+	speech: SpeechService;
 	remoteBridgeOriginAccess: string;
 	websocket: Bun.WebSocketHandler<CouchviewSocketData>;
 	database: StateDatabase;
@@ -180,6 +184,12 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		runner: commandRunner,
 		store: options.artifactStore ?? ArtifactStore.besideDatabase(stateDatabasePath),
 	});
+	const speech = new SpeechService(
+		options.speech ?? {
+			enabled: false,
+			reason: "Start Couchview with --enable-speech to use host transcription.",
+		},
+	);
 	const commitMessages = options.commitMessages ?? new CodexCommitMessageService();
 	const artifactProposals = options.artifactProposals ?? new CodexArtifactProposalService();
 	let initial: Awaited<ReturnType<RepositoryManager["register"]>>;
@@ -188,6 +198,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		initial = await repositories.register(options.root);
 		initialBackend = await repositories.get(initial.repository.id);
 	} catch (error) {
+		speech.close();
 		artifactProposals.close();
 		commitMessages.close();
 		packageCommands.close();
@@ -240,6 +251,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	) {
 		remoteBridge.close();
 		terminalSessions.close();
+		speech.close();
 		artifactProposals.close();
 		commitMessages.close();
 		packageCommands.close();
@@ -298,6 +310,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 				commitMessages,
 				terminalSessions,
 				remoteBridge,
+				speech,
 				restart,
 				defaultRepositoryId: () => defaultRepositoryId,
 				registerRepository,
@@ -307,6 +320,8 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 			url,
 		);
 		if (systemResponse) return systemResponse;
+		const speechResponse = await handleSpeechApi(speech, request, url);
+		if (speechResponse) return speechResponse;
 		return handleRepositoryApi(
 			{
 				nativeClient,
@@ -398,6 +413,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 		terminalSessions,
 		remoteBridge,
 		nativeClients,
+		speech,
 		remoteBridgeOriginAccess,
 		websocket,
 		database,
@@ -450,6 +466,7 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 			database.removeServerInstance(instanceId);
 			terminalSessions.close();
 			remoteBridge.close();
+			speech.close();
 			artifactProposals.close();
 			commitMessages.close();
 			packageCommands.close();

@@ -2,9 +2,8 @@ import packageJson from "../../package.json" with { type: "json" };
 
 export const CLI_VERSION = packageJson.version;
 
-export type CliCommandName = "serve" | "restart" | "completion" | "bridge" | "artifacts";
-export type CompletionShell = "zsh" | "bash" | "fish";
-type ArtifactCliAction = "list" | "build" | "download" | "pull";
+export type CliCommandName = "serve" | "restart" | "bridge" | "artifacts" | "help";
+export type ArtifactCliAction = "list" | "build" | "download" | "pull";
 
 export interface ParsedArtifactArguments {
 	action: ArtifactCliAction;
@@ -30,12 +29,14 @@ export interface ParsedServeArguments {
 	remoteBridgeMode: "enabled" | "disabled" | undefined;
 	remoteBridgeP2pMode: "enabled" | "disabled" | undefined;
 	remoteBridgeOriginAccess: string | undefined;
+	speechMode: "enabled" | "disabled" | undefined;
 	explicit: {
 		repo: boolean;
 		host: boolean;
 		port: boolean;
 		terminal: boolean;
 		remoteBridge: boolean;
+		speech: boolean;
 	};
 }
 
@@ -56,11 +57,6 @@ export type CliInvocation =
 			kind: "restart";
 			argv: string[];
 			parsed: ParsedRestartArguments;
-	  }
-	| {
-			kind: "completion";
-			shell: CompletionShell;
-			install: boolean;
 	  }
 	| {
 			kind: "bridge-pair";
@@ -95,7 +91,7 @@ export type CliInvocation =
 	  }
 	| {
 			kind: "help";
-			command: CliCommandName | null;
+			path: string[];
 	  }
 	| {
 			kind: "version";
@@ -104,7 +100,7 @@ export type CliInvocation =
 export class CliUsageError extends Error {
 	constructor(
 		message: string,
-		readonly helpCommand: CliCommandName | null = null,
+		readonly helpCommand: string | null = null,
 	) {
 		super(message);
 		this.name = "CliUsageError";
@@ -133,6 +129,7 @@ export interface InteractiveServeDefaults {
 	terminalP2pMode: "auto" | "enabled" | "disabled";
 	remoteBridgeMode?: "auto" | "enabled" | "disabled";
 	remoteBridgeP2pMode?: "auto" | "enabled" | "disabled";
+	speechMode?: "auto" | "enabled" | "disabled";
 }
 
 export interface InteractiveValidators {

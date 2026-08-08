@@ -10,6 +10,7 @@ import {
 	parseArtifactCommandLine,
 	quoteArtifactInvocation,
 } from "../../../shared/contracts.ts";
+import { SpeechInput } from "../speech";
 import {
 	Button,
 	Card,
@@ -200,18 +201,16 @@ export function ArtifactDefinitionForm({
 						<Text bold size="sm">
 							What should this artifact produce?
 						</Text>
-						<Input>
-							<InputField
-								accessibilityLabel="What should this artifact produce?"
-								autoFocus
-								maxLength={2_000}
-								onChangeText={setProposalRequest}
-								onSubmitEditing={() => void propose()}
-								placeholder="Optional · static build, or compile with Bun"
-								returnKeyType="go"
-								value={proposalRequest}
-							/>
-						</Input>
+						<SpeechInput
+							accessibilityLabel="What should this artifact produce?"
+							autoFocus
+							maxLength={2_000}
+							onChangeText={setProposalRequest}
+							onSubmitEditing={() => void propose()}
+							placeholder="Optional · static build, or compile with Bun"
+							returnKeyType="go"
+							value={proposalRequest}
+						/>
 						<Button
 							disabled={proposalBusy}
 							leftIcon={Sparkles}

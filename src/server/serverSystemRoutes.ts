@@ -45,6 +45,7 @@ import {
 	tokenMatches,
 } from "./serverHttp.ts";
 import { handleNativeClientApi } from "./serverNativeClientRoutes.ts";
+import type { SpeechService } from "./speech/SpeechService.ts";
 import type { TerminalSessionService } from "./terminalSessions.ts";
 
 interface SystemRouteContext {
@@ -65,6 +66,7 @@ interface SystemRouteContext {
 	commitMessages: CommitMessageGenerator;
 	terminalSessions: TerminalSessionService;
 	remoteBridge: RemoteBridgeService;
+	speech: SpeechService;
 	restart: RestartCapability & { request?(): Promise<void> };
 	defaultRepositoryId: () => string | null;
 	registerRepository(root: string): Promise<RegisterRepositoryResponse>;
@@ -237,6 +239,7 @@ export async function handleSystemApi(
 			remoteBridgeStunUrls: [...context.remoteBridge.stunUrls],
 			remoteBridgeTargetPort: context.remoteBridge.targetPort,
 			remoteBridgeOriginAccess: context.remoteBridgeOriginAccess,
+			speechEnabled: context.speech.enabled,
 		};
 		return json(response);
 	}
@@ -255,6 +258,7 @@ export async function handleSystemApi(
 			artifactProposal: context.artifactProposals.capability,
 			terminal: context.terminalSessions.capability,
 			remoteBridge: context.remoteBridge.capability,
+			speech: context.speech.capability,
 		};
 		return json(response);
 	}

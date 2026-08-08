@@ -35,6 +35,7 @@ export const API_ROUTES = {
 	nativeClientPairings: "/api/native-clients/pairings",
 	nativeClientPairingClaim: "/api/native-clients/pairings/claim",
 	restart: "/api/restart",
+	speechTranscriptions: "/api/speech/transcriptions",
 	repositories: "/api/repositories",
 	repositoryDirectories: "/api/repository-directories",
 	settingsProfiles: "/api/settings/profiles",
@@ -170,6 +171,7 @@ export interface BootstrapResponse {
 	artifactProposal: CodexCapability;
 	terminal: TerminalCapability;
 	remoteBridge: RemoteBridgeCapability;
+	speech: SpeechCapability;
 }
 
 export interface InstanceResponse {
@@ -189,6 +191,7 @@ export interface InstanceResponse {
 	remoteBridgeStunUrls: string[];
 	remoteBridgeTargetPort: number;
 	remoteBridgeOriginAccess: string;
+	speechEnabled: boolean;
 }
 
 export interface RestartCapability {
@@ -209,6 +212,41 @@ export interface CommitMessageCapability {
 export interface CodexCapability {
 	available: boolean;
 	reason: string | null;
+}
+
+export interface SpeechCapability {
+	enabled: boolean;
+	ready: boolean;
+	model: string;
+	maxDurationMs: number;
+	maxUploadBytes: number;
+	reason: string | null;
+}
+
+export type SpeechErrorCode =
+	| "speech_aborted"
+	| "speech_audio_invalid"
+	| "speech_audio_too_large"
+	| "speech_audio_too_long"
+	| "speech_audio_too_short"
+	| "speech_busy"
+	| "speech_content_type_invalid"
+	| "speech_sidecar_failed"
+	| "speech_timeout"
+	| "speech_unavailable";
+
+export interface SpeechErrorResponse {
+	error: {
+		code: SpeechErrorCode;
+		message: string;
+	};
+}
+
+export interface SpeechTranscriptionResponse {
+	text: string;
+	language: string | null;
+	durationMs: number;
+	inferenceMs: number;
 }
 
 export interface TerminalProfileSummary {

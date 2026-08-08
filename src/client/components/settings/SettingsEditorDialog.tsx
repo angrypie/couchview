@@ -1,6 +1,7 @@
 import { COMMAND_DEFINITIONS } from "../../commands.ts";
 import type { ProfileSettingsEditor } from "../../features/settings/useProfileSettingsEditor.ts";
-import { Button, Dialog, Input, InputField, Text } from "../ui";
+import { SpeechInput } from "../speech";
+import { Button, Dialog, Text } from "../ui";
 
 function dialogCopy(editor: ProfileSettingsEditor): {
 	confirmLabel: string;
@@ -113,19 +114,18 @@ export function SettingsEditorDialog({
 			title={copy.title}
 		>
 			{hasTextInput || hasShortcutInput ? (
-				<Input>
-					<InputField
-						accessibilityLabel={hasShortcutInput ? "Shortcut" : "Profile name"}
-						autoCapitalize="none"
-						autoCorrect={false}
-						autoFocus
-						maxLength={hasShortcutInput ? 128 : 64}
-						onChangeText={editor.setDialogValue}
-						onSubmitEditing={() => void editor.confirmDialog()}
-						returnKeyType="done"
-						value={dialog.value}
-					/>
-				</Input>
+				<SpeechInput
+					accessibilityLabel={hasShortcutInput ? "Shortcut" : "Profile name"}
+					autoCapitalize="none"
+					autoCorrect={false}
+					autoFocus
+					maxLength={hasShortcutInput ? 128 : 64}
+					onChangeText={editor.setDialogValue}
+					onSubmitEditing={() => void editor.confirmDialog()}
+					returnKeyType="done"
+					speechEnabled={!hasShortcutInput}
+					value={dialog.value}
+				/>
 			) : null}
 			{dialog?.kind === "shortcut" && dialog.error ? (
 				<Text accessibilityRole="alert" size="sm" tone="destructive">

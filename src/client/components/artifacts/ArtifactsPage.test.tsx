@@ -12,7 +12,10 @@ import "../../appTestNativeRuntime.tsx";
 import type { ArtifactDownloadRequest } from "../../lib/artifactDownloadTypes.ts";
 
 mock.module("uniwind", () => ({
+	ThemeTransitionPreset: { Fade: 1, None: 0 },
+	Uniwind: { setTheme: () => undefined },
 	useResolveClassNames: () => ({ color: "#111827" }),
+	useUniwind: () => ({ hasAdaptiveThemes: true, theme: "dark" }),
 	withUniwind: <Component,>(component: Component) => component,
 }));
 

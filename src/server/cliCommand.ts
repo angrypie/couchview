@@ -1,214 +1,357 @@
 import path from "node:path";
-import { parseArgs } from "node:util";
+
+import { type ArgsDef, type ParsedArgs, parseArgs } from "citty";
 
 import {
 	REMOTE_BRIDGE_NO_ORIGIN_ACCESS,
 	remoteBridgeOriginAccessIdIsValid,
 } from "../shared/contracts.ts";
 import {
-	type CliCommandName,
+	artifactActionNames,
+	artifactBuildArgs,
+	artifactDownloadArgs,
+	artifactListArgs,
+	artifactPullArgs,
+	bridgeActionNames,
+	bridgeClaudeArgs,
+	bridgeCodexArgs,
+	bridgeCommandArgs,
+	bridgePairArgs,
+	bridgeProxyArgs,
+	bridgeTerminalArgs,
+	cliHelpPathExists,
+	defaultServeArgs,
+	explicitServeArgs,
+	helpCommandArgs,
+	restartArgs,
+	topLevelCommandNames,
+} from "./cliCommandDefinitions.ts";
+import {
+	type ArtifactCliAction,
 	type CliInvocation,
 	CliUsageError,
-	type CompletionShell,
 	type ParsedArtifactArguments,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
-import {
-	type CliOptionDefinition,
-	type CliOptionType,
-	commandNames,
-	completionShells,
-	nearestValue,
-	optionsFor,
-} from "./cliOptions.ts";
 
+export { renderCliHelp } from "./cliCommandDefinitions.ts";
 export {
 	CLI_VERSION,
 	type CliInvocation,
 	CliPromptInterrupted,
 	CliUsageError,
-	type CompletionShell,
 	type InteractivePrompter,
+	type ParsedArtifactArguments,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
-export { fishCompletionPath, renderCliHelp, renderCompletion } from "./cliHelp.ts";
 export { createInteractivePrompter, promptForServeArguments } from "./cliPrompt.ts";
 
-function normalizeSingleDashValues(command: CliCommandName, args: string[]): string[] {
-	const stringOptions = new Map<string, CliOptionDefinition>();
-	for (const option of optionsFor(command)) {
-		if (option.type !== "string") continue;
-		stringOptions.set(`--${option.name}`, option);
-		if (option.short) stringOptions.set(`-${option.short}`, option);
+interface OptionDescriptor {
+	canonicalName: string;
+	type: "boolean" | "string" | "enum";
+}
+
+interface PreparedArguments {
+	rawArgs: string[];
+	enabledBooleans: Set<string>;
+}
+
+function editDistance(left: string, right: string): number {
+	const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+	for (let leftIndex = 1; leftIndex <= left.length; leftIndex += 1) {
+		const current = [leftIndex];
+		for (let rightIndex = 1; rightIndex <= right.length; rightIndex += 1) {
+			current[rightIndex] = Math.min(
+				(current[rightIndex - 1] ?? 0) + 1,
+				(previous[rightIndex] ?? 0) + 1,
+				(previous[rightIndex - 1] ?? 0) + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+			);
+		}
+		previous.splice(0, previous.length, ...current);
 	}
-	const normalized: string[] = [];
-	for (let index = 0; index < args.length; index += 1) {
-		const argument = args[index];
-		if (argument === "--") {
-			normalized.push(...args.slice(index));
+	return previous[right.length] ?? Number.POSITIVE_INFINITY;
+}
+
+function nearestValue(value: string, candidates: readonly string[]): string | null {
+	let nearest: string | null = null;
+	let nearestDistance = Number.POSITIVE_INFINITY;
+	let nearestPrefixLength = -1;
+	for (const candidate of candidates) {
+		const normalizedValue = value.toLowerCase();
+		const normalizedCandidate = candidate.toLowerCase();
+		const distance = editDistance(normalizedValue, normalizedCandidate);
+		let prefixLength = 0;
+		while (
+			normalizedValue[prefixLength] !== undefined &&
+			normalizedValue[prefixLength] === normalizedCandidate[prefixLength]
+		) {
+			prefixLength += 1;
+		}
+		if (
+			distance < nearestDistance ||
+			(distance === nearestDistance && prefixLength > nearestPrefixLength)
+		) {
+			nearest = candidate;
+			nearestDistance = distance;
+			nearestPrefixLength = prefixLength;
+		}
+	}
+	if (!nearest) return null;
+	const comparisonLength = Math.max(value.length, nearest.length);
+	return nearestDistance <= 2 && nearestDistance <= Math.ceil(comparisonLength / 3)
+		? nearest
+		: null;
+}
+
+function optionLookups(definition: ArgsDef): {
+	long: Map<string, OptionDescriptor>;
+	short: Map<string, OptionDescriptor>;
+	candidates: string[];
+} {
+	const long = new Map<string, OptionDescriptor>();
+	const short = new Map<string, OptionDescriptor>();
+	const candidates: string[] = [];
+	for (const [name, argument] of Object.entries(definition)) {
+		if (!argument.type || argument.type === "positional") continue;
+		const descriptor: OptionDescriptor = { canonicalName: name, type: argument.type };
+		long.set(name, descriptor);
+		candidates.push(`--${name}`);
+		const alias = "alias" in argument ? argument.alias : undefined;
+		const aliases = Array.isArray(alias) ? alias : alias ? [alias] : [];
+		for (const alias of aliases) {
+			if (alias.length === 1) {
+				short.set(alias, descriptor);
+				candidates.push(`-${alias}`);
+			} else {
+				long.set(alias, descriptor);
+				candidates.push(`--${alias}`);
+			}
+		}
+	}
+	return { long, short, candidates };
+}
+
+function usageError(message: string, helpCommand: string | null): never {
+	throw new CliUsageError(message, helpCommand);
+}
+
+function unknownOption(
+	option: string,
+	candidates: readonly string[],
+	helpCommand: string | null,
+): never {
+	const suggestion = nearestValue(option, candidates);
+	usageError(
+		`Unknown option: ${option}.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+		helpCommand,
+	);
+}
+
+function missingOptionValue(descriptor: OptionDescriptor, option: string): string {
+	const message = new Map<string, string>([
+		["repo", "Repository path is required"],
+		["host", "Host is required"],
+		["port", "Port must be between 1 and 65535"],
+		["url", "Couchview bridge URL is required"],
+		["code", "Couchview bridge pairing code is required"],
+		["profile", "Couchview bridge profile ID is required"],
+		["origin-access", "Couchview bridge origin-access provider is required"],
+		["repository", "Server repository ID or name is required"],
+		["build", "Artifact build ID is required"],
+		["output", "Artifact output file is required"],
+		["remote-bridge-origin-access", "Native bridge origin-access provider is required"],
+	]).get(descriptor.canonicalName);
+	return message ?? `Option '${option}' requires a value.`;
+}
+
+function prepareArguments(
+	rawArgs: string[],
+	definition: ArgsDef,
+	helpCommand: string | null,
+): PreparedArguments {
+	const { long, short, candidates } = optionLookups(definition);
+	const counts = new Map<string, number>();
+	const enabledBooleans = new Set<string>();
+	const normalizedArgs = [...rawArgs];
+	const record = (descriptor: OptionDescriptor, enabled = true) => {
+		const count = (counts.get(descriptor.canonicalName) ?? 0) + 1;
+		if (count > 1) {
+			usageError(`Option '--${descriptor.canonicalName}' may only be provided once.`, helpCommand);
+		}
+		counts.set(descriptor.canonicalName, count);
+		if (descriptor.type === "boolean" && enabled) {
+			enabledBooleans.add(descriptor.canonicalName);
+		}
+	};
+
+	for (let index = 0; index < rawArgs.length; index += 1) {
+		const argument = rawArgs[index];
+		if (argument === undefined) continue;
+		if (argument === "--") break;
+		if (argument.startsWith("--")) {
+			const equalsIndex = argument.indexOf("=");
+			const flag = equalsIndex < 0 ? argument : argument.slice(0, equalsIndex);
+			const descriptor = long.get(flag.slice(2));
+			if (!descriptor) unknownOption(flag, candidates, helpCommand);
+			const inlineValue = equalsIndex < 0 ? undefined : argument.slice(equalsIndex + 1);
+			if (descriptor.type === "boolean") {
+				if (inlineValue !== undefined && inlineValue !== "true" && inlineValue !== "false") {
+					usageError(`Option '${flag}' expects true or false.`, helpCommand);
+				}
+				record(descriptor, inlineValue !== "false");
+				continue;
+			}
+			record(descriptor);
+			if (inlineValue !== undefined) {
+				if (!inlineValue) usageError(missingOptionValue(descriptor, flag), helpCommand);
+				continue;
+			}
+			if (rawArgs[index + 1] === undefined || rawArgs[index + 1]?.startsWith("--")) {
+				usageError(missingOptionValue(descriptor, flag), helpCommand);
+			}
+			index += 1;
+			continue;
+		}
+		if (!argument.startsWith("-") || argument === "-") continue;
+
+		const compact = argument.slice(1);
+		for (let compactIndex = 0; compactIndex < compact.length; compactIndex += 1) {
+			const alias = compact[compactIndex];
+			const descriptor = alias ? short.get(alias) : undefined;
+			if (!descriptor) unknownOption(`-${alias ?? ""}`, candidates, helpCommand);
+			record(descriptor);
+			if (descriptor.type === "boolean") continue;
+			let inlineValue = compact.slice(compactIndex + 1);
+			if (inlineValue.startsWith("=")) {
+				inlineValue = inlineValue.slice(1);
+				normalizedArgs[index] = `-${compact.slice(0, compactIndex + 1)}${inlineValue}`;
+			}
+			if (inlineValue) break;
+			if (rawArgs[index + 1] === undefined || rawArgs[index + 1]?.startsWith("--")) {
+				usageError(missingOptionValue(descriptor, `-${alias}`), helpCommand);
+			}
+			index += 1;
 			break;
 		}
-		const option = argument ? stringOptions.get(argument) : undefined;
-		const value = args[index + 1];
-		if (option && value?.startsWith("-") && !value.startsWith("--")) {
-			normalized.push(`--${option.name}=${value}`);
-			index += 1;
-		} else if (argument !== undefined) {
-			normalized.push(argument);
-		}
 	}
-	return normalized;
+
+	return { rawArgs: normalizedArgs, enabledBooleans };
 }
 
-function parseOptions(command: CliCommandName, args: string[]) {
-	const options: Record<string, { type: CliOptionType; short?: string }> = {};
-	for (const definition of optionsFor(command)) {
-		options[definition.name] = {
-			type: definition.type,
-			...(definition.short ? { short: definition.short } : {}),
-		};
-	}
+function parsePreparedArguments(
+	prepared: PreparedArguments,
+	definition: ArgsDef,
+	helpCommand: string | null,
+): ParsedArgs {
 	try {
-		return parseArgs({
-			args: normalizeSingleDashValues(command, args),
-			options,
-			strict: true,
-			allowPositionals: true,
-			tokens: true,
-		});
+		return parseArgs(prepared.rawArgs, definition);
 	} catch (error) {
-		const message = (error as Error).message.replace(/^TypeError:\s*/i, "");
-		const unknown = /Unknown option ['\"]?([^'\"\s]+)['\"]?/i.exec(message)?.[1];
-		const suggestion = unknown
-			? nearestValue(
-					unknown,
-					optionsFor(command).flatMap((option) => [
-						`--${option.name}`,
-						...(option.short ? [`-${option.short}`] : []),
-					]),
-				)
-			: null;
-		const missingValue = [
-			["repo", "Repository path is required"],
-			["host", "Host is required"],
-			["port", "Port must be between 1 and 65535"],
-			["url", "Couchview bridge URL is required"],
-			["code", "Couchview bridge pairing code is required"],
-			["profile", "Couchview bridge profile ID is required"],
-			["origin-access", "Couchview bridge origin-access provider is required"],
-			["repository", "Server repository ID or name is required"],
-			["build", "Artifact build ID is required"],
-			["output", "Artifact output file is required"],
-			["remote-bridge-origin-access", "Native bridge origin-access provider is required"],
-		].find(
-			([name]) =>
-				message.includes(`--${name}`) &&
-				(/argument missing/i.test(message) || /argument is ambiguous/i.test(message)),
-		)?.[1];
-		const conciseMessage = missingValue ?? (unknown ? `Unknown option: ${unknown}.` : message);
-		throw new CliUsageError(
-			`${conciseMessage}${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
-			command,
-		);
+		const message = error instanceof Error ? error.message : "Arguments are invalid.";
+		throw new CliUsageError(message, helpCommand);
 	}
 }
 
-function booleanValue(values: Record<string, unknown>, name: string): boolean {
-	return values[name] === true;
+function parseCommandArguments(
+	rawArgs: string[],
+	definition: ArgsDef,
+	helpCommand: string | null,
+): ParsedArgs {
+	return parsePreparedArguments(
+		prepareArguments(rawArgs, definition, helpCommand),
+		definition,
+		helpCommand,
+	);
 }
 
-function stringValue(values: Record<string, unknown>, name: string): string | undefined {
-	const value = values[name];
+function booleanValue(args: ParsedArgs, name: string): boolean {
+	return args[name] === true;
+}
+
+function stringValue(args: ParsedArgs, name: string): string | undefined {
+	const value = args[name];
 	return typeof value === "string" ? value : undefined;
 }
 
-function optionCount(tokens: ReturnType<typeof parseOptions>["tokens"], name: string): number {
-	return tokens.filter((token) => token.kind === "option" && token.name === name).length;
-}
-
-function rejectDuplicateOptions(
-	command: CliCommandName,
-	tokens: ReturnType<typeof parseOptions>["tokens"],
-): void {
-	for (const definition of optionsFor(command)) {
-		if (optionCount(tokens, definition.name) > 1) {
-			throw new CliUsageError(`Option '--${definition.name}' may only be provided once.`, command);
-		}
-	}
+function metaInvocation(
+	prepared: PreparedArguments,
+	path: readonly string[],
+): CliInvocation | null {
+	if (prepared.enabledBooleans.has("help")) return { kind: "help", path: [...path] };
+	if (prepared.enabledBooleans.has("version")) return { kind: "version" };
+	return null;
 }
 
 export function parseServeArguments(
 	args: string[],
 	allowPositionalRepo = false,
 ): ParsedServeArguments {
-	const parsed = parseOptions("serve", args);
-	rejectDuplicateOptions("serve", parsed.tokens);
-	const positionalRepo = parsed.positionals[0];
-	const optionRepo = stringValue(parsed.values, "repo");
+	const definition = allowPositionalRepo ? explicitServeArgs : defaultServeArgs;
+	const parsed = parseCommandArguments(args, definition, "serve");
+	const positionalRepo = parsed._[0];
+	const optionRepo = stringValue(parsed, "repo");
 	if (optionRepo !== undefined && positionalRepo !== undefined) {
-		throw new CliUsageError("Repository path may only be provided once.", "serve");
+		usageError("Repository path may only be provided once.", "serve");
 	}
 	if (positionalRepo !== undefined && !allowPositionalRepo) {
-		throw new CliUsageError(
-			"Repository paths must follow the 'serve' command or '--repo'.",
-			"serve",
-		);
+		usageError("Repository paths must follow the 'serve' command or '--repo'.", "serve");
 	}
-	if (parsed.positionals.length > 1) {
-		throw new CliUsageError("Repository path may only be provided once.", "serve");
+	if (parsed._.length > 1) {
+		usageError("Repository path may only be provided once.", "serve");
 	}
-	const terminalEnabled = booleanValue(parsed.values, "enable-terminal");
-	const terminalDisabled = booleanValue(parsed.values, "disable-terminal");
+	const terminalEnabled = booleanValue(parsed, "enable-terminal");
+	const terminalDisabled = booleanValue(parsed, "disable-terminal");
 	if (terminalEnabled && terminalDisabled) {
-		throw new CliUsageError(
-			"--enable-terminal and --disable-terminal cannot be used together.",
-			"serve",
-		);
+		usageError("--enable-terminal and --disable-terminal cannot be used together.", "serve");
 	}
-	const terminalP2pEnabled = booleanValue(parsed.values, "enable-terminal-p2p");
-	const terminalP2pDisabled = booleanValue(parsed.values, "disable-terminal-p2p");
+	const terminalP2pEnabled = booleanValue(parsed, "enable-terminal-p2p");
+	const terminalP2pDisabled = booleanValue(parsed, "disable-terminal-p2p");
 	if (terminalP2pEnabled && terminalP2pDisabled) {
-		throw new CliUsageError(
+		usageError(
 			"--enable-terminal-p2p and --disable-terminal-p2p cannot be used together.",
 			"serve",
 		);
 	}
-	const remoteBridgeEnabled = booleanValue(parsed.values, "enable-remote-bridge");
-	const remoteBridgeDisabled = booleanValue(parsed.values, "disable-remote-bridge");
+	const remoteBridgeEnabled = booleanValue(parsed, "enable-remote-bridge");
+	const remoteBridgeDisabled = booleanValue(parsed, "disable-remote-bridge");
 	if (remoteBridgeEnabled && remoteBridgeDisabled) {
-		throw new CliUsageError(
+		usageError(
 			"--enable-remote-bridge and --disable-remote-bridge cannot be used together.",
 			"serve",
 		);
 	}
-	const remoteBridgeP2pEnabled = booleanValue(parsed.values, "enable-remote-bridge-p2p");
-	const remoteBridgeP2pDisabled = booleanValue(parsed.values, "disable-remote-bridge-p2p");
+	const remoteBridgeP2pEnabled = booleanValue(parsed, "enable-remote-bridge-p2p");
+	const remoteBridgeP2pDisabled = booleanValue(parsed, "disable-remote-bridge-p2p");
 	if (remoteBridgeP2pEnabled && remoteBridgeP2pDisabled) {
-		throw new CliUsageError(
+		usageError(
 			"--enable-remote-bridge-p2p and --disable-remote-bridge-p2p cannot be used together.",
 			"serve",
 		);
 	}
-	const remoteBridgeOriginAccess = stringValue(parsed.values, "remote-bridge-origin-access");
+	const speechEnabled = booleanValue(parsed, "enable-speech");
+	const speechDisabled = booleanValue(parsed, "disable-speech");
+	if (speechEnabled && speechDisabled) {
+		usageError("--enable-speech and --disable-speech cannot be used together.", "serve");
+	}
+	const remoteBridgeOriginAccess = stringValue(parsed, "remote-bridge-origin-access");
 	if (
 		remoteBridgeOriginAccess !== undefined &&
 		remoteBridgeOriginAccess !== "auto" &&
 		!remoteBridgeOriginAccessIdIsValid(remoteBridgeOriginAccess)
 	) {
-		throw new CliUsageError(
+		usageError(
 			"The native bridge origin-access provider must be auto or use lowercase letters, numbers, and hyphens.",
 			"serve",
 		);
 	}
 	return {
 		repo: optionRepo ?? positionalRepo,
-		host: stringValue(parsed.values, "host"),
-		port: stringValue(parsed.values, "port"),
-		interactive: booleanValue(parsed.values, "interactive"),
-		help: booleanValue(parsed.values, "help"),
-		version: booleanValue(parsed.values, "version"),
+		host: stringValue(parsed, "host"),
+		port: stringValue(parsed, "port"),
+		interactive: booleanValue(parsed, "interactive"),
+		help: booleanValue(parsed, "help"),
+		version: booleanValue(parsed, "version"),
 		terminalMode: terminalEnabled ? "enabled" : terminalDisabled ? "disabled" : undefined,
 		terminalP2pMode: terminalP2pEnabled ? "enabled" : terminalP2pDisabled ? "disabled" : undefined,
 		remoteBridgeMode: remoteBridgeEnabled
@@ -222,10 +365,11 @@ export function parseServeArguments(
 				? "disabled"
 				: undefined,
 		remoteBridgeOriginAccess,
+		speechMode: speechEnabled ? "enabled" : speechDisabled ? "disabled" : undefined,
 		explicit: {
 			repo: optionRepo !== undefined || positionalRepo !== undefined,
-			host: optionCount(parsed.tokens, "host") === 1,
-			port: optionCount(parsed.tokens, "port") === 1,
+			host: stringValue(parsed, "host") !== undefined,
+			port: stringValue(parsed, "port") !== undefined,
 			terminal: terminalEnabled || terminalDisabled || terminalP2pEnabled || terminalP2pDisabled,
 			remoteBridge:
 				remoteBridgeEnabled ||
@@ -233,264 +377,200 @@ export function parseServeArguments(
 				remoteBridgeP2pEnabled ||
 				remoteBridgeP2pDisabled ||
 				remoteBridgeOriginAccess !== undefined,
+			speech: speechEnabled || speechDisabled,
 		},
 	};
 }
 
 export function parseRestartArguments(args: string[]): ParsedRestartArguments {
-	const parsed = parseOptions("restart", args);
-	rejectDuplicateOptions("restart", parsed.tokens);
-	if (parsed.positionals.length > 0) {
-		throw new CliUsageError("The restart command does not accept a repository path.", "restart");
+	const parsed = parseCommandArguments(args, restartArgs, "restart");
+	if (parsed._.length > 0) {
+		usageError("The restart command does not accept a repository path.", "restart");
 	}
 	return {
-		host: stringValue(parsed.values, "host"),
-		port: stringValue(parsed.values, "port"),
-		help: booleanValue(parsed.values, "help"),
-		version: booleanValue(parsed.values, "version"),
+		host: stringValue(parsed, "host"),
+		port: stringValue(parsed, "port"),
+		help: booleanValue(parsed, "help"),
+		version: booleanValue(parsed, "version"),
 	};
 }
 
-function parseCompletionArguments(args: string[]): {
-	shell: CompletionShell | undefined;
-	help: boolean;
-	version: boolean;
-	install: boolean;
-} {
-	const parsed = parseOptions("completion", args);
-	rejectDuplicateOptions("completion", parsed.tokens);
-	if (parsed.positionals.length > 1) {
-		throw new CliUsageError("The completion command accepts exactly one shell.", "completion");
-	}
-	const rawShell = parsed.positionals[0];
-	if (rawShell !== undefined && !completionShells.includes(rawShell as CompletionShell)) {
-		const suggestion = nearestValue(rawShell, completionShells);
-		throw new CliUsageError(
-			`Unsupported shell '${rawShell}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
-			"completion",
-		);
-	}
-	const install = booleanValue(parsed.values, "install");
-	if (install && rawShell !== "fish") {
-		throw new CliUsageError(
-			"Automatic completion installation currently supports Fish only.",
-			"completion",
-		);
-	}
-	return {
-		shell: rawShell as CompletionShell | undefined,
-		help: booleanValue(parsed.values, "help"),
-		version: booleanValue(parsed.values, "version"),
-		install,
-	};
+function noExtraPositionals(parsed: ParsedArgs, helpCommand: string): void {
+	if (parsed._.length > 0)
+		usageError(`The ${helpCommand} command does not accept arguments.`, helpCommand);
 }
 
 function parseBridgeArguments(args: string[]): CliInvocation {
-	const separatorIndex = args.indexOf("--");
-	const bridgeArgs = separatorIndex >= 0 ? args.slice(0, separatorIndex) : args;
-	const passthroughArgs = separatorIndex >= 0 ? args.slice(separatorIndex + 1) : [];
-	const parsed = parseOptions("bridge", bridgeArgs);
-	rejectDuplicateOptions("bridge", parsed.tokens);
-	if (booleanValue(parsed.values, "help")) return { kind: "help", command: "bridge" };
-	if (booleanValue(parsed.values, "version")) return { kind: "version" };
-	if (parsed.positionals.length !== 1) {
-		throw new CliUsageError(
-			"The bridge command requires exactly one action: pair, proxy, codex, terminal, or claude.",
+	if (!args[0] || args[0].startsWith("-")) {
+		const prepared = prepareArguments(args, bridgeCommandArgs, "bridge");
+		const meta = metaInvocation(prepared, ["bridge"]);
+		if (meta) return meta;
+		parsePreparedArguments(prepared, bridgeCommandArgs, "bridge");
+		usageError("The bridge command requires pair, proxy, codex, terminal, or claude.", "bridge");
+	}
+	const action = args[0];
+	if (!bridgeActionNames.includes(action as (typeof bridgeActionNames)[number])) {
+		const suggestion = nearestValue(action, bridgeActionNames);
+		usageError(
+			`Unknown bridge action '${action}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
 			"bridge",
 		);
 	}
-	const action = parsed.positionals[0];
-	const origin = stringValue(parsed.values, "url");
-	const code = stringValue(parsed.values, "code");
-	const profileId = stringValue(parsed.values, "profile");
-	const repositoryRoot = stringValue(parsed.values, "repo");
-	const explicitOriginAccess = stringValue(parsed.values, "origin-access");
-	const originAccess = explicitOriginAccess ?? REMOTE_BRIDGE_NO_ORIGIN_ACCESS;
-	if (!remoteBridgeOriginAccessIdIsValid(originAccess)) {
-		throw new CliUsageError(
-			"The bridge origin-access provider must use lowercase letters, numbers, and hyphens.",
-			"bridge",
+	const bridgeAction = action as (typeof bridgeActionNames)[number];
+	const rawActionArgs = args.slice(1);
+	const separatorIndex = rawActionArgs.indexOf("--");
+	const actionArgs = separatorIndex < 0 ? rawActionArgs : rawActionArgs.slice(0, separatorIndex);
+	const passthroughArgs = separatorIndex < 0 ? [] : rawActionArgs.slice(separatorIndex + 1);
+	const helpCommand = `bridge ${bridgeAction}`;
+	const definition =
+		bridgeAction === "pair"
+			? bridgePairArgs
+			: bridgeAction === "proxy"
+				? bridgeProxyArgs
+				: bridgeAction === "codex"
+					? bridgeCodexArgs
+					: bridgeAction === "terminal"
+						? bridgeTerminalArgs
+						: bridgeClaudeArgs;
+	const prepared = prepareArguments(actionArgs, definition, helpCommand);
+	const meta = metaInvocation(prepared, ["bridge", bridgeAction]);
+	if (meta) return meta;
+	const parsed = parsePreparedArguments(prepared, definition, helpCommand);
+	noExtraPositionals(parsed, helpCommand);
+
+	if (bridgeAction === "terminal" && passthroughArgs.length > 0) {
+		usageError(
+			"The terminal action opens a login shell and does not accept arguments after '--'.",
+			helpCommand,
 		);
 	}
-	if (action === "pair") {
-		if (passthroughArgs.length > 0) {
-			throw new CliUsageError(
-				"Arguments after '--' are only valid for bridge codex or bridge claude.",
-				"bridge",
-			);
-		}
-		if (!origin || !code) {
-			throw new CliUsageError("The pair action requires --url and --code.", "bridge");
-		}
-		if (profileId) {
-			throw new CliUsageError(
-				"--profile is only valid for bridge proxy, codex, terminal, or claude.",
-				"bridge",
-			);
-		}
-		if (repositoryRoot) {
-			throw new CliUsageError(
-				"--repo is only valid for bridge codex, terminal, or claude.",
-				"bridge",
+	if (bridgeAction !== "codex" && bridgeAction !== "claude" && passthroughArgs.length > 0) {
+		usageError(
+			"Arguments after '--' are only valid for bridge codex or bridge claude.",
+			helpCommand,
+		);
+	}
+	if (bridgeAction === "pair") {
+		const origin = stringValue(parsed, "url");
+		const code = stringValue(parsed, "code");
+		if (!origin || !code) usageError("The pair action requires --url and --code.", helpCommand);
+		const originAccess = stringValue(parsed, "origin-access") ?? REMOTE_BRIDGE_NO_ORIGIN_ACCESS;
+		if (!remoteBridgeOriginAccessIdIsValid(originAccess)) {
+			usageError(
+				"The bridge origin-access provider must use lowercase letters, numbers, and hyphens.",
+				helpCommand,
 			);
 		}
 		return { kind: "bridge-pair", origin, code, originAccess };
 	}
-	if (action === "proxy") {
-		if (passthroughArgs.length > 0) {
-			throw new CliUsageError(
-				"Arguments after '--' are only valid for bridge codex or bridge claude.",
-				"bridge",
-			);
-		}
-		if (!profileId) {
-			throw new CliUsageError("The proxy action requires --profile.", "bridge");
-		}
-		if (repositoryRoot) {
-			throw new CliUsageError(
-				"--repo is only valid for bridge codex, terminal, or claude.",
-				"bridge",
-			);
-		}
-		if (origin || code || explicitOriginAccess) {
-			throw new CliUsageError(
-				"--url, --code, and --origin-access are only valid for bridge pair.",
-				"bridge",
-			);
-		}
+	if (bridgeAction === "proxy") {
+		const profileId = stringValue(parsed, "profile");
+		if (!profileId) usageError("The proxy action requires --profile.", helpCommand);
 		return { kind: "bridge-proxy", profileId };
 	}
-	if (action === "codex") {
-		if (origin || code || explicitOriginAccess) {
-			throw new CliUsageError(
-				"--url, --code, and --origin-access are only valid for bridge pair.",
-				"bridge",
-			);
-		}
-		if (repositoryRoot !== undefined && !path.isAbsolute(repositoryRoot)) {
-			throw new CliUsageError("The bridge codex repository path must be absolute.", "bridge");
-		}
-		return {
-			kind: "bridge-codex",
-			profileSelector: profileId ?? null,
-			repositoryRoot: repositoryRoot ?? null,
-			codexArgs: passthroughArgs,
-		};
+	const profileSelector = stringValue(parsed, "profile") ?? null;
+	const repositoryRoot = stringValue(parsed, "repo") ?? null;
+	if (repositoryRoot !== null && !path.isAbsolute(repositoryRoot)) {
+		usageError(`The bridge ${bridgeAction} repository path must be absolute.`, helpCommand);
 	}
-	if (action === "terminal") {
-		if (passthroughArgs.length > 0) {
-			throw new CliUsageError(
-				"The terminal action opens a login shell and does not accept arguments after '--'.",
-				"bridge",
-			);
-		}
-		if (origin || code || explicitOriginAccess) {
-			throw new CliUsageError(
-				"--url, --code, and --origin-access are only valid for bridge pair.",
-				"bridge",
-			);
-		}
-		if (repositoryRoot !== undefined && !path.isAbsolute(repositoryRoot)) {
-			throw new CliUsageError("The bridge terminal repository path must be absolute.", "bridge");
-		}
-		return {
-			kind: "bridge-terminal",
-			profileSelector: profileId ?? null,
-			repositoryRoot: repositoryRoot ?? null,
-		};
+	if (bridgeAction === "terminal") {
+		return { kind: "bridge-terminal", profileSelector, repositoryRoot };
 	}
-	if (action === "claude") {
-		if (origin || code || explicitOriginAccess) {
-			throw new CliUsageError(
-				"--url, --code, and --origin-access are only valid for bridge pair.",
-				"bridge",
-			);
-		}
-		if (repositoryRoot !== undefined && !path.isAbsolute(repositoryRoot)) {
-			throw new CliUsageError("The bridge claude repository path must be absolute.", "bridge");
-		}
-		return {
-			kind: "bridge-claude",
-			profileSelector: profileId ?? null,
-			repositoryRoot: repositoryRoot ?? null,
-			claudeArgs: passthroughArgs,
-		};
+	if (bridgeAction === "codex") {
+		return { kind: "bridge-codex", profileSelector, repositoryRoot, codexArgs: passthroughArgs };
 	}
-	const suggestion = nearestValue(action ?? "", ["pair", "proxy", "codex", "terminal", "claude"]);
-	throw new CliUsageError(
-		`Unknown bridge action '${action ?? ""}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
-		"bridge",
-	);
+	return { kind: "bridge-claude", profileSelector, repositoryRoot, claudeArgs: passthroughArgs };
+}
+
+function artifactDefinition(action: ArtifactCliAction): ArgsDef {
+	if (action === "list") return artifactListArgs;
+	if (action === "build") return artifactBuildArgs;
+	if (action === "download") return artifactDownloadArgs;
+	return artifactPullArgs;
 }
 
 function parseArtifactArguments(args: string[]): CliInvocation {
-	const parsed = parseOptions("artifacts", args);
-	rejectDuplicateOptions("artifacts", parsed.tokens);
-	if (booleanValue(parsed.values, "help")) return { kind: "help", command: "artifacts" };
-	if (booleanValue(parsed.values, "version")) return { kind: "version" };
-	const action = parsed.positionals[0];
-	const actions = ["list", "build", "download", "pull"] as const;
-	if (!action || !actions.includes(action as (typeof actions)[number])) {
-		const suggestion = action ? nearestValue(action, actions) : null;
-		throw new CliUsageError(
-			`The artifacts command requires list, build, download, or pull.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+	if (!args[0] || args[0].startsWith("-")) {
+		const prepared = prepareArguments(args, bridgeCommandArgs, "artifacts");
+		const meta = metaInvocation(prepared, ["artifacts"]);
+		if (meta) return meta;
+		parsePreparedArguments(prepared, bridgeCommandArgs, "artifacts");
+		usageError("The artifacts command requires list, build, download, or pull.", "artifacts");
+	}
+	const action = args[0];
+	if (!artifactActionNames.includes(action as ArtifactCliAction)) {
+		const suggestion = nearestValue(action, artifactActionNames);
+		usageError(
+			`Unknown artifacts action '${action}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
 			"artifacts",
 		);
 	}
-	const artifactAction = action as ParsedArtifactArguments["action"];
-	const expectedPositionals = artifactAction === "list" ? 1 : 2;
-	if (parsed.positionals.length !== expectedPositionals) {
-		throw new CliUsageError(
+	const artifactAction = action as ArtifactCliAction;
+	const helpCommand = `artifacts ${artifactAction}`;
+	const definition = artifactDefinition(artifactAction);
+	const prepared = prepareArguments(args.slice(1), definition, helpCommand);
+	const meta = metaInvocation(prepared, ["artifacts", artifactAction]);
+	if (meta) return meta;
+	const parsed = parsePreparedArguments(prepared, definition, helpCommand);
+	const expectedPositionals = artifactAction === "list" ? 0 : 1;
+	if (parsed._.length !== expectedPositionals) {
+		usageError(
 			artifactAction === "list"
 				? "The artifacts list command does not accept an artifact name."
 				: `The artifacts ${artifactAction} command requires exactly one artifact name.`,
-			"artifacts",
+			helpCommand,
 		);
 	}
-	const name = parsed.positionals[1] ?? null;
+	const name = parsed._[0] ?? null;
 	if (name && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
-		throw new CliUsageError("Artifact name is invalid.", "artifacts");
+		usageError("Artifact name is invalid.", helpCommand);
 	}
-	const profile = stringValue(parsed.values, "profile") ?? null;
-	const repository = stringValue(parsed.values, "repository") ?? null;
-	const repo = stringValue(parsed.values, "repo") ?? null;
-	const build = stringValue(parsed.values, "build") ?? null;
-	const output = stringValue(parsed.values, "output") ?? null;
-	const force = booleanValue(parsed.values, "force");
-	if (build && artifactAction !== "download") {
-		throw new CliUsageError("--build is only valid for artifacts download.", "artifacts");
-	}
-	if ((output || force) && artifactAction !== "download" && artifactAction !== "pull") {
-		throw new CliUsageError(
-			"--output and --force are only valid for artifacts download or pull.",
-			"artifacts",
-		);
-	}
-	for (const [option, value] of [
-		["profile", profile],
-		["repository", repository],
-		["repo", repo],
-		["build", build],
-		["output", output],
-	] as const) {
+	const values = {
+		profile: stringValue(parsed, "profile") ?? null,
+		repository: stringValue(parsed, "repository") ?? null,
+		repo: stringValue(parsed, "repo") ?? null,
+		build: stringValue(parsed, "build") ?? null,
+		output: stringValue(parsed, "output") ?? null,
+	};
+	for (const [option, value] of Object.entries(values)) {
 		if (value !== null && (!value || value.includes("\0"))) {
-			throw new CliUsageError(`--${option} is invalid.`, "artifacts");
+			usageError(`--${option} is invalid.`, helpCommand);
 		}
 	}
-	return {
-		kind: "artifacts",
-		parsed: {
-			action: artifactAction,
-			name,
-			profile,
-			repository,
-			repo,
-			build,
-			output,
-			force,
-			json: booleanValue(parsed.values, "json"),
-		},
+	const parsedArtifact: ParsedArtifactArguments = {
+		action: artifactAction,
+		name,
+		...values,
+		force: booleanValue(parsed, "force"),
+		json: booleanValue(parsed, "json"),
 	};
+	return { kind: "artifacts", parsed: parsedArtifact };
+}
+
+function helpInvocation(args: string[]): CliInvocation {
+	const prepared = prepareArguments(args, helpCommandArgs, "help");
+	const meta = metaInvocation(prepared, ["help"]);
+	if (meta) return meta;
+	const parsed = parsePreparedArguments(prepared, helpCommandArgs, "help");
+	if (parsed._.length > 2)
+		usageError("The help command accepts at most two command names.", "help");
+	const path = parsed._;
+	if (path.length === 0) return { kind: "help", path: [] };
+	if (!cliHelpPathExists(path)) {
+		const candidates =
+			path.length === 1
+				? topLevelCommandNames
+				: path[0] === "artifacts"
+					? artifactActionNames
+					: bridgeActionNames;
+		const requested = path.at(-1) ?? "";
+		const suggestion = nearestValue(requested, candidates);
+		usageError(
+			`Unknown command '${path.join(" ")}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
+			"help",
+		);
+	}
+	return { kind: "help", path: [...path] };
 }
 
 function canonicalServeArguments(parsed: ParsedServeArguments): string[] {
@@ -510,66 +590,46 @@ function canonicalServeArguments(parsed: ParsedServeArguments): string[] {
 	if (parsed.remoteBridgeOriginAccess !== undefined) {
 		argv.push("--remote-bridge-origin-access", parsed.remoteBridgeOriginAccess);
 	}
+	if (parsed.speechMode === "enabled") argv.push("--enable-speech");
+	if (parsed.speechMode === "disabled") argv.push("--disable-speech");
 	return argv;
 }
 
 export function parseCliInvocation(argv: string[]): CliInvocation {
 	const first = argv[0];
-	if (first === "help") {
-		if (argv.length === 1) return { kind: "help", command: null };
-		if (argv.length > 2) {
-			throw new CliUsageError("The help command accepts at most one command name.");
-		}
-		const requested = argv[1];
-		if (requested === "help") return { kind: "help", command: null };
-		if (
-			!requested ||
-			!["serve", "restart", "completion", "bridge", "artifacts"].includes(requested)
-		) {
-			const suggestion = requested ? nearestValue(requested, commandNames) : null;
-			throw new CliUsageError(
-				`Unknown command '${requested ?? ""}'.${suggestion ? ` Did you mean '${suggestion}'?` : ""}`,
-			);
-		}
-		return { kind: "help", command: requested as CliCommandName };
-	}
-
+	if (first === "help") return helpInvocation(argv.slice(1));
 	if (
 		first &&
 		!first.startsWith("-") &&
-		!commandNames.includes(first as (typeof commandNames)[number])
+		!topLevelCommandNames.includes(first as (typeof topLevelCommandNames)[number])
 	) {
-		const suggestion = nearestValue(first, commandNames);
-		throw new CliUsageError(
-			`Unknown command '${first}'.${suggestion ? ` Did you mean '${suggestion}'?` : " Repository paths must follow 'serve' or '--repo'."}`,
+		const suggestion = nearestValue(first, topLevelCommandNames);
+		usageError(
+			`Unknown command '${first}'.${
+				suggestion
+					? ` Did you mean '${suggestion}'?`
+					: " Repository paths must follow 'serve' or '--repo'."
+			}`,
+			null,
 		);
 	}
-
 	if (first === "restart") {
 		const commandArgv = argv.slice(1);
 		const parsed = parseRestartArguments(commandArgv);
-		if (parsed.help) return { kind: "help", command: "restart" };
+		if (parsed.help) return { kind: "help", path: ["restart"] };
 		if (parsed.version) return { kind: "version" };
 		return { kind: "restart", argv: commandArgv, parsed };
 	}
-
-	if (first === "completion") {
-		const parsed = parseCompletionArguments(argv.slice(1));
-		if (parsed.help) return { kind: "help", command: "completion" };
-		if (parsed.version) return { kind: "version" };
-		if (!parsed.shell) {
-			throw new CliUsageError("A shell is required: zsh, bash, or fish.", "completion");
-		}
-		return { kind: "completion", shell: parsed.shell, install: parsed.install };
-	}
-
 	if (first === "bridge") return parseBridgeArguments(argv.slice(1));
 	if (first === "artifacts") return parseArtifactArguments(argv.slice(1));
-
-	const explicitServe = first === "serve";
-	const commandArgv = explicitServe ? argv.slice(1) : argv;
-	const parsed = parseServeArguments(commandArgv, explicitServe);
-	if (parsed.help) return { kind: "help", command: first === "serve" ? "serve" : null };
+	if (first === "serve") {
+		const parsed = parseServeArguments(argv.slice(1), true);
+		if (parsed.help) return { kind: "help", path: ["serve"] };
+		if (parsed.version) return { kind: "version" };
+		return { kind: "serve", argv: canonicalServeArguments(parsed), parsed };
+	}
+	const parsed = parseServeArguments(argv);
+	if (parsed.help) return { kind: "help", path: [] };
 	if (parsed.version) return { kind: "version" };
 	return { kind: "serve", argv: canonicalServeArguments(parsed), parsed };
 }

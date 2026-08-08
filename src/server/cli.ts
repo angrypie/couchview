@@ -1,7 +1,5 @@
 #!/usr/bin/env bun
 
-import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
@@ -10,14 +8,12 @@ import {
 	CLI_VERSION,
 	CliPromptInterrupted,
 	CliUsageError,
-	type CompletionShell,
 	createInteractivePrompter,
-	fishCompletionPath,
 	type InteractivePrompter,
+	type ParsedArtifactArguments,
 	parseCliInvocation,
 	promptForServeArguments,
 	renderCliHelp,
-	renderCompletion,
 } from "./cliCommand.ts";
 import {
 	parseRestartCli,
@@ -49,6 +45,7 @@ export {
 	parseTerminalStunUrls,
 	type RemoteBridgeMode,
 	type RemoteBridgeP2pMode,
+	type SpeechMode,
 	type TerminalMode,
 	type TerminalP2pMode,
 } from "./cliServeOptions.ts";
@@ -79,10 +76,7 @@ interface RunCliRuntime {
 		repositoryRoot: string | null;
 		claudeArgs: string[];
 	}): Promise<number>;
-	artifacts(
-		options: Extract<ReturnType<typeof parseCliInvocation>, { kind: "artifacts" }>["parsed"],
-	): Promise<number>;
-	installCompletion(shell: CompletionShell): Promise<string>;
+	artifacts(options: ParsedArtifactArguments): Promise<number>;
 	createPrompter(): InteractivePrompter;
 	stdout(message: string): void;
 	stderr(message: string): void;
@@ -115,26 +109,6 @@ function validateRestartInvocation(argv: string[]): RestartCliOptions {
 	}
 }
 
-async function installCompletion(shell: CompletionShell): Promise<string> {
-	if (shell !== "fish") {
-		throw new CliUsageError(
-			"Automatic completion installation currently supports Fish only.",
-			"completion",
-		);
-	}
-	const destination = fishCompletionPath();
-	const temporary = `${destination}.tmp-${randomUUID()}`;
-	await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
-	try {
-		await writeFile(temporary, `${renderCompletion(shell)}\n`, { mode: 0o600 });
-		await rename(temporary, destination);
-	} catch (error) {
-		await rm(temporary, { force: true });
-		throw error;
-	}
-	return destination;
-}
-
 export async function runCli(
 	argv = process.argv.slice(2),
 	runtimeOverrides: Partial<RunCliRuntime> = {},
@@ -149,7 +123,6 @@ export async function runCli(
 		terminalBridge: runtimeOverrides.terminalBridge ?? ((options) => runRemoteTerminal(options)),
 		claudeBridge: runtimeOverrides.claudeBridge ?? ((options) => runRemoteClaude(options)),
 		artifacts: runtimeOverrides.artifacts ?? runArtifactCli,
-		installCompletion: runtimeOverrides.installCompletion ?? installCompletion,
 		createPrompter: runtimeOverrides.createPrompter ?? createInteractivePrompter,
 		stdout: runtimeOverrides.stdout ?? ((message) => process.stdout.write(`${message}\n`)),
 		stderr: runtimeOverrides.stderr ?? ((message) => process.stderr.write(`${message}\n`)),
@@ -167,21 +140,11 @@ export async function runCli(
 	try {
 		const invocation = parseCliInvocation(argv);
 		if (invocation.kind === "help") {
-			runtime.stdout(renderCliHelp(invocation.command));
+			runtime.stdout(await renderCliHelp(invocation.path));
 			return 0;
 		}
 		if (invocation.kind === "version") {
 			runtime.stdout(`couchview ${CLI_VERSION}`);
-			return 0;
-		}
-		if (invocation.kind === "completion") {
-			if (invocation.install) {
-				action = "install completion";
-				const destination = await runtime.installCompletion(invocation.shell);
-				runtime.stdout(`Installed Fish completion at ${destination}.`);
-				return 0;
-			}
-			runtime.stdout(renderCompletion(invocation.shell));
 			return 0;
 		}
 		if (invocation.kind === "bridge-pair") {
@@ -269,7 +232,7 @@ export async function runCli(
 			return 130;
 		}
 		if (error instanceof CliUsageError) {
-			const help = error.helpCommand ? `couchview help ${error.helpCommand}` : "couchview --help";
+			const help = error.helpCommand ? `couchview ${error.helpCommand} --help` : "couchview --help";
 			runtime.stderr(`error: ${error.message}\nTry '${help}' for more information.`);
 			return 2;
 		}

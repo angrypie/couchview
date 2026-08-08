@@ -88,13 +88,14 @@ function instanceResponse(context: FixtureRequestContext): InstanceResponse {
 			: 80;
 	return {
 		service: "couchview",
-		protocolVersion: 5,
+		protocolVersion: 6,
 		version: "0.0.0-e2e",
 		serverId: FIXTURE_NATIVE_SERVER_ID,
 		instanceId: FIXTURE_NATIVE_INSTANCE_ID,
 		bindHost: context.url.hostname,
 		port,
 		accessOrigins: [],
+		speechEnabled: false,
 		terminalEnabled: true,
 		terminalP2pEnabled: true,
 		terminalStunUrls: [],

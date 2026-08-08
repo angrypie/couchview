@@ -4,6 +4,7 @@ export const fixtureSecurityHeaders = {
 	"Content-Security-Policy":
 		"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'",
 	"Referrer-Policy": "no-referrer",
+	"Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
 	"X-Content-Type-Options": "nosniff",
 };
 

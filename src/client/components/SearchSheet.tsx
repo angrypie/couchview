@@ -4,7 +4,8 @@ import { Pressable, ScrollView, View } from "react-native";
 import type { SearchMatch, SearchResponse, SourcePreviewResponse } from "../../shared/contracts.ts";
 import type { SearchScope } from "../features/search/useRepositorySearch.ts";
 import { HighlightedMatch } from "./HighlightedMatch.tsx";
-import { Button, EmptyState, Input, InputField, Sheet, Spinner, Text } from "./ui";
+import { SpeechInput } from "./speech";
+import { Button, EmptyState, Sheet, Spinner, Text } from "./ui";
 
 interface SearchSheetProps {
 	busy: boolean;
@@ -76,17 +77,15 @@ export function SearchSheet({
 			open={open}
 			title="Find in project"
 		>
-			<Input>
-				<InputField
-					accessibilityLabel="Search project"
-					autoCapitalize="none"
-					autoCorrect={false}
-					onChangeText={onQueryChange}
-					placeholder="Search project"
-					returnKeyType="search"
-					value={query}
-				/>
-			</Input>
+			<SpeechInput
+				accessibilityLabel="Search project"
+				autoCapitalize="none"
+				autoCorrect={false}
+				onChangeText={onQueryChange}
+				placeholder="Search project"
+				returnKeyType="search"
+				value={query}
+			/>
 			<View accessibilityRole="tablist" className="flex-row rounded-lg bg-muted p-1">
 				<ScopeButton
 					active={scope === "current"}

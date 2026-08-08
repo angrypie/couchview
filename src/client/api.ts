@@ -40,6 +40,7 @@ import {
 	type SettingsProfileResponse,
 	type SettingsProfilesResponse,
 	type SourcePreviewResponse,
+	type SpeechTranscriptionResponse,
 	type StageFileRequest,
 	type StageFileResponse,
 	type StageFilesRequest,
@@ -92,7 +93,7 @@ export async function request<T>(path: string, init?: RequestInit, csrfToken?: s
 	// when this header is present. Otherwise its login redirect looks offline
 	// to fetch after the redirect crosses origins.
 	headers.set("X-Requested-With", "XMLHttpRequest");
-	if (init?.body) headers.set("Content-Type", "application/json");
+	if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 	if (csrfToken) headers.set(CSRF_HEADER, csrfToken);
 
 	let response: Response;
@@ -154,6 +155,19 @@ export const api = {
 
 	instance(signal?: AbortSignal) {
 		return request<InstanceResponse>(API_ROUTES.instance, { signal });
+	},
+
+	transcribeSpeech(body: BodyInit, csrfToken: string, signal?: AbortSignal) {
+		return request<SpeechTranscriptionResponse>(
+			API_ROUTES.speechTranscriptions,
+			{
+				method: "POST",
+				headers: { "Content-Type": "audio/wav" },
+				body,
+				signal,
+			},
+			csrfToken,
+		);
 	},
 
 	nativeClients(signal?: AbortSignal) {

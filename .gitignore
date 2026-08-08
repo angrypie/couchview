@@ -2,9 +2,12 @@ node_modules/
 dist/
 dist-expo*/
 .expo/
+.agent-device/
 .uniwind-types.generated.d.ts
 ios/
 android/
+.build/
+.swiftpm/
 .couchview-build-*/
 dist.previous-*/
 playwright-report/

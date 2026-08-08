@@ -27,19 +27,8 @@ import type {
 	ReviewFilter,
 	StageFilter,
 } from "../features/staging/types.ts";
-import {
-	Badge,
-	Button,
-	EmptyState,
-	Heading,
-	Icon,
-	IconButton,
-	Input,
-	InputField,
-	Select,
-	Spinner,
-	Text,
-} from "./ui";
+import { SpeechInput } from "./speech";
+import { Badge, Button, EmptyState, Heading, Icon, IconButton, Select, Spinner, Text } from "./ui";
 
 export type { DrawerView };
 
@@ -202,18 +191,16 @@ function DrawerFilters({
 			) : null}
 			{view === "files" ? (
 				<>
-					<Input>
-						<InputField
-							accessibilityLabel="Filter changed files"
-							autoCapitalize="none"
-							autoCorrect={false}
-							inputMode="search"
-							onChangeText={onFileQueryChange}
-							placeholder="Filter paths…"
-							role="searchbox"
-							value={fileQuery}
-						/>
-					</Input>
+					<SpeechInput
+						accessibilityLabel="Filter changed files"
+						autoCapitalize="none"
+						autoCorrect={false}
+						inputMode="search"
+						onChangeText={onFileQueryChange}
+						placeholder="Filter paths…"
+						role="searchbox"
+						value={fileQuery}
+					/>
 					<View className="flex-row gap-2">
 						<View className="min-w-0 flex-1">
 							<Select

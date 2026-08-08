@@ -9,6 +9,7 @@ export type TerminalMode = "auto" | "enabled" | "disabled";
 export type TerminalP2pMode = "auto" | "enabled" | "disabled";
 export type RemoteBridgeMode = "auto" | "enabled" | "disabled";
 export type RemoteBridgeP2pMode = "auto" | "enabled" | "disabled";
+export type SpeechMode = "auto" | "enabled" | "disabled";
 
 export const DEFAULT_TERMINAL_STUN_URLS = ["stun:stun.cloudflare.com:3478"] as const;
 export const DEFAULT_REMOTE_BRIDGE_STUN_URLS = ["stun:stun.cloudflare.com:3478"] as const;
@@ -25,6 +26,7 @@ export interface CliOptions {
 	remoteBridgeStunUrls: string[];
 	remoteBridgePort: number;
 	remoteBridgeOriginAccess: string;
+	speechMode: SpeechMode;
 }
 
 export function parseCli(argv: string[]): CliOptions {
@@ -70,6 +72,13 @@ export function parseCliState(argv: string[]): {
 	}
 	const remoteBridgeStunUrls = parseRemoteBridgeStunUrls(Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN);
 	const remoteBridgePort = Number(Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT ?? 22);
+	const speechEnvironment = Bun.env.COUCHVIEW_ENABLE_SPEECH;
+	let environmentSpeechMode: SpeechMode = "auto";
+	if (speechEnvironment !== undefined) {
+		if (speechEnvironment === "1") environmentSpeechMode = "enabled";
+		else if (speechEnvironment === "0") environmentSpeechMode = "disabled";
+		else throw new Error("COUCHVIEW_ENABLE_SPEECH must be 1 or 0");
+	}
 	const environmentRemoteBridgeOriginAccess =
 		Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS ?? "auto";
 	if (
@@ -107,6 +116,7 @@ export function parseCliState(argv: string[]): {
 			remoteBridgePort,
 			remoteBridgeOriginAccess:
 				parsed.remoteBridgeOriginAccess ?? environmentRemoteBridgeOriginAccess,
+			speechMode: parsed.speechMode ?? environmentSpeechMode,
 		},
 	};
 }

@@ -15,6 +15,7 @@ import {
 } from "./cliSupervisor.ts";
 import { HttpError } from "./errors.ts";
 import { createCouchviewApp } from "./server.ts";
+import { createSpeechOptions } from "./speech/createSpeechOptions.ts";
 import { terminalAccessIsLoopback } from "./terminalSessions.ts";
 
 interface StartServerRuntime {
@@ -145,12 +146,14 @@ export async function startServer(
 		: restartCapability();
 	let restartInProgress = false;
 	let relaunch: () => void = () => undefined;
+	const speech = await createSpeechOptions(options.speechMode === "enabled");
 	const app = await createCouchviewApp({
 		root: options.root,
 		host: options.host,
 		port: options.port,
 		staticDirectory,
 		allowedOrigins,
+		speech,
 		terminal: {
 			enabled: terminalEnabled,
 			disabledReason: terminalEnabled ? undefined : terminalDisabledReason,
@@ -339,6 +342,11 @@ export async function startServer(
 						? ["--enable-remote-bridge-p2p"]
 						: options.remoteBridgeP2pMode === "disabled"
 							? ["--disable-remote-bridge-p2p"]
+							: []),
+					...(options.speechMode === "enabled"
+						? ["--enable-speech"]
+						: options.speechMode === "disabled"
+							? ["--disable-speech"]
 							: []),
 				]),
 				{

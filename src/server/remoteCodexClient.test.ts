@@ -239,7 +239,7 @@ describe("remote Codex command construction", () => {
 	test("preserves spaces and apostrophes through both remote shell layers", async () => {
 		const { home } = await fixture();
 		const repositoryRoot = path.join(home, "Project's App");
-		const executableDirectory = path.join(home, "bin");
+		const executableDirectory = path.join(home, ".local", "bin");
 		const codexPath = path.join(executableDirectory, "codex");
 		const capturePath = path.join(home, "capture.txt");
 		await Promise.all([

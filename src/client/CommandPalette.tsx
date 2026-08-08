@@ -4,7 +4,8 @@ import { ScrollView, View } from "react-native";
 
 import type { CommandId } from "../shared/settings.ts";
 import { COMMAND_CATEGORIES, type RuntimeCommand } from "./commands.ts";
-import { Badge, Dialog, Icon, Input, InputField, ListItem, Text } from "./components/ui";
+import { SpeechInput } from "./components/speech";
+import { Badge, Dialog, Icon, ListItem, Text } from "./components/ui";
 import { formatShortcut } from "./shortcutEngine";
 
 interface CommandPaletteProps {
@@ -44,19 +45,19 @@ export function CommandPalette({ commands, onOpenChange, open }: CommandPaletteP
 			open={open}
 			title="Command palette"
 		>
-			<Input>
-				<View className="pl-1">
-					<Icon as={Search} size={18} tone="muted" />
-				</View>
-				<InputField
-					accessibilityLabel="Search commands"
-					autoFocus
-					onChangeText={setQuery}
-					placeholder="Type a command or destination…"
-					returnKeyType="search"
-					value={query}
-				/>
-			</Input>
+			<SpeechInput
+				accessibilityLabel="Search commands"
+				autoFocus
+				leading={
+					<View className="pl-1">
+						<Icon as={Search} size={18} tone="muted" />
+					</View>
+				}
+				onChangeText={setQuery}
+				placeholder="Type a command or destination…"
+				returnKeyType="search"
+				value={query}
+			/>
 			<ScrollView
 				className="max-h-[60vh]"
 				contentContainerClassName="gap-3"

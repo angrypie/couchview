@@ -1,7 +1,8 @@
 import { GitCommitHorizontal, Sparkles } from "lucide-react-native";
 
 import type { CommitMessageCapability } from "../../shared/contracts.ts";
-import { Button, Sheet, Text, TextArea } from "./ui";
+import { SpeechTextArea } from "./speech";
+import { Button, Sheet, Text } from "./ui";
 
 interface CommitComposerSheetProps {
 	busy: boolean;
@@ -62,7 +63,7 @@ export function CommitComposerSheet({
 			open={open}
 			title="Commit staged changes"
 		>
-			<TextArea
+			<SpeechTextArea
 				autoFocus
 				editable={!messageBusy}
 				maxLength={20_000}

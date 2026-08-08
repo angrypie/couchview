@@ -2,12 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 
 import { parseCli, parseTerminalStunUrls, runCli } from "./cli.ts";
-import {
-	CLI_VERSION,
-	CliPromptInterrupted,
-	type CompletionShell,
-	type InteractivePrompter,
-} from "./cliCommand.ts";
+import { CLI_VERSION, CliPromptInterrupted, type InteractivePrompter } from "./cliCommand.ts";
 import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
 const initialRoot = Bun.env.COUCHVIEW_ROOT;
@@ -21,6 +16,7 @@ const initialRemoteBridgeP2p = Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P;
 const initialRemoteBridgeStun = Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN;
 const initialRemoteBridgePort = Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT;
 const initialRemoteBridgeOriginAccess = Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS;
+const initialSpeech = Bun.env.COUCHVIEW_ENABLE_SPEECH;
 const initialDataHome = Bun.env.XDG_DATA_HOME;
 const initialAllowedOrigins = Bun.env.COUCHVIEW_ALLOWED_ORIGINS;
 const initialInternalAllowedOrigins = Bun.env.ALLOWED_ORIGINS;
@@ -63,6 +59,9 @@ function restoreEnvironment() {
 		Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS = initialRemoteBridgeOriginAccess;
 	}
 
+	if (initialSpeech === undefined) delete Bun.env.COUCHVIEW_ENABLE_SPEECH;
+	else Bun.env.COUCHVIEW_ENABLE_SPEECH = initialSpeech;
+
 	if (initialDataHome === undefined) delete Bun.env.XDG_DATA_HOME;
 	else Bun.env.XDG_DATA_HOME = initialDataHome;
 
@@ -93,6 +92,7 @@ describe("parseCli", () => {
 		delete Bun.env.COUCHVIEW_REMOTE_BRIDGE;
 		delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P;
 		delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_STUN;
+		delete Bun.env.COUCHVIEW_ENABLE_SPEECH;
 		delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_PORT;
 		delete Bun.env.COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS;
 	});
@@ -112,6 +112,7 @@ describe("parseCli", () => {
 			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 	});
 
@@ -134,6 +135,7 @@ describe("parseCli", () => {
 			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 		expect(parseCli(["--port", "6001", "--repo", "/tmp/project"])).toEqual({
 			root: path.resolve("/tmp/project"),
@@ -147,6 +149,7 @@ describe("parseCli", () => {
 			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 	});
 
@@ -167,6 +170,7 @@ describe("parseCli", () => {
 			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 		expect(parseCli(["--repo", "flag-project", "--host", "0.0.0.0", "--port", "4999"])).toEqual({
 			root: path.resolve("flag-project"),
@@ -180,6 +184,7 @@ describe("parseCli", () => {
 			remoteBridgeStunUrls: ["stun:stun.cloudflare.com:3478"],
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 	});
 
@@ -256,12 +261,27 @@ describe("parseCli", () => {
 		expect(() => parseCli([])).toThrow("COUCHVIEW_TERMINAL_P2P must be 1 or 0");
 	});
 
+	test("keeps host speech opt-in and lets flags override the environment", () => {
+		expect(parseCli([]).speechMode).toBe("auto");
+		Bun.env.COUCHVIEW_ENABLE_SPEECH = "1";
+		expect(parseCli([]).speechMode).toBe("enabled");
+		expect(parseCli(["--disable-speech"]).speechMode).toBe("disabled");
+		Bun.env.COUCHVIEW_ENABLE_SPEECH = "0";
+		expect(parseCli(["--enable-speech"]).speechMode).toBe("enabled");
+		expect(() => parseCli(["--enable-speech", "--disable-speech"])).toThrow(
+			"cannot be used together",
+		);
+		Bun.env.COUCHVIEW_ENABLE_SPEECH = "sometimes";
+		expect(() => parseCli([])).toThrow("COUCHVIEW_ENABLE_SPEECH must be 1 or 0");
+	});
+
 	test("keeps the native bridge and its direct transport explicit", () => {
 		expect(parseCli([])).toMatchObject({
 			remoteBridgeMode: "auto",
 			remoteBridgeP2pMode: "auto",
 			remoteBridgePort: 22,
 			remoteBridgeOriginAccess: "auto",
+			speechMode: "auto",
 		});
 		Bun.env.COUCHVIEW_REMOTE_BRIDGE = "1";
 		Bun.env.COUCHVIEW_REMOTE_BRIDGE_P2P = "1";
@@ -321,7 +341,6 @@ describe("CLI entrypoint", () => {
 		const supervised: string[][] = [];
 		const started: string[][] = [];
 		const restarted: string[][] = [];
-		const installed: CompletionShell[] = [];
 		const bridgePairs: Array<{ origin: string; code: string; originAccess: string }> = [];
 		const bridgeProxies: string[] = [];
 		const bridgeCodex: Array<{
@@ -344,7 +363,6 @@ describe("CLI entrypoint", () => {
 			supervised,
 			started,
 			restarted,
-			installed,
 			bridgePairs,
 			bridgeProxies,
 			bridgeCodex,
@@ -410,10 +428,6 @@ describe("CLI entrypoint", () => {
 					bridgeClaude.push(options);
 					return 0;
 				},
-				async installCompletion(shell: CompletionShell) {
-					installed.push(shell);
-					return "/tmp/couchview.fish";
-				},
 				createPrompter() {
 					return (
 						prompter ?? {
@@ -429,10 +443,10 @@ describe("CLI entrypoint", () => {
 		};
 	}
 
-	test("prints help, version, and completion without starting server work", async () => {
+	test("prints help and version without starting server work", async () => {
 		const help = entrypointRuntime();
 		expect(await runCli(["--help"], help.runtime)).toBe(0);
-		expect(help.stdout.join("\n")).toContain("Usage:");
+		expect(help.stdout.join("\n")).toContain("USAGE");
 		expect(help.supervised).toEqual([]);
 		expect(help.started).toEqual([]);
 		expect(help.restarted).toEqual([]);
@@ -440,23 +454,12 @@ describe("CLI entrypoint", () => {
 		const version = entrypointRuntime();
 		expect(await runCli(["--version"], version.runtime)).toBe(0);
 		expect(version.stdout).toEqual([`couchview ${CLI_VERSION}`]);
-
-		const completion = entrypointRuntime();
-		expect(await runCli(["completion", "bash"], completion.runtime)).toBe(0);
-		expect(completion.stdout.join("\n")).toContain("complete -F _couchview couchview");
-		expect(completion.supervised).toEqual([]);
-
-		const install = entrypointRuntime();
-		expect(await runCli(["completion", "fish", "--install"], install.runtime)).toBe(0);
-		expect(install.installed).toEqual(["fish"]);
-		expect(install.stdout).toEqual(["Installed Fish completion at /tmp/couchview.fish."]);
-		expect(install.supervised).toEqual([]);
 	});
 
 	test("dispatches explicit serve and restart commands with their command names removed", async () => {
 		const serve = entrypointRuntime();
-		expect(await runCli(["serve", ".", "-p", "5000"], serve.runtime)).toBe(0);
-		expect(serve.supervised).toEqual([["--repo=.", "--port", "5000"]]);
+		expect(await runCli(["serve", ".", "-p", "5000", "--enable-speech"], serve.runtime)).toBe(0);
+		expect(serve.supervised).toEqual([["--repo=.", "--port", "5000", "--enable-speech"]]);
 
 		const restart = entrypointRuntime();
 		expect(await runCli(["restart", "-H", "localhost", "-p", "5000"], restart.runtime)).toBe(0);
@@ -573,7 +576,7 @@ describe("CLI entrypoint", () => {
 		const invocation = entrypointRuntime();
 		expect(await runCli(["--hep"], invocation.runtime)).toBe(2);
 		expect(invocation.stderr.join("\n")).toContain("Did you mean '--help'");
-		expect(invocation.stderr.join("\n")).toContain("couchview help serve");
+		expect(invocation.stderr.join("\n")).toContain("couchview serve --help");
 		expect(invocation.supervised).toEqual([]);
 
 		const invalidPort = entrypointRuntime();

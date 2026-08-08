@@ -92,6 +92,7 @@ function parseInstanceResponse(value: unknown): InstanceResponse | null {
 		typeof candidate.port === "number" &&
 		Array.isArray(candidate.accessOrigins) &&
 		candidate.accessOrigins.every((origin) => typeof origin === "string") &&
+		typeof candidate.speechEnabled === "boolean" &&
 		typeof candidate.terminalEnabled === "boolean" &&
 		typeof candidate.terminalP2pEnabled === "boolean" &&
 		Array.isArray(candidate.terminalStunUrls) &&
@@ -253,6 +254,16 @@ export async function registerWithRunningServer(
 	if (options.terminalMode === "enabled" && !rawInstance.terminalEnabled) {
 		throw new Error(
 			`Couchview is already using port ${options.port} with terminal access disabled; stop it or choose another port`,
+		);
+	}
+	if (options.speechMode === "enabled" && !rawInstance.speechEnabled) {
+		throw new Error(
+			`Couchview is already using port ${options.port} with speech disabled; stop it or choose another port`,
+		);
+	}
+	if (options.speechMode === "disabled" && rawInstance.speechEnabled) {
+		throw new Error(
+			`Couchview is already using port ${options.port} with speech enabled; stop it or choose another port`,
 		);
 	}
 	if (options.terminalMode === "disabled" && rawInstance.terminalEnabled) {

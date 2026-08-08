@@ -652,7 +652,7 @@ describe("Couchview HTTP advanced routes", () => {
 		expect(instance.status).toBe(200);
 		expect(await instance.json()).toMatchObject({
 			service: "couchview",
-			protocolVersion: 5,
+			protocolVersion: 6,
 			instanceId: app.instanceId,
 			bindHost: "127.0.0.1",
 			port: 3001,

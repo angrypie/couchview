@@ -105,7 +105,7 @@ export function addSecurityHeaders(response: Response): Response {
 	headers.set("Referrer-Policy", "no-referrer");
 	headers.set("Cross-Origin-Resource-Policy", "same-origin");
 	headers.set("Cross-Origin-Opener-Policy", "same-origin");
-	headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+	headers.set("Permissions-Policy", "camera=(), microphone=(self), geolocation=()");
 	headers.set(
 		"Content-Security-Policy",
 		"default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; img-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; media-src 'none'",

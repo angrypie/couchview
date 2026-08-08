@@ -68,6 +68,48 @@ function completeArtifactBuild(
 	run.buildId = build.id;
 }
 
+async function handleFixtureSpeechMutation(
+	state: FixtureMutableState,
+	request: Request,
+	url: URL,
+): Promise<Response | null> {
+	if (url.pathname === "/api/e2e/speech/enable" && request.method === "POST") {
+		state.speechReady = true;
+		return fixtureJson({ ready: true });
+	}
+	if (url.pathname !== API_ROUTES.speechTranscriptions || request.method !== "POST") return null;
+	if (!state.speechReady) {
+		return fixtureJson(
+			{ error: { code: "speech_unavailable", message: "Fixture speech is unavailable." } },
+			503,
+		);
+	}
+	if (!request.headers.get("content-type")?.startsWith("audio/wav")) {
+		return fixtureJson(
+			{
+				error: {
+					code: "speech_content_type_invalid",
+					message: "Fixture speech requires WAV audio.",
+				},
+			},
+			415,
+		);
+	}
+	const audio = await request.arrayBuffer();
+	if (audio.byteLength <= 44) {
+		return fixtureJson(
+			{ error: { code: "speech_audio_invalid", message: "Fixture WAV has no samples." } },
+			400,
+		);
+	}
+	return fixtureJson({
+		text: "dictated phrase",
+		language: "en",
+		durationMs: 300,
+		inferenceMs: 4,
+	});
+}
+
 export async function handleFixtureSystemMutation(
 	state: FixtureMutableState,
 	context: FixtureRequestContext,
@@ -87,6 +129,8 @@ export async function handleFixtureSystemMutation(
 		state.reset();
 		return fixtureJson({ reset: true });
 	}
+	const speechResponse = await handleFixtureSpeechMutation(state, request, url);
+	if (speechResponse) return speechResponse;
 	const nativeClientResponse = await handleFixtureNativeClientMutation(state, context);
 	if (nativeClientResponse) return nativeClientResponse;
 	if (url.pathname === API_ROUTES.settingsProfiles && request.method === "POST") {

@@ -59,12 +59,12 @@ Open the project-specific URL printed by the command, such as `http://127.0.0.1:
 
 Run `couchview` inside another Git project while that endpoint is active to add it to the same server. The command prints whether the project was added, repeats its URL, and exits. Click the repository name in the app to switch projects; the selected repository is stored in `?repo=...`, so browser history and separate tabs can keep independent projects open. Use another `--port` when intentionally running a different Couchview version or server instance.
 
-### Command-line help and completion
+### Command-line help
 
 `couchview` remains the shortest way to serve the current repository, while the
 explicit `serve` command or `--repo` flag selects another repository. Bare paths
-such as `couchview ../project` are rejected, keeping command completion distinct
-from path completion. Conventional short options and inline values are supported:
+such as `couchview ../project` are rejected, keeping command names distinct from
+repository paths. Conventional short options and inline values are supported:
 
 ```sh
 couchview serve -r /absolute/path/to/project -H 127.0.0.1 -p 4173
@@ -72,11 +72,14 @@ couchview serve /absolute/path/to/project --port 4173
 couchview --repo=/absolute/path/to/project --port=4173
 ```
 
-Use built-in help for the complete option, environment, and security reference:
+CLI options and command help are generated from the same Citty command definitions used for
+argument parsing, so newly supported flags appear in help automatically:
 
 ```sh
 couchview --help
 couchview help serve
+couchview help bridge pair
+couchview artifacts download --help
 couchview restart --help
 couchview --version
 ```
@@ -89,33 +92,6 @@ never wait for input:
 couchview --interactive
 couchview serve --interactive --repo /absolute/path/to/project
 ```
-
-Shell completion is generated on stdout by default. Fish can install and update
-its completion file automatically in the standard per-user completion directory,
-without editing `config.fish`:
-
-```fish
-couchview completion fish --install
-```
-
-Fish discovers that file automatically in new and existing shells. For dynamic
-setup, or for zsh and bash, add the matching command to the shell profile to
-complete commands, options, shell names, and repository directories only after
-`serve` or a repository flag:
-
-```sh
-# zsh (~/.zshrc; compinit must be loaded before the generated script)
-autoload -Uz compinit && compinit
-source <(couchview completion zsh)
-
-# bash (~/.bashrc)
-source <(couchview completion bash)
-
-# fish alternative (~/.config/fish/config.fish)
-couchview completion fish | source
-```
-
-Run `couchview help completion` to print these setup examples again.
 
 ### Open it from a phone
 
@@ -160,6 +136,36 @@ client with `bun run dev:native`. A signed local Xcode build can also be made
 with `bun x expo run:ios --configuration Release`. The EAS profiles are ready
 for local EAS builds after the project is linked once with `bun x eas init`; then use
 `bun x eas build --platform ios --profile development --local`.
+
+### Host-run dictation
+
+On an Apple Silicon Mac running macOS 14 or newer, Couchview can transcribe speech locally with
+FluidAudio's multilingual Parakeet TDT 0.6B v3 int8 model. It is opt-in and disabled by default:
+
+```sh
+couchview --enable-speech
+# or
+COUCHVIEW_ENABLE_SPEECH=1 couchview
+```
+
+The first enabled startup downloads the model into FluidAudio's user cache and warms it before
+Couchview advertises dictation as ready; later starts reuse the cache. Keep the generated
+`couchview-speech-sidecar` beside `dist/couchview` when moving a compiled distribution. Unsupported
+hosts or model startup failures leave the rest of Couchview available without a microphone control.
+
+The shared web/iOS/Android inputs show a microphone only when both the host model and client audio
+capture are ready. Press once to record and again to stop. Couchview then uploads a private mono
+PCM WAV to the host and inserts only the final successful transcript at the current selection. A
+final response preserves full-utterance context and keeps retries and host state simple, but it does
+not show live partial captions. Recordings stop after five minutes, temporary audio is deleted after
+every outcome, and Couchview does not retain transcript history.
+
+Native clients can record while connected over trusted LAN HTTP. Browsers expose microphones only
+in a secure context, so use localhost or HTTPS rather than a plain `http://<LAN-IP>` page. LAN HTTP
+is also unencrypted: use only a trusted network or terminate HTTPS in front of Couchview.
+
+[FluidAudio](https://github.com/FluidInference/FluidAudio) 0.15.5 is Apache-2.0 software. The
+Parakeet model is published by [NVIDIA](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3).
 
 ### Ghostty tmux terminal
 
@@ -783,7 +789,7 @@ ${XDG_DATA_HOME:-$HOME/.local/share}/couchview/state.sqlite
 
 Only an absolute `XDG_DATA_HOME` is honored; relative values fall back to `$HOME/.local/share`. Production and development servers share this database unless launched with different absolute data homes. Repository files are opened lazily, and concurrent local servers observe catalog and review changes through SQLite revisions. Package-run history and its bounded output are memory-only and disappear when the server exits. Artifact definitions and build metadata live in SQLite; private payload snapshots live beside it under `couchview/artifacts/`. Each artifact retains two successful snapshots across restarts, while failed runs retain no payload and never evict a success.
 
-`COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `COUCHVIEW_REMOTE_BRIDGE`, `COUCHVIEW_REMOTE_BRIDGE_P2P`, `COUCHVIEW_REMOTE_BRIDGE_STUN`, `COUCHVIEW_REMOTE_BRIDGE_PORT`, `COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line repository, port, terminal, and remote-bridge options take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards.
+`COUCHVIEW_ROOT`, `COUCHVIEW_ALLOWED_ORIGINS`, `COUCHVIEW_TERMINAL`, `COUCHVIEW_TERMINAL_P2P`, `COUCHVIEW_TERMINAL_STUN`, `COUCHVIEW_ENABLE_SPEECH`, `COUCHVIEW_REMOTE_BRIDGE`, `COUCHVIEW_REMOTE_BRIDGE_P2P`, `COUCHVIEW_REMOTE_BRIDGE_STUN`, `COUCHVIEW_REMOTE_BRIDGE_PORT`, `COUCHVIEW_REMOTE_BRIDGE_ORIGIN_ACCESS`, `PORT`, and `STATIC_DIR` provide startup defaults when invoking the Bun server directly; command-line repository, port, terminal, speech, and remote-bridge options take precedence. `COUCHVIEW_ALLOWED_ORIGINS` is a comma-separated list of exact trusted reverse-proxy origins and does not accept wildcards.
 
 Package scripts execute on the host computer with the same operating-system permissions and environment as Couchview. The API accepts only exact scripts from detected manifests, takes no custom arguments or stdin, and protects Run and Stop with the same origin and CSRF checks as staging and committing. Those checks are not remote authentication: use package commands only with repositories and networks you trust.
 

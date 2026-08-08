@@ -154,6 +154,22 @@ export async function promptForServeArguments(
 				? ["--disable-remote-bridge-p2p"]
 				: []),
 	];
+	const speech =
+		defaults.speechMode === "enabled"
+			? ["--enable-speech"]
+			: defaults.speechMode === "disabled"
+				? ["--disable-speech"]
+				: [];
 
-	return ["--repo", root, "--host", host, "--port", String(port), ...terminal, ...remoteBridge];
+	return [
+		"--repo",
+		root,
+		"--host",
+		host,
+		"--port",
+		String(port),
+		...terminal,
+		...remoteBridge,
+		...speech,
+	];
 }

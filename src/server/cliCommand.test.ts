@@ -1,17 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import {
-	CLI_VERSION,
 	CliPromptInterrupted,
 	CliUsageError,
-	type CompletionShell,
-	fishCompletionPath,
 	type InteractivePrompter,
 	parseCliInvocation,
 	parseServeArguments,
 	promptForServeArguments,
-	renderCliHelp,
-	renderCompletion,
 } from "./cliCommand.ts";
 import { CLOUDFLARE_ORIGIN_ACCESS_PROVIDER_ID } from "./cloudflareAccess.ts";
 
@@ -96,7 +91,7 @@ describe("CLI command parsing", () => {
 		).toThrow("only valid for bridge codex");
 		expect(() =>
 			parseCliInvocation(["bridge", "codex", "--url", "https://review.example.com"]),
-		).toThrow("only valid for bridge pair");
+		).toThrow("Unknown option: --url");
 		expect(() => parseCliInvocation(["bridge", "codex", "--repo", "relative/project"])).toThrow(
 			"must be absolute",
 		);
@@ -126,26 +121,20 @@ describe("CLI command parsing", () => {
 			kind: "restart",
 			argv: ["-p", "5000"],
 		});
-		expect(parseCliInvocation(["--help"])).toEqual({ kind: "help", command: null });
+		expect(parseCliInvocation(["--help"])).toEqual({ kind: "help", path: [] });
 		expect(parseCliInvocation(["serve", "--help"])).toEqual({
 			kind: "help",
-			command: "serve",
+			path: ["serve"],
 		});
 		expect(parseCliInvocation(["help", "restart"])).toEqual({
 			kind: "help",
-			command: "restart",
+			path: ["restart"],
+		});
+		expect(parseCliInvocation(["help", "bridge", "pair"])).toEqual({
+			kind: "help",
+			path: ["bridge", "pair"],
 		});
 		expect(parseCliInvocation(["-V"])).toEqual({ kind: "version" });
-		expect(parseCliInvocation(["completion", "zsh"])).toEqual({
-			kind: "completion",
-			shell: "zsh",
-			install: false,
-		});
-		expect(parseCliInvocation(["completion", "fish", "--install"])).toEqual({
-			kind: "completion",
-			shell: "fish",
-			install: true,
-		});
 		expect(
 			parseCliInvocation([
 				"bridge",
@@ -233,13 +222,9 @@ describe("CLI command parsing", () => {
 		expect(() => parseCliInvocation(["bridge", "par"])).toThrow("Did you mean 'pair'");
 	});
 
-	test("suggests nearby commands, options, and shell names", () => {
+	test("suggests nearby commands and options", () => {
 		expect(() => parseCliInvocation(["restrat"])).toThrow("Did you mean 'restart'");
 		expect(() => parseCliInvocation(["--hep"])).toThrow("Did you mean '--help'");
-		expect(() => parseCliInvocation(["completion", "fsh"])).toThrow("Did you mean 'fish'");
-		expect(() => parseCliInvocation(["completion", "zsh", "--install"])).toThrow(
-			"supports Fish only",
-		);
 	});
 
 	test("rejects bare repository paths", () => {
@@ -294,74 +279,12 @@ describe("artifact CLI parsing", () => {
 		expect(() => parseCliInvocation(["artifacts", "pul", "app"])).toThrow("Did you mean 'pull'");
 		expect(() => parseCliInvocation(["artifacts", "list", "extra"])).toThrow("does not accept");
 		expect(() => parseCliInvocation(["artifacts", "build", "app", "--force"])).toThrow(
-			"only valid for artifacts download or pull",
+			"Unknown option: --force",
 		);
 		expect(() => parseCliInvocation(["artifacts", "pull", "bad name"])).toThrow(
 			"Artifact name is invalid",
 		);
 	});
-});
-
-describe("CLI help and completion", () => {
-	test("renders general and command-specific help from the shared option schema", () => {
-		expect(renderCliHelp(null)).toContain(`Couchview ${CLI_VERSION}`);
-		expect(renderCliHelp(null)).not.toContain("couchview [serve]");
-		expect(renderCliHelp(null)).toContain("couchview serve [repository]");
-		expect(renderCliHelp(null)).toContain("couchview completion <shell>");
-		expect(renderCliHelp(null)).toContain("couchview bridge <pair|proxy|codex|terminal|claude>");
-		expect(renderCliHelp("serve")).toContain("-i, --interactive");
-		expect(renderCliHelp("serve")).toContain("--enable-terminal-p2p");
-		expect(renderCliHelp("restart")).not.toContain("--repo");
-		expect(renderCliHelp("completion")).toContain("couchview completion fish --install");
-		expect(renderCliHelp("bridge")).toContain("bridge pair --url");
-		expect(renderCliHelp("bridge")).toContain("bridge codex [--profile");
-		expect(renderCliHelp("bridge")).toContain("bridge terminal [--profile");
-		expect(renderCliHelp("bridge")).toContain("bridge claude [--profile");
-		expect(renderCliHelp("serve")).toContain("--enable-remote-bridge-p2p");
-		expect(fishCompletionPath({}, "/Users/example")).toBe(
-			"/Users/example/.config/fish/completions/couchview.fish",
-		);
-		expect(fishCompletionPath({ XDG_CONFIG_HOME: "/tmp/config" }, "/Users/example")).toBe(
-			"/tmp/config/fish/completions/couchview.fish",
-		);
-	});
-
-	test.each(["zsh", "bash", "fish"] as const)(
-		"generates valid %s completion with current commands and flags",
-		(shell) => {
-			const completion = renderCompletion(shell as CompletionShell);
-			expect(completion).toContain("completion");
-			expect(completion).toContain("enable-terminal-p2p");
-			expect(completion).toContain("bridge");
-			expect(completion).toContain("codex");
-			expect(completion).toContain("terminal");
-			expect(completion).toContain("claude");
-			expect(completion).toContain("repo");
-			if (shell === "zsh") {
-				expect(completion).not.toContain("'directories:repository directory:_directories'");
-			}
-			if (shell === "bash") {
-				expect(completion).toContain(
-					'[[ ( "$command" == "serve" || "$command" == "artifacts" ) && "$cur" == --repo=* ]]',
-				);
-				expect(completion).not.toMatch(
-					/COMP_CWORD == 1[\s\S]*?COMPREPLY=.*compgen -W[^\n]+compgen -d/,
-				);
-			}
-			if (shell === "fish") {
-				expect(completion).toContain("complete -c couchview -f");
-				expect(completion).toContain("__fish_couchview_using_explicit_command serve");
-			}
-			const binary = Bun.which(shell);
-			if (!binary) return;
-			const checked = Bun.spawnSync([binary, "-n"], {
-				stdin: Buffer.from(completion),
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			expect(checked.exitCode, checked.stderr.toString()).toBe(0);
-		},
-	);
 });
 
 describe("interactive serve setup", () => {

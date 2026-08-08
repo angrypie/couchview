@@ -20,6 +20,7 @@ import {
 	useWorkspaceNavigation,
 	type WorkspaceMode,
 } from "./features/shell/useWorkspaceNavigation.ts";
+import { SpeechProvider } from "./features/speech/index.ts";
 import { useChangedFileFilters } from "./features/staging/useChangedFileFilters.ts";
 import { useWorkspaceLayout } from "./lib/mediaQuery.ts";
 
@@ -102,6 +103,14 @@ export function App({
 		available: false,
 		reason: "Native remote development is unavailable from this Couchview server.",
 		p2pEnabled: false,
+	};
+	const speechCapability = bootstrap?.speech ?? {
+		enabled: false,
+		ready: false,
+		model: "parakeet-tdt-0.6b-v3-int8",
+		maxDurationMs: 300_000,
+		maxUploadBytes: 32 * 1024 * 1024,
+		reason: "Host speech transcription is unavailable from this Couchview server.",
 	};
 	const navigation = useWorkspaceNavigation({
 		bootstrap,
@@ -220,39 +229,45 @@ export function App({
 		workspace,
 	});
 	return (
-		<CouchviewApplicationView
-			artifacts={artifactWorkflow}
-			commitMessageCapability={commitMessageCapability}
-			compactLandscape={compactLandscape}
-			display={displayPreferences}
-			drawerOpen={shell.drawerOpen}
-			drawerView={shell.drawerView}
-			failure={failureReporting}
-			filters={fileFilters}
-			git={gitWorkspace}
-			management={repositoryManagement}
-			nativeServerManagerUrl={nativeServerManagerUrl ?? null}
-			navigation={navigation}
-			notifications={notifications}
-			onDrawerOpenChange={shell.setDrawerOpen}
-			onDrawerViewChange={shell.setDrawerView}
-			onManageServers={onManageServers}
-			onRemoteBridgeOpenChange={shell.setRemoteBridgeOpen}
-			packages={packageWorkflow}
-			pwa={pwa}
-			remoteBridgeCapability={remoteBridgeCapability}
-			remoteBridgeOpen={shell.remoteBridgeOpen}
-			requestedRepositoryId={requestedRepositoryId ?? null}
-			settings={settings}
-			shellCommands={shellCommands}
-			showToast={showToast}
-			splitView={splitView}
-			terminalCapability={terminalCapability}
-			terminalLatencyEnabled={terminalLatencyEnabled}
-			theme={theme}
-			onTerminalLatencyChange={onTerminalLatencyChange}
-			workflow={workflow}
-			workspace={workspace}
-		/>
+		<SpeechProvider
+			capability={speechCapability}
+			connected={workspace.connectionState === "connected"}
+			csrfToken={bootstrap?.csrfToken ?? null}
+		>
+			<CouchviewApplicationView
+				artifacts={artifactWorkflow}
+				commitMessageCapability={commitMessageCapability}
+				compactLandscape={compactLandscape}
+				display={displayPreferences}
+				drawerOpen={shell.drawerOpen}
+				drawerView={shell.drawerView}
+				failure={failureReporting}
+				filters={fileFilters}
+				git={gitWorkspace}
+				management={repositoryManagement}
+				nativeServerManagerUrl={nativeServerManagerUrl ?? null}
+				navigation={navigation}
+				notifications={notifications}
+				onDrawerOpenChange={shell.setDrawerOpen}
+				onDrawerViewChange={shell.setDrawerView}
+				onManageServers={onManageServers}
+				onRemoteBridgeOpenChange={shell.setRemoteBridgeOpen}
+				packages={packageWorkflow}
+				pwa={pwa}
+				remoteBridgeCapability={remoteBridgeCapability}
+				remoteBridgeOpen={shell.remoteBridgeOpen}
+				requestedRepositoryId={requestedRepositoryId ?? null}
+				settings={settings}
+				shellCommands={shellCommands}
+				showToast={showToast}
+				splitView={splitView}
+				terminalCapability={terminalCapability}
+				terminalLatencyEnabled={terminalLatencyEnabled}
+				theme={theme}
+				onTerminalLatencyChange={onTerminalLatencyChange}
+				workflow={workflow}
+				workspace={workspace}
+			/>
+		</SpeechProvider>
 	);
 }

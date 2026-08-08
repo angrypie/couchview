@@ -21,14 +21,13 @@ import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "../typographyPreferences.ts
 import { CodexGenerationSettingsCard } from "./CodexGenerationSettingsCard.tsx";
 import { SettingsEditorDialog } from "./settings/SettingsEditorDialog.tsx";
 import { SettingsField, SettingsSection } from "./settings/SettingsSection.tsx";
+import { SpeechInput } from "./speech";
 import {
 	Badge,
 	Button,
 	Divider,
 	Heading,
 	HStack,
-	Input,
-	InputField,
 	Radio,
 	RadioGroup,
 	ScrollScreen,
@@ -218,14 +217,13 @@ function ProfilePicker({
 				/>
 			</SettingsField>
 			<SettingsField label="Profile name">
-				<Input isDisabled={profile.id === DEFAULT_SETTINGS_PROFILE_ID}>
-					<InputField
-						accessibilityLabel="Profile name"
-						maxLength={64}
-						onChangeText={editor.setName}
-						value={editor.name}
-					/>
-				</Input>
+				<SpeechInput
+					accessibilityLabel="Profile name"
+					isDisabled={profile.id === DEFAULT_SETTINGS_PROFILE_ID}
+					maxLength={64}
+					onChangeText={editor.setName}
+					value={editor.name}
+				/>
 			</SettingsField>
 			<Button
 				className="self-start"

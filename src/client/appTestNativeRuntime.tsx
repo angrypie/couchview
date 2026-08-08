@@ -42,6 +42,7 @@ mock.module("lucide-react-native", () => ({
 	ChevronRight: NullIcon,
 	ChevronUp: NullIcon,
 	Circle: NullIcon,
+	CircleAlert: NullIcon,
 	Copy: NullIcon,
 	Download: NullIcon,
 	ExternalLink: NullIcon,
@@ -60,6 +61,7 @@ mock.module("lucide-react-native", () => ({
 	LoaderCircle: NullIcon,
 	LogIn: NullIcon,
 	Menu: NullIcon,
+	Mic: NullIcon,
 	Minus: NullIcon,
 	MonitorUp: NullIcon,
 	MoreHorizontal: NullIcon,
@@ -214,6 +216,29 @@ mock.module("expo-clipboard", () => ({
 		await navigator.clipboard.writeText(text);
 		return true;
 	},
+}));
+
+mock.module("expo-haptics", () => ({
+	AndroidHaptics: {
+		Confirm: "confirm",
+		Reject: "reject",
+		Toggle_Off: "toggle-off",
+		Toggle_On: "toggle-on",
+	},
+	ImpactFeedbackStyle: { Light: "light", Medium: "medium" },
+	NotificationFeedbackType: { Error: "error", Success: "success" },
+	impactAsync: async () => undefined,
+	notificationAsync: async () => undefined,
+	performAndroidHapticsAsync: async () => undefined,
+}));
+
+mock.module("expo-blob", () => ({ Blob: globalThis.Blob }));
+
+mock.module("react-native-reanimated", () => ({
+	default: { View: ReactNativeWeb.View },
+	useAnimatedStyle: (factory: () => object) => factory(),
+	useSharedValue: <Value,>(value: Value) => ({ value }),
+	withTiming: <Value,>(value: Value) => value,
 }));
 
 export const nativeTestRuntime = {

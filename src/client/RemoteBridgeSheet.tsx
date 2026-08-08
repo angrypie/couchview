@@ -11,6 +11,7 @@ import { ScrollView, View } from "react-native";
 
 import type { RemoteBridgeCapability } from "../shared/contracts.ts";
 import { NativeAppPairingPanel } from "./components/NativeAppPairingPanel.tsx";
+import { SpeechInput } from "./components/speech";
 import {
 	Button,
 	Card,
@@ -21,8 +22,6 @@ import {
 	HStack,
 	Icon,
 	IconButton,
-	Input,
-	InputField,
 	Sheet,
 	Spinner,
 	Text,
@@ -248,18 +247,17 @@ function PairMacCard({ bridge }: { bridge: RemoteBridgeController }) {
 						Device name
 					</Text>
 					<HStack className="flex-wrap" space="sm">
-						<Input className="min-w-48 flex-1">
-							<InputField
-								accessibilityLabel="Device name"
-								autoCapitalize="words"
-								autoCorrect={false}
-								maxLength={80}
-								onChangeText={bridge.setLabel}
-								onSubmitEditing={() => void bridge.createPairing()}
-								returnKeyType="done"
-								value={bridge.label}
-							/>
-						</Input>
+						<SpeechInput
+							accessibilityLabel="Device name"
+							autoCapitalize="words"
+							autoCorrect={false}
+							containerClassName="min-w-48 flex-1"
+							maxLength={80}
+							onChangeText={bridge.setLabel}
+							onSubmitEditing={() => void bridge.createPairing()}
+							returnKeyType="done"
+							value={bridge.label}
+						/>
 						<Button
 							disabled={!bridge.label.trim()}
 							leftIcon={Plus}

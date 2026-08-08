@@ -384,6 +384,7 @@ describe("multi-project CLI startup", () => {
 					bindHost: app.bindHost,
 					port: app.port,
 					accessOrigins: app.accessOrigins,
+					speechEnabled: app.speech.enabled,
 					terminalEnabled: app.terminalSessions.enabled,
 					terminalP2pEnabled: app.terminalSessions.p2pEnabled,
 					terminalStunUrls: [...app.terminalSessions.stunUrls],

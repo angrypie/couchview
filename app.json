@@ -18,7 +18,15 @@
 					}
 				}
 			],
-			"expo-sharing"
+			"expo-sharing",
+			[
+				"expo-audio",
+				{
+					"microphonePermission": "Allow Couchview to record audio for host transcription.",
+					"recordAudioAndroid": true,
+					"enableBackgroundRecording": false
+				}
+			]
 		],
 		"ios": {
 			"bundleIdentifier": "dev.couchview.app",
