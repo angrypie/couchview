@@ -129,6 +129,9 @@ describe("speech voice level", () => {
 		expect(updates[1]).toBeCloseTo(0.52);
 		expect(updates[2]).toBeCloseTo(0.832);
 		expect(signal.getCurrentLevel()).toBeCloseTo(0.832);
+		now = 128;
+		signal.push(0);
+		expect(updates.at(-1)).toBeCloseTo(0.416);
 
 		signal.reset();
 		expect(updates.at(-1)).toBe(0);

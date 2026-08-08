@@ -3,7 +3,7 @@ import type { SpeechLevelListener, SpeechLevelSource } from "./types.ts";
 export const SPEECH_LEVEL_UPDATE_INTERVAL_MS = 64;
 
 const ATTACK_SMOOTHING = 0.65;
-const RELEASE_SMOOTHING = 0.2;
+const RELEASE_SMOOTHING = 0.5;
 const LEVEL_EPSILON = 0.001;
 
 export interface SpeechLevelSignal extends SpeechLevelSource {

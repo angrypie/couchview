@@ -17,19 +17,21 @@ export const speechButtonClassNames: Record<SpeechPhase, string> = {
 	requestingPermission:
 		"relative h-8 w-8 items-center justify-center rounded-full bg-muted active:scale-95 transition-transform duration-100",
 	recording:
-		"relative h-8 w-8 items-center justify-center rounded-full bg-destructive/10 active:scale-95 transition-transform duration-100",
+		"relative h-8 w-8 items-center justify-center rounded-full bg-destructive/15 active:scale-95 transition-transform duration-100",
 	transcribing:
 		"relative h-8 w-8 items-center justify-center rounded-full bg-muted active:scale-95 transition-transform duration-100",
 	error:
 		"relative h-8 w-8 items-center justify-center rounded-full bg-destructive/10 active:scale-95 transition-transform duration-100",
 };
 
-export function speechIconClassName(phase: SpeechPhase, reducedMotion: boolean): string {
+export function speechIconClassName(reducedMotion: boolean): string {
 	if (reducedMotion) return "items-center justify-center";
-	if (phase === "transcribing") {
-		return "items-center justify-center animate-spin uw-entering-fade-in uw-exiting-fade-out duration-200";
-	}
-	return "items-center justify-center uw-entering-fade-in uw-exiting-fade-out duration-200";
+	return "items-center justify-center uw-entering-fade-in duration-100";
+}
+
+export function speechSpinnerClassName(reducedMotion: boolean): string {
+	if (reducedMotion) return "items-center justify-center";
+	return "items-center justify-center animate-spin uw-entering-fade-in duration-100";
 }
 
 interface SpeechButtonProps {
@@ -67,25 +69,35 @@ function SpeechButton({ disabled, target }: SpeechButtonProps) {
 				onPress={() => speech.toggle(target)}
 				testID={`speech-button-${target.id}`}
 			>
-				<Animated.View
-					className={speechIconClassName(phase, speech.reducedMotion)}
-					key={outcome ?? phase}
-				>
-					{outcome === "success" ? (
-						<Icon as={Check} size={17} tone="success" />
-					) : outcome === "error" || phase === "error" ? (
-						<Icon as={CircleAlert} size={17} tone="destructive" />
-					) : phase === "recording" ? (
-						<SpeechRecordingLevelIndicator
-							level={speech.voiceLevel}
-							reducedMotion={speech.reducedMotion}
-						/>
-					) : phase === "transcribing" || phase === "requestingPermission" ? (
+				{phase === "transcribing" && !outcome ? (
+					<Animated.View
+						className={speechSpinnerClassName(speech.reducedMotion)}
+						key="transcribing-spinner"
+						testID="speech-transcribing-spinner"
+					>
 						<Icon as={LoaderCircle} size={17} tone="muted" />
-					) : (
-						<Icon as={Mic} size={17} tone="muted" />
-					)}
-				</Animated.View>
+					</Animated.View>
+				) : (
+					<Animated.View
+						className={speechIconClassName(speech.reducedMotion)}
+						key={outcome ?? phase}
+					>
+						{outcome === "success" ? (
+							<Icon as={Check} size={17} tone="success" />
+						) : outcome === "error" || phase === "error" ? (
+							<Icon as={CircleAlert} size={17} tone="destructive" />
+						) : phase === "recording" ? (
+							<SpeechRecordingLevelIndicator
+								level={speech.voiceLevel}
+								reducedMotion={speech.reducedMotion}
+							/>
+						) : phase === "requestingPermission" ? (
+							<Icon as={LoaderCircle} size={17} tone="muted" />
+						) : (
+							<Icon as={Mic} size={17} tone="muted" />
+						)}
+					</Animated.View>
+				)}
 			</Pressable>
 			{active || outcome ? (
 				<Text

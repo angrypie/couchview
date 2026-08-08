@@ -140,17 +140,37 @@ test.describe("web dictation", () => {
 		await expect(stop).toBeVisible();
 		const waveform = palette.getByTestId("speech-recording-waveform");
 		await expect(waveform).toBeVisible();
-		const renderedHeights = await waveform.evaluate(async (element) => {
-			const heights: number[] = [];
-			for (let sample = 0; sample < 32; sample += 1) {
-				heights.push(element.getBoundingClientRect().height);
-				await new Promise((resolve) => setTimeout(resolve, 50));
+		const renderedSamples = await waveform.evaluate(async (element) => {
+			const startedAt = performance.now();
+			const samples: Array<{ at: number; height: number }> = [];
+			for (let sample = 0; sample < 40; sample += 1) {
+				samples.push({
+					at: performance.now() - startedAt,
+					height: element.getBoundingClientRect().height,
+				});
+				await new Promise((resolve) => setTimeout(resolve, 40));
 			}
-			return heights;
+			return samples;
 		});
-		expect(Math.max(...renderedHeights) - Math.min(...renderedHeights)).toBeGreaterThan(10);
+		const renderedHeights = renderedSamples.map(({ height }) => height);
+		expect(Math.max(...renderedHeights) - Math.min(...renderedHeights)).toBeGreaterThan(14);
+		const firstLoudIndex = renderedSamples.findIndex(({ height }) => height > 24);
+		expect(firstLoudIndex).toBeGreaterThan(-1);
+		const firstLoudAt = renderedSamples[firstLoudIndex]?.at ?? Number.NEGATIVE_INFINITY;
+		const decayedSample = renderedSamples
+			.slice(firstLoudIndex + 1)
+			.find(({ height }) => height < 12);
+		expect(decayedSample).toBeDefined();
+		expect((decayedSample?.at ?? Number.POSITIVE_INFINITY) - firstLoudAt).toBeLessThan(400);
 		await stop.click();
 
 		await expect(search).toHaveValue("open dictated phrase");
+		const spinner = palette.getByTestId("speech-transcribing-spinner");
+		await expect(spinner).toHaveCount(0);
+
+		await palette.getByRole("button", { name: "Transcript inserted" }).click();
+		await expect(palette.getByRole("button", { name: "Stop dictation" })).toBeVisible();
+		await expect(waveform).toBeVisible();
+		await expect(spinner).toHaveCount(0);
 	});
 });
