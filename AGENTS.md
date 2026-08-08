@@ -57,3 +57,35 @@ Use short, imperative subjects such as `Reject stale staging requests` and keep 
 ## Security & Configuration
 
 Keep `0.0.0.0` as the application and development default so phone access works without flags. Warn users to run only on trusted networks or choose `--host 127.0.0.1`, because the server exposes repository contents and staging controls. Review state belongs in the XDG data database, never in repository files. Do not commit credentials, `dist/`, or Playwright reports.
+
+## Agent automation
+
+Use agent-device only for app/device automation tasks. Before planning commands, run `agent-device --version` and read `agent-device help workflow`. For exploratory QA, read `agent-device help dogfood`. For logs, network, audio, traces, or runtime failures, read `agent-device help debugging`. For React Native component trees, props/state/hooks, slow renders, or rerenders, read `agent-device help react-devtools`. For React Native JavaScript heap growth, heap snapshots, or retained-object leaks, read `agent-device help cdp`. For React Native apps, overlays, Metro/Fast Refresh blockers, and routing to React DevTools or debugging evidence, read `agent-device help react-native`.
+
+Use MCP tools or the CLI in the integrated terminal. If `agent-device` is not on PATH but the user installed it globally in another shell, resolve the command the same way the user would from a normal terminal session and run that absolute path instead. This may require inspecting shell startup behavior or package-manager/global bin locations; do not assume the agent process `PATH` is the user's `PATH`. Do not silently fall back to `npx -y agent-device@latest`; ask or use an exact version. MCP exposes structured tools backed by the agent-device client; it does not expose generic shell execution. Prefer `open -> snapshot -i -> act -> re-snapshot -> verify -> close`. Use current refs such as `@e3` for exploration and selectors for durable replay. Keep mutating commands against one session serial. Capture screenshots, logs, network, audio, perf, traces, recordings, and `.ad` replay scripts only when they add evidence.
+
+## React / Expo Patterns
+
+- Prefer self-explanatory UI. Add descriptive copy only when it helps someone complete or recover from an action; do not repeat visible labels or use sales-pitch language.
+- Use Uniwind `className` utilities and CSS variables for theming and static styles.
+- For third-party components with compatible `style` props, prefer a module-level `withUniwind` wrapper so they can use `className`. Keep one-file wrappers local and share wrappers that have multiple consumers.
+- Never wrap React Native or React Native Reanimated components with `withUniwind`; they already support `className`. Use `useResolveClassNames` for one-off non-component style props where appropriate.
+- Keep cross-platform behavior aligned. Use platform-specific files only for necessary build isolation or materially different implementations; keep small platform branches inside the existing abstraction.
+- Keep abstractions encapsulated, reuse existing code, and follow established project patterns instead of leaking implementation details or duplicating platform logic.
+
+## When In Doubt
+
+- Mirror existing patterns in nearby files.
+- Keep changes scoped and minimal.
+- Update or add tests only when relevant to the change.
+
+
+
+## Lint / Formatting Rules
+
+The project uses Biome for formatting + linting at the repo root.
+- Indentation: tabs
+- Quotes: double
+- Semicolons: as needed
+- Organize imports: enabled
+- Unused imports: error (auto-fix)
