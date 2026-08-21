@@ -1,0 +1,35 @@
+/*
+ * Web-only styling for the @expo/ui community BottomSheet (Vaul drawer
+ * with hard-coded inline styles). Restyle it with design-system tokens so the
+ * sheet surface, scrim, and drag handle match the themed popover chrome.
+ * This file is imported only on web; Uniwind must never compile these
+ * attribute selectors for native, so it lives behind vaulWebStyles.web.ts.
+ */
+[data-vaul-overlay] {
+	background-color: var(--color-scrim) !important;
+}
+
+[data-vaul-drawer] {
+	background-color: var(--color-popover) !important;
+	border-radius: 1.5rem 1.5rem 0 0 !important;
+	box-shadow: 0 -8px 24px rgb(0 0 0 / 12%) !important;
+	max-height: calc(100vh - 2.5rem);
+	overflow: hidden;
+}
+
+[data-vaul-drawer]::after {
+	background: var(--color-popover) !important;
+}
+
+[data-vaul-drawer] > div:last-child {
+	min-height: 0;
+	overflow-y: auto;
+	padding: 0 !important;
+}
+
+[data-vaul-handle] {
+	background-color: rgb(var(--ui-muted-foreground) / 0.4) !important;
+	width: 2.5rem !important;
+	height: 0.25rem !important;
+	border-radius: 9999px !important;
+}

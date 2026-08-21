@@ -1,0 +1,29 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"allowImportingTsExtensions": true,
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"jsx": "react-jsx",
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"types": ["bun-types", "react", "react-native", "uniwind/types"]
+	},
+	"include": [
+		"app",
+		"src",
+		"scripts",
+		"tests",
+		".codex/hooks",
+		"playwright.config.ts",
+		"expo-env.d.ts",
+		"uniwind-types.d.ts",
+		".expo/types/**/*.ts"
+	],
+	"extends": "expo/tsconfig.base"
+}

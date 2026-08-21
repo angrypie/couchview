@@ -1,0 +1,20 @@
+{
+	"extends": "expo/tsconfig.base",
+	"compilerOptions": {
+		"allowImportingTsExtensions": true,
+		"noUncheckedIndexedAccess": true,
+		"strict": true,
+		"paths": {
+			"@/*": ["./*"]
+		},
+		"types": ["react", "react-native"]
+	},
+	"include": ["app", "src/client", "src/shared", "expo-env.d.ts", "uniwind-types.d.ts"],
+	"exclude": [
+		"**/*.test.ts",
+		"**/*.test.tsx",
+		"src/client/appTest*.ts",
+		"src/client/appTest*.tsx",
+		"src/client/terminalTestFakes.ts"
+	]
+}

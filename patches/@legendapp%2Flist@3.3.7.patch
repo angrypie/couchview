@@ -1,0 +1,66 @@
+diff --git a/react-native.web.js b/react-native.web.js
+index b2240b50ef32a2ef7476d81ec9add514487373e6..5d19aa30dbfced1281156c9924782e69afdf5436 100644
+--- a/react-native.web.js
++++ b/react-native.web.js
+@@ -5030,5 +5030,6 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+ // src/core/measureContainersInLayoutEffect.ts
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
++  const state = ctx.state;
+   const measurements = [];
+   const containerIds = targetContainerIds != null ? targetContainerIds : ctx.viewRefs.keys();
+   for (const containerId of containerIds) {
+@@ -5036,7 +5037,20 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      let rect;
++      if (!state.needsOtherAxisSize) {
++        const index = state.indexByKey.get(itemKey);
++        const itemData = index === void 0 ? void 0 : state.props.data == null ? void 0 : state.props.data[index];
++        if (index !== void 0 && itemData !== void 0) {
++          const metadata = resolveContainerItemMetadata(state, containerId, index, itemData);
++          const fixedItemSize = metadata.fixedItemSize;
++          if (fixedItemSize !== void 0) {
++            const fixedLayoutSize = fixedItemSize + ctx.scrollAxisGap;
++            rect = state.props.horizontal ? { height: state.otherAxisSize, width: fixedLayoutSize } : { height: fixedLayoutSize, width: state.otherAxisSize };
++          }
++        }
++      }
++      if (rect === void 0) rect = element.getBoundingClientRect();
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,
+diff --git a/react-native.web.mjs b/react-native.web.mjs
+index a97be05f732b43ffed422c95f2808205a332f53c..7fee34445f703114456e18c70d0d949ac8f678ac 100644
+--- a/react-native.web.mjs
++++ b/react-native.web.mjs
+@@ -5009,5 +5009,6 @@ function updateOneItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+ // src/core/measureContainersInLayoutEffect.ts
+ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
++  const state = ctx.state;
+   const measurements = [];
+   const containerIds = targetContainerIds != null ? targetContainerIds : ctx.viewRefs.keys();
+   for (const containerId of containerIds) {
+@@ -5015,7 +5016,20 @@ function measureContainersInLayoutEffect(ctx, targetContainerIds = null) {
+     const itemKey = peek$(ctx, `containerItemKey${containerId}`);
+     const element = viewRef == null ? void 0 : viewRef.current;
+     if (itemKey !== void 0 && element) {
+-      const rect = element.getBoundingClientRect();
++      let rect;
++      if (!state.needsOtherAxisSize) {
++        const index = state.indexByKey.get(itemKey);
++        const itemData = index === void 0 ? void 0 : state.props.data == null ? void 0 : state.props.data[index];
++        if (index !== void 0 && itemData !== void 0) {
++          const metadata = resolveContainerItemMetadata(state, containerId, index, itemData);
++          const fixedItemSize = metadata.fixedItemSize;
++          if (fixedItemSize !== void 0) {
++            const fixedLayoutSize = fixedItemSize + ctx.scrollAxisGap;
++            rect = state.props.horizontal ? { height: state.otherAxisSize, width: fixedLayoutSize } : { height: fixedLayoutSize, width: state.otherAxisSize };
++          }
++        }
++      }
++      if (rect === void 0) rect = element.getBoundingClientRect();
+       setContainerLayoutBaseline(element, rect);
+       measurements.push({
+         containerId,

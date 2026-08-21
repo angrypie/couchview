@@ -1,0 +1,2005 @@
+{
+	"tsx": [
+		[
+			{
+				"text": "export",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "interface",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "ReviewOptions",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "enabled",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "boolean",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ";",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "// a comment about nothing in particular",
+				"color": "#737373",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "label",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "string",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ";",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "}",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[],
+		[
+			{
+				"text": "/* multi",
+				"color": "#737373",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "line block",
+				"color": "#737373",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "comment */",
+				"color": "#737373",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "export",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "function",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "render",
+				"color": "#9D6AFB",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "(",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#A3A3A3",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "number",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "):",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "JSX",
+				"color": "#FFAB16",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ".",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "Element",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "const",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "items",
+				"color": "#FFAB16",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "useMemo",
+				"color": "#9D6AFB",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "(()",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=>",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ">",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "3",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "?",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "[",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "1",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ",",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "2",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ",",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "3",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "]",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ":",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "[],",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "[",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "]);",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "const",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "label",
+				"color": "#FFAB16",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "`",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "item-",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "${",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "`;",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "const",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "body",
+				"color": "#FFAB16",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "`",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "multi",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			}
+		],
+		[
+			{
+				"text": "line ",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "${",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " template",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "`;",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "return",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "<",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "div",
+				"color": "#FF855E",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "className",
+				"color": "#60D199",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "\"row\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ">",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "items",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ".",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "map",
+				"color": "#9D6AFB",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "((",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "n",
+				"color": "#A3A3A3",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ") ",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=>",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " <",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "span",
+				"color": "#FF855E",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "key",
+				"color": "#60D199",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "n",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ">",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "label",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}{",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "n",
+				"color": "#FFA359",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "</",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "span",
+				"color": "#FF855E",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ">)",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "}",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "</",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "div",
+				"color": "#FF855E",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ">;",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "}",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[],
+		[
+			{
+				"text": "const",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "noNewlineHere",
+				"color": "#FFAB16",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "=",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "true",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ";",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		]
+	],
+	"python": [
+		[
+			{
+				"text": "def",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "render",
+				"color": "#9D6AFB",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "(",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#FFD452",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "int",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ")",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "->",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "str",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "    ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "\"\"\"Docstring",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "    spanning lines",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "    \"\"\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "    ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "if",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " count ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ">",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "3",
+				"color": "#68CDF2",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": ":",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "        ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "return",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "f",
+				"color": "#D568EA",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "\"item-",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "{",
+				"color": "#FFD452",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "count",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "}",
+				"color": "#FFD452",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "    ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "return",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "\"fallback\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		]
+	],
+	"shellscript": [
+		[
+			{
+				"text": "#!/bin/sh",
+				"color": "#737373",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "if",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "[",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "-n",
+				"color": "#08C0EF",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "$1",
+				"color": "#A3A3A3",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": "\"",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "];",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "then",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			}
+		],
+		[
+			{
+				"text": "  ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "cat",
+				"color": "#9D6AFB",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			},
+			{
+				"text": " ",
+				"color": "#e7edf5",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			},
+			{
+				"text": "<<'EOF'",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "multi-line heredoc",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "with $unexpanded vars",
+				"color": "#5ECC71",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": false
+			}
+		],
+		[
+			{
+				"text": "EOF",
+				"color": "#636363",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			}
+		],
+		[
+			{
+				"text": "fi",
+				"color": "#FF678D",
+				"backgroundColor": null,
+				"bold": false,
+				"italic": false,
+				"underline": false,
+				"identifier": true
+			}
+		]
+	]
+}
