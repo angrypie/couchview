@@ -8,6 +8,7 @@ import {
 	NATIVE_CLIENT_TOKEN_HEADER,
 	type NativeClientClaimResponse,
 } from "../../../shared/contracts.ts";
+import type { FetchResponseLike } from "../../lib/api/fetchTypes.ts";
 
 export class NativeApiError extends Error {
 	constructor(
@@ -19,7 +20,7 @@ export class NativeApiError extends Error {
 	}
 }
 
-async function responseError(response: Response): Promise<NativeApiError> {
+async function responseError(response: FetchResponseLike): Promise<NativeApiError> {
 	try {
 		const body = (await response.json()) as ApiErrorBody;
 		return new NativeApiError(body.error.message, body.error.code);
@@ -28,7 +29,7 @@ async function responseError(response: Response): Promise<NativeApiError> {
 	}
 }
 
-async function readResponse<T>(response: Response): Promise<T> {
+async function readResponse<T>(response: FetchResponseLike): Promise<T> {
 	if (!response.ok) throw await responseError(response);
 	return (await response.json()) as T;
 }
@@ -52,7 +53,7 @@ export async function fetchNativeServerInstance(
 	token: string,
 	signal?: AbortSignal,
 ): Promise<InstanceResponse> {
-	let response: Response;
+	let response: FetchResponseLike;
 	try {
 		response = await expoFetch(`${baseUrl}${API_ROUTES.instance}`, {
 			headers: {

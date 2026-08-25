@@ -1,5 +1,5 @@
 import { NATIVE_CLIENT_TOKEN_HEADER } from "../../../shared/nativeClients.ts";
-import type { FetchLike } from "./fetchTypes.ts";
+import type { FetchLike, FetchResponseLike } from "./fetchTypes.ts";
 import { platformFetch } from "./transport";
 
 export interface ApiRuntimeConfiguration {
@@ -110,7 +110,7 @@ export function apiRequestHeaders(initial?: HeadersInit): Headers {
 	return headers;
 }
 
-export function fetchApi(path: string, init: RequestInit = {}): Promise<Response> {
+export function fetchApi(path: string, init: RequestInit = {}): Promise<FetchResponseLike> {
 	return runtime.fetch(apiRequestUrl(path), {
 		credentials: runtime.nativeClientToken ? "omit" : runtime.baseUrl ? "include" : "same-origin",
 		...init,

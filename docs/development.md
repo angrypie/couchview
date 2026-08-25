@@ -4,7 +4,7 @@
 
 ## Prerequisites
 
-Couchview requires Git and Bun 1.3 or newer. If Bun is installed in its default user directory but is not on `PATH`, add it before using the package command:
+Couchview requires Git and Bun 1.4 or newer. If Bun is installed in its default user directory but is not on `PATH`, add it before using the package command:
 
 ```sh
 export PATH="$HOME/.bun/bin:$PATH"
@@ -136,6 +136,52 @@ To run only the scoped unit suites for scripts, server, shared, and client code,
 ```sh
 bun run test
 ```
+
+For quick local iteration, run only tests reached by uncommitted changes:
+
+```sh
+bun run test:changed
+```
+
+This is a developer shortcut, not a submission gate. Run `bun run check:quality` before
+submitting even when the changed-test run passes.
+
+## Dependency maintenance and runtime profiling
+
+Before updating a dependency, inspect the installed-to-target package diff, including newly added
+lifecycle scripts and sensitive runtime imports:
+
+```sh
+bun pm diff <package>
+```
+
+Audit dependency vulnerabilities without mutating the lockfile. If Bun reports a fix, preview the
+exact changes before applying them manually and rerunning the quality gate:
+
+```sh
+bun audit
+bun audit fix --dry-run
+```
+
+Do not run automatic audit fixes in CI. `bun dedupe --check` is useful during explicit lockfile
+maintenance, but duplicate transitive versions are not a submission failure unless the dependency
+ranges permit a reviewed deduplication. A production dependency license inventory is available with:
+
+```sh
+bun pm licenses --prod
+```
+
+For a server-side CPU or memory investigation, Bun can produce terminal-readable Markdown profiles
+without adding a profiler package:
+
+```sh
+bun --cpu-prof-md --cpu-prof-dir /tmp --cpu-prof-name couchview-cpu.md \
+	src/server/cli.ts --repo /absolute/path/to/project
+bun --heap-prof-md --heap-prof-dir /tmp --heap-prof-name couchview-heap.md \
+	src/server/cli.ts --repo /absolute/path/to/project
+```
+
+Profiles are diagnostic artifacts and must remain outside the repository.
 
 The optional real speech-contract suite uses an externally installed CouchSpeech distribution. Set
 `COUCHSPEECH_INTEGRATION_BIN_DIR` to its distribution or Homebrew `libexec` directory when the

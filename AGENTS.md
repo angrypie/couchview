@@ -15,7 +15,7 @@
 - `bun run test` runs the scoped unit suites for scripts, server, shared, and client code; `bun run test:watch` reruns source tests on changes.
 - `bun run test:e2e` builds the local fixture by default and runs the serial Playwright mobile and desktop browser projects. Install browsers once with `bunx playwright install chromium webkit`.
 
-Use Bun 1.3 or newer. `bun run check:quality` is the canonical submission gate and must pass before submitting. Run Playwright for behavior or layout changes.
+Use Bun 1.4 or newer. `bun run check:quality` is the canonical submission gate and must pass before submitting. Run Playwright for behavior or layout changes.
 
 ## Running Couchview Process
 

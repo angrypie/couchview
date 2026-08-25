@@ -63,7 +63,7 @@ function baselineDocument(medianMs: number): string {
 				{ name: "custom architecture checker", summary: summary(medianMs) },
 				{ name: "complete architecture gate", summary: summary(medianMs) },
 			],
-			bunVersion: "1.3.14",
+			bunVersion: "1.4.0",
 			createdAt: "2026-08-02T00:00:00.000Z",
 			platform: "darwin",
 			schemaVersion: 1,

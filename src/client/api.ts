@@ -59,6 +59,7 @@ import {
 	type VoiceCommandCapability,
 } from "../shared/contracts.ts";
 import type { RepositoryDirectoryListing } from "../shared/repositoryDirectories.ts";
+import type { FetchResponseLike } from "./lib/api/fetchTypes.ts";
 import { fetchApi } from "./lib/api/runtime.ts";
 
 export {
@@ -100,7 +101,7 @@ export async function request<T>(path: string, init?: RequestInit, csrfToken?: s
 	if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 	if (csrfToken) headers.set(CSRF_HEADER, csrfToken);
 
-	let response: Response;
+	let response: FetchResponseLike;
 	try {
 		response = await fetchApi(path, {
 			...init,

@@ -10,7 +10,7 @@ queue. Staging a file does not remove it from the queue or mark it reviewed.
 
 ## Five-minute setup
 
-Couchview requires Git and Bun 1.3 or newer.
+Couchview requires Git and Bun 1.4 or newer.
 
 ```sh
 bun install
