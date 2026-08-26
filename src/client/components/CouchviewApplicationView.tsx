@@ -242,6 +242,7 @@ export function CouchviewApplicationView({
 					onBack={navigation.closeGitHistory}
 					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
 					repository={workspace.repository}
+					splitView={splitView}
 					themeType={theme.resolvedTheme}
 				/>
 				{toastUi}

@@ -39,24 +39,19 @@ async function expectPageWithinViewport(page: Page) {
 	expect(bounds?.height ?? 0).toBeGreaterThan(viewport.height * 0.98);
 }
 
-async function expectWidePaneLayout(
-	commits: Locator,
-	commitFiles: Locator,
-	historicalDiff: Locator,
-) {
-	const [historyBounds, filesBounds, diffBounds] = await Promise.all([
-		commits.boundingBox(),
+async function expectCommitReviewSplit(commitFiles: Locator, historicalDiff: Locator) {
+	const [filesBounds, diffBounds] = await Promise.all([
 		commitFiles.boundingBox(),
 		historicalDiff.boundingBox(),
 	]);
-	expect(historyBounds).not.toBeNull();
 	expect(filesBounds).not.toBeNull();
 	expect(diffBounds).not.toBeNull();
-	if (!historyBounds || !filesBounds || !diffBounds) return;
-	expect(Math.abs(historyBounds.x + historyBounds.width - filesBounds.x)).toBeLessThanOrEqual(2);
-	expect(Math.abs(filesBounds.x - diffBounds.x)).toBeLessThanOrEqual(2);
-	expect(Math.abs(filesBounds.width - diffBounds.width)).toBeLessThanOrEqual(2);
-	expect(Math.abs(filesBounds.y + filesBounds.height - diffBounds.y)).toBeLessThanOrEqual(2);
+	if (!filesBounds || !diffBounds) return;
+	expect(Math.abs(filesBounds.x + filesBounds.width - diffBounds.x)).toBeLessThanOrEqual(2);
+	expect(Math.abs(filesBounds.y - diffBounds.y)).toBeLessThanOrEqual(2);
+	expect(Math.abs(filesBounds.height - diffBounds.height)).toBeLessThanOrEqual(2);
+	expect(filesBounds.width).toBeGreaterThanOrEqual(298);
+	expect(filesBounds.width).toBeLessThanOrEqual(302);
 }
 
 test.describe("responsive Git workspace", () => {
@@ -126,28 +121,32 @@ test.describe("responsive Git workspace", () => {
 
 		await page.setViewportSize({ width: 844, height: 390 });
 		await expectPageWithinViewport(page);
-		await expect(commits).toBeVisible();
+		await expect(commits).toBeHidden();
 		await expect(commitFiles).toBeVisible();
-		await expect(historicalDiff).toBeVisible();
-		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
+		await expect(historicalDiff).toBeHidden();
 
 		await page.setViewportSize({ width: 834, height: 1194 });
 		await expectPageWithinViewport(page);
-		await expect(commits).toBeVisible();
+		await expect(commits).toBeHidden();
 		await expect(commitFiles).toBeVisible();
-		await expect(historicalDiff).toBeVisible();
-		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
+		await expect(historicalDiff).toBeHidden();
 
 		await page.setViewportSize({ width: 1194, height: 834 });
 		const historyPage = page.getByRole("main", { name: "Git history and repository actions" });
 		await expectPageWithinViewport(page);
-		await expect(commits).toBeVisible();
+		await expect(commits).toBeHidden();
 		await expect(commitFiles).toBeVisible();
 		await expect(historicalDiff).toBeVisible();
-		await expectWidePaneLayout(commits, commitFiles, historicalDiff);
+		await expectCommitReviewSplit(commitFiles, historicalDiff);
+		await commitFiles.getByRole("button", { name: /benchmarks\/quality-checks\.json/ }).click();
+		await expect(historicalDiff.getByText("Read-only historical preview")).toBeVisible();
 
 		await page.getByRole("button", { name: "Return", exact: true }).click();
 		await expect(page.getByText(/Detached HEAD · previous branch/)).toHaveCount(0);
+		await historyPage.getByRole("button", { name: "History", exact: true }).click();
+		await expect(commits).toBeVisible();
+		await expect(commitFiles).toBeHidden();
+		await expect(historicalDiff).toBeHidden();
 		await historyPage.getByRole("button", { name: "Review", exact: true }).click();
 		await expect(page).toHaveURL(/\/\?repo=fixture-repository$/);
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();

@@ -66,6 +66,8 @@ describe("Couchview Git history workspace", () => {
 		expect(navigations.at(-1)).toEqual(["history", false]);
 		expect(screen.queryByRole("dialog", { name: "Git history and repository actions" })).toBeNull();
 		fireEvent.click(within(workspace).getByRole("button", { name: /Improve history review/ }));
+		expect(within(workspace).queryByRole("region", { name: "Commit history" })).toBeNull();
+		expect(within(workspace).getByRole("button", { name: "History" })).toBeTruthy();
 		const historicalFile = await within(workspace).findByRole("button", {
 			name: /src\/first\.ts/,
 		});
@@ -80,8 +82,7 @@ describe("Couchview Git history workspace", () => {
 			).toBe(true),
 		);
 
-		fireEvent.click(within(workspace).getByRole("button", { name: "Back to commit files" }));
-		fireEvent.click(within(workspace).getByRole("button", { name: "Back to commits" }));
+		fireEvent.click(within(workspace).getByRole("button", { name: "History" }));
 		fireEvent.click(within(workspace).getByRole("button", { name: /Improve history review/ }));
 		await within(workspace).findByRole("button", { name: /src\/first\.ts/ });
 		expect(
@@ -89,6 +90,7 @@ describe("Couchview Git history workspace", () => {
 				request.path.endsWith("/git/history/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
 			),
 		).toHaveLength(1);
+		fireEvent.click(within(workspace).getByRole("button", { name: "History" }));
 		fireEvent.click(within(workspace).getByRole("button", { name: "Review" }));
 		expect(navigations.at(-1)).toEqual(["review", true]);
 		expect(screen.getByRole("region", { name: "Current file" })).toBeTruthy();
@@ -117,7 +119,8 @@ describe("Couchview Git history workspace", () => {
 		fireEvent.click(within(workspace).getByRole("button", { name: "Load more" }));
 		await within(workspace).findByRole("button", { name: /Initial review workspace/ });
 		expect(within(workspace).getByRole("button", { name: /Improve history review/ })).toBeTruthy();
-		fireEvent.click(within(workspace).getByRole("button", { name: "All refs" }));
+		expect(within(workspace).getByText("End of history · 2 commits")).toBeTruthy();
+		fireEvent.click(within(workspace).getByRole("button", { name: "Branches & tags" }));
 		await waitFor(() => expect(fixture.historyQueries).toContain("?scope=all"));
 	});
 
@@ -133,7 +136,7 @@ describe("Couchview Git history workspace", () => {
 			await within(workspace).findByRole("button", { name: /Improve history review/ }),
 		);
 		await waitFor(() => expect(fixture.releaseHistoryCommitResponse).not.toBeNull());
-		fireEvent.click(within(workspace).getByRole("button", { name: "Back to commits" }));
+		fireEvent.click(within(workspace).getByRole("button", { name: "History" }));
 		fireEvent.click(within(workspace).getByRole("button", { name: /Initial review workspace/ }));
 		const commitFiles = within(workspace).getByRole("region", { name: "Commit files" });
 		await within(commitFiles).findByText("Initial review workspace");

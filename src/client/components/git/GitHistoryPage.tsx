@@ -47,6 +47,7 @@ interface GitHistoryPageProps {
 	onBack(): void;
 	onOpenCommandPalette(): void;
 	repository: RepositorySummary | null;
+	splitView: boolean;
 	themeType: ResolvedTheme;
 }
 
@@ -138,64 +139,49 @@ function HistoricalDiff({
 
 interface HistoryPaneProps {
 	controller: GitWorkspaceController;
-	visible: boolean;
 }
 
-function CommitHistoryPane({ controller, visible }: HistoryPaneProps) {
+function CommitHistoryPane({ controller }: HistoryPaneProps) {
 	return (
-		<View
-			accessibilityLabel="Commit history"
-			className={
-				visible
-					? "flex min-h-0 flex-1 border-border md:w-80 md:flex-none md:border-r"
-					: "hidden min-h-0 flex-1 border-border md:flex md:w-80 md:flex-none md:border-r"
-			}
-			role="region"
-		>
-			<HStack className="m-2 rounded-xl bg-muted p-1" space="xs">
-				<Button
-					className="flex-1"
-					onPress={() => controller.setScope("current")}
-					size="sm"
-					variant={controller.scope === "current" ? "primary" : "ghost"}
-				>
-					Current
-				</Button>
-				<Button
-					className="flex-1"
-					onPress={() => controller.setScope("all")}
-					size="sm"
-					variant={controller.scope === "all" ? "primary" : "ghost"}
-				>
-					All refs
-				</Button>
-			</HStack>
+		<View accessibilityLabel="Commit history" className="min-h-0 flex-1" role="region">
+			<View className="mx-auto min-h-0 w-full max-w-3xl flex-1 border-border md:border-x">
+				<HStack className="m-2 rounded-xl bg-muted p-1" space="xs">
+					<Button
+						className="flex-1"
+						onPress={() => controller.setScope("current")}
+						size="sm"
+						variant={controller.scope === "current" ? "primary" : "ghost"}
+					>
+						Current
+					</Button>
+					<Button
+						className="flex-1"
+						onPress={() => controller.setScope("all")}
+						size="sm"
+						variant={controller.scope === "all" ? "primary" : "ghost"}
+					>
+						Branches &amp; tags
+					</Button>
+				</HStack>
 
-			{controller.loading && controller.commits.length === 0 ? (
-				<VStack align="center" className="flex-1" justify="center">
-					<Spinner />
-				</VStack>
-			) : controller.commits.length === 0 ? (
-				<EmptyState description="No commits in this scope." icon={History} title="No commits" />
-			) : (
-				<ScrollView className="min-h-0 flex-1" contentContainerClassName="gap-1 p-2">
-					{controller.commits.map((commit) => {
-						const selected = controller.selectedCommitId === commit.id;
-						return (
+				{controller.loading && controller.commits.length === 0 ? (
+					<VStack align="center" className="flex-1" justify="center">
+						<Spinner />
+					</VStack>
+				) : controller.commits.length === 0 ? (
+					<EmptyState description="No commits in this scope." icon={History} title="No commits" />
+				) : (
+					<ScrollView className="min-h-0 flex-1" contentContainerClassName="gap-1 p-2">
+						{controller.commits.map((commit) => (
 							<Pressable
 								accessibilityRole="button"
-								accessibilityState={{ selected }}
-								className={
-									selected
-										? "flex-row items-start gap-3 rounded-xl border-l-2 border-primary bg-accent p-3 active:opacity-80"
-										: "flex-row items-start gap-3 rounded-xl border-l-2 border-transparent p-3 active:opacity-80 hover:bg-muted"
-								}
+								className="flex-row items-start gap-3 rounded-xl border-l-2 border-transparent p-3 active:opacity-80 hover:bg-muted"
 								key={commit.id}
 								onPress={() => void controller.selectCommit(commit)}
 							>
 								<Icon as={GitCommitHorizontal} size={18} tone="primary" />
 								<VStack className="min-w-0 flex-1" space="xs">
-									<Text bold={selected} numberOfLines={2} size="sm">
+									<Text numberOfLines={2} size="sm">
 										{commit.subject || "Untitled commit"}
 									</Text>
 									<Text numberOfLines={1} size="xs" tone="muted">
@@ -212,47 +198,57 @@ function CommitHistoryPane({ controller, visible }: HistoryPaneProps) {
 									) : null}
 								</VStack>
 							</Pressable>
-						);
-					})}
-					{controller.nextCursor ? (
-						<Button
-							className="mt-2"
-							loading={controller.loadMoreBusy}
-							onPress={() => void controller.loadMore()}
-							variant="outline"
-						>
-							Load more
-						</Button>
-					) : null}
-				</ScrollView>
-			)}
+						))}
+						{controller.nextCursor ? (
+							<Button
+								className="mt-2"
+								loading={controller.loadMoreBusy}
+								onPress={() => void controller.loadMore()}
+								variant="outline"
+							>
+								Load more
+							</Button>
+						) : (
+							<Text className="py-3 text-center" size="xs" tone="muted">
+								End of history · {controller.commits.length}{" "}
+								{controller.commits.length === 1 ? "commit" : "commits"}
+							</Text>
+						)}
+					</ScrollView>
+				)}
+			</View>
 		</View>
 	);
 }
 
 interface FilesPaneProps extends HistoryPaneProps {
 	onCheckout(): void;
+	splitView: boolean;
+	visible: boolean;
 }
 
-function CommitFilesPane({ controller, onCheckout, visible }: FilesPaneProps) {
+function CommitFilesPane({ controller, onCheckout, splitView, visible }: FilesPaneProps) {
 	return (
 		<View
 			accessibilityLabel="Commit files"
 			className={
-				visible
-					? "flex min-h-0 flex-1 border-border md:max-h-[40%] md:border-b"
-					: "hidden min-h-0 flex-1 border-border md:flex md:max-h-[40%] md:border-b"
+				!visible
+					? "hidden min-h-0 flex-1"
+					: splitView
+						? "flex min-h-0 w-[300px] shrink-0 border-r border-border bg-card"
+						: "flex min-h-0 flex-1"
 			}
 			role="region"
 		>
 			<HStack align="center" className="min-h-14 border-b border-border px-2 py-2" space="sm">
-				<IconButton
-					accessibilityLabel="Back to commits"
-					className="md:hidden"
-					icon={ChevronLeft}
-					onPress={controller.showCommits}
-					size="sm"
-				/>
+				{splitView ? null : (
+					<IconButton
+						accessibilityLabel="Back to commits"
+						icon={ChevronLeft}
+						onPress={controller.showCommits}
+						size="sm"
+					/>
+				)}
 				<VStack className="min-w-0 flex-1" space="xs">
 					<Text bold numberOfLines={1} size="sm">
 						{controller.details?.commit.subject ?? "Commit changes"}
@@ -322,23 +318,27 @@ function CommitFilesPane({ controller, onCheckout, visible }: FilesPaneProps) {
 function HistoricalDiffPane({
 	controller,
 	display,
+	splitView,
 	themeType,
 	visible,
-}: Pick<GitHistoryPageProps, "controller" | "display" | "themeType"> & { visible: boolean }) {
+}: Pick<GitHistoryPageProps, "controller" | "display" | "splitView" | "themeType"> & {
+	visible: boolean;
+}) {
 	return (
 		<View
 			accessibilityLabel="Historical diff"
-			className={visible ? "flex min-h-0 flex-1" : "hidden min-h-0 flex-1 md:flex"}
+			className={visible ? "flex min-h-0 flex-1" : "hidden min-h-0 flex-1"}
 			role="region"
 		>
 			<HStack align="center" className="min-h-14 border-b border-border px-2 py-2" space="sm">
-				<IconButton
-					accessibilityLabel="Back to commit files"
-					className="md:hidden"
-					icon={ChevronLeft}
-					onPress={controller.showFiles}
-					size="sm"
-				/>
+				{splitView ? null : (
+					<IconButton
+						accessibilityLabel="Back to commit files"
+						icon={ChevronLeft}
+						onPress={controller.showFiles}
+						size="sm"
+					/>
+				)}
 				<VStack className="min-w-0 flex-1" space="xs">
 					<Text bold numberOfLines={1} size="sm">
 						{controller.diff?.path ?? "Commit diff"}
@@ -416,14 +416,11 @@ export function GitHistoryPage({
 	onBack,
 	onOpenCommandPalette,
 	repository,
+	splitView,
 	themeType,
 }: GitHistoryPageProps) {
 	const [menuOpen, setMenuOpen] = useState(false);
-	const mobileView = controller.selectedFileId
-		? "diff"
-		: controller.selectedCommitId
-			? "files"
-			: "commits";
+	const reviewingCommit = Boolean(controller.selectedCommitId);
 	const requestAction = (pending: GitPendingAction) => {
 		setMenuOpen(false);
 		controller.requestAction(pending);
@@ -431,6 +428,10 @@ export function GitHistoryPage({
 	const back = () => {
 		setMenuOpen(false);
 		controller.requestAction(null);
+		if (reviewingCommit) {
+			controller.showCommits();
+			return;
+		}
 		onBack();
 	};
 
@@ -442,16 +443,18 @@ export function GitHistoryPage({
 		>
 			<Toolbar className="min-h-14" placement="top">
 				<Button leftIcon={ArrowLeft} onPress={back} size="sm" variant="outline">
-					Review
+					{reviewingCommit ? "History" : "Review"}
 				</Button>
 				<VStack align="center" className="min-w-0 flex-1" space="xs">
 					<Heading className="text-base" level={1} numberOfLines={1}>
-						Git history
+						{reviewingCommit ? "Commit review" : "Git history"}
 					</Heading>
 					<HStack align="center" className="max-w-full" space="xs">
-						<Icon as={GitBranch} size={12} tone="muted" />
+						<Icon as={reviewingCommit ? GitCommitHorizontal : GitBranch} size={12} tone="muted" />
 						<Text numberOfLines={1} size="xs" tone="muted">
-							{repository?.branch ?? `detached at ${repository?.head?.slice(0, 7) ?? "HEAD"}`}
+							{reviewingCommit
+								? (controller.details?.commit.shortId ?? controller.selectedCommitId?.slice(0, 7))
+								: (repository?.branch ?? `detached at ${repository?.head?.slice(0, 7) ?? "HEAD"}`)}
 						</Text>
 					</HStack>
 				</VStack>
@@ -492,9 +495,8 @@ export function GitHistoryPage({
 				</HStack>
 			) : null}
 
-			<View className="min-h-0 flex-1 md:flex-row">
-				<CommitHistoryPane controller={controller} visible={mobileView === "commits"} />
-				<View className="min-h-0 flex-1">
+			{reviewingCommit ? (
+				<View className={splitView ? "min-h-0 flex-1 flex-row" : "min-h-0 flex-1"}>
 					<CommitFilesPane
 						controller={controller}
 						onCheckout={() => {
@@ -502,16 +504,20 @@ export function GitHistoryPage({
 								requestAction({ action: "checkout", commit: controller.details.commit });
 							}
 						}}
-						visible={mobileView === "files"}
+						splitView={splitView}
+						visible={splitView || !controller.selectedFileId}
 					/>
 					<HistoricalDiffPane
 						controller={controller}
 						display={display}
+						splitView={splitView}
 						themeType={themeType}
-						visible={mobileView === "diff"}
+						visible={splitView || Boolean(controller.selectedFileId)}
 					/>
 				</View>
-			</View>
+			) : (
+				<CommitHistoryPane controller={controller} />
+			)}
 
 			<RepositoryActions
 				controller={controller}
