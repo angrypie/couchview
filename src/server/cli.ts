@@ -4,6 +4,7 @@ import path from "node:path";
 
 import type { RemoteBridgeProfile } from "../shared/contracts.ts";
 import { runArtifactCli } from "./artifactCli.ts";
+import { browseRunningServer } from "./cliBrowse.ts";
 import {
 	CLI_VERSION,
 	CliPromptInterrupted,
@@ -56,6 +57,7 @@ interface RunCliRuntime {
 	supervise(argv: string[]): Promise<number>;
 	start(argv: string[]): Promise<unknown>;
 	restart(argv: string[]): Promise<unknown>;
+	browse(argv: string[]): Promise<string>;
 	pairBridge(options: {
 		origin: string;
 		code: string;
@@ -117,6 +119,7 @@ export async function runCli(
 		supervise: runtimeOverrides.supervise ?? superviseServer,
 		start: runtimeOverrides.start ?? startServer,
 		restart: runtimeOverrides.restart ?? restartRunningServer,
+		browse: runtimeOverrides.browse ?? browseRunningServer,
 		pairBridge: runtimeOverrides.pairBridge ?? pairRemoteBridge,
 		proxyBridge: runtimeOverrides.proxyBridge ?? runRemoteBridgeProxy,
 		codexBridge: runtimeOverrides.codexBridge ?? ((options) => runRemoteCodex(options)),
@@ -132,11 +135,13 @@ export async function runCli(
 	let action =
 		argv[0] === "restart"
 			? "restart"
-			: argv[0] === "bridge"
-				? "run the native bridge"
-				: argv[0] === "artifacts"
-					? "work with artifacts"
-					: "start";
+			: argv[0] === "browse"
+				? "open the repository in a browser"
+				: argv[0] === "bridge"
+					? "run the native bridge"
+					: argv[0] === "artifacts"
+						? "work with artifacts"
+						: "start";
 	try {
 		const invocation = parseCliInvocation(argv);
 		if (invocation.kind === "help") {
@@ -196,6 +201,12 @@ export async function runCli(
 			action = "restart";
 			validateRestartInvocation(invocation.argv);
 			await runtime.restart(invocation.argv);
+			return 0;
+		}
+		if (invocation.kind === "browse") {
+			action = "open the repository in a browser";
+			const url = await runtime.browse(invocation.argv);
+			runtime.stdout(`Opened ${url}`);
 			return 0;
 		}
 

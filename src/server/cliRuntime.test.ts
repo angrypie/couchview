@@ -256,12 +256,18 @@ function freePort(): number {
 	return nextPort;
 }
 
-async function runningApp(root: string, port: number, stateDatabasePath?: string) {
+async function runningApp(
+	root: string,
+	port: number,
+	stateDatabasePath?: string,
+	allowedOrigins?: string[],
+) {
 	const app = await createCouchviewApp({
 		root,
 		host: "127.0.0.1",
 		port,
 		stateDatabasePath,
+		allowedOrigins,
 	});
 	app.registerServerInstance();
 	applications.push(app);
@@ -543,7 +549,8 @@ describe("multi-project CLI startup", () => {
 		const firstRoot = await repositoryFixture("first");
 		const secondRoot = await repositoryFixture("second");
 		const port = freePort();
-		const app = await runningApp(firstRoot, port);
+		const publicOrigin = "https://review.example.com";
+		const app = await runningApp(firstRoot, port, undefined, [publicOrigin]);
 		const messages: string[] = [];
 		const originalLog = console.log;
 		console.log = (...values: unknown[]) => messages.push(values.join(" "));
@@ -555,6 +562,12 @@ describe("multi-project CLI startup", () => {
 			expect(messages.join("\n")).toContain("Repository added to the running Couchview server.");
 			expect(messages.join("\n")).toContain(
 				`/?repo=${added.registered.registration.repository.id}`,
+			);
+			expect(messages.join("\n")).toContain(
+				`${publicOrigin}/?repo=${added.registered.registration.repository.id}`,
+			);
+			expect(messages.join("\n")).toContain(
+				`http://127.0.0.1:${port}/?repo=${added.registered.registration.repository.id}`,
 			);
 
 			messages.length = 0;

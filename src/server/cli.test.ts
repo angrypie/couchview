@@ -354,6 +354,7 @@ describe("CLI entrypoint", () => {
 		const supervised: string[][] = [];
 		const started: string[][] = [];
 		const restarted: string[][] = [];
+		const browsed: string[][] = [];
 		const bridgePairs: Array<{ origin: string; code: string; originAccess: string }> = [];
 		const bridgeProxies: string[] = [];
 		const bridgeCodex: Array<{
@@ -376,6 +377,7 @@ describe("CLI entrypoint", () => {
 			supervised,
 			started,
 			restarted,
+			browsed,
 			bridgePairs,
 			bridgeProxies,
 			bridgeCodex,
@@ -397,6 +399,10 @@ describe("CLI entrypoint", () => {
 				},
 				async restart(argv: string[]) {
 					restarted.push(argv);
+				},
+				async browse(argv: string[]) {
+					browsed.push(argv);
+					return "https://review.example.com/?repo=repo-one";
 				},
 				async pairBridge(options: { origin: string; code: string; originAccess: string }) {
 					bridgePairs.push(options);
@@ -469,7 +475,7 @@ describe("CLI entrypoint", () => {
 		expect(version.stdout).toEqual([`couchview ${CLI_VERSION}`]);
 	});
 
-	test("dispatches explicit serve and restart commands with their command names removed", async () => {
+	test("dispatches explicit serve, browse, and restart commands", async () => {
 		const serve = entrypointRuntime();
 		expect(await runCli(["serve", ".", "-p", "5000", "--enable-speech"], serve.runtime)).toBe(0);
 		expect(serve.supervised).toEqual([["--repo=.", "--port", "5000", "--enable-speech"]]);
@@ -477,6 +483,11 @@ describe("CLI entrypoint", () => {
 		const restart = entrypointRuntime();
 		expect(await runCli(["restart", "-H", "localhost", "-p", "5000"], restart.runtime)).toBe(0);
 		expect(restart.restarted).toEqual([["-H", "localhost", "-p", "5000"]]);
+
+		const browse = entrypointRuntime();
+		expect(await runCli(["browse", "--repo", ".", "-p", "5000"], browse.runtime)).toBe(0);
+		expect(browse.browsed).toEqual([["--repo", ".", "--port", "5000"]]);
+		expect(browse.stdout).toEqual(["Opened https://review.example.com/?repo=repo-one"]);
 	});
 
 	test("pairs native IDE devices and dispatches the silent SSH ProxyCommand", async () => {

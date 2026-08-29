@@ -19,6 +19,7 @@ import {
 	bridgePairArgs,
 	bridgeProxyArgs,
 	bridgeTerminalArgs,
+	browseArgs,
 	cliHelpPathExists,
 	defaultServeArgs,
 	explicitServeArgs,
@@ -31,6 +32,7 @@ import {
 	type CliInvocation,
 	CliUsageError,
 	type ParsedArtifactArguments,
+	type ParsedBrowseArguments,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
@@ -43,6 +45,7 @@ export {
 	CliUsageError,
 	type InteractivePrompter,
 	type ParsedArtifactArguments,
+	type ParsedBrowseArguments,
 	type ParsedRestartArguments,
 	type ParsedServeArguments,
 } from "./cliCommandTypes.ts";
@@ -398,6 +401,20 @@ export function parseRestartArguments(args: string[]): ParsedRestartArguments {
 	};
 }
 
+export function parseBrowseArguments(args: string[]): ParsedBrowseArguments {
+	const parsed = parseCommandArguments(args, browseArgs, "browse");
+	if (parsed._.length > 0) {
+		usageError("The browse command accepts a repository only through --repo.", "browse");
+	}
+	return {
+		repo: stringValue(parsed, "repo"),
+		host: stringValue(parsed, "host"),
+		port: stringValue(parsed, "port"),
+		help: booleanValue(parsed, "help"),
+		version: booleanValue(parsed, "version"),
+	};
+}
+
 function noExtraPositionals(parsed: ParsedArgs, helpCommand: string): void {
 	if (parsed._.length > 0)
 		usageError(`The ${helpCommand} command does not accept arguments.`, helpCommand);
@@ -599,6 +616,14 @@ function canonicalServeArguments(parsed: ParsedServeArguments): string[] {
 	return argv;
 }
 
+function canonicalBrowseArguments(parsed: ParsedBrowseArguments): string[] {
+	const argv: string[] = [];
+	if (parsed.repo !== undefined) argv.push("--repo", parsed.repo);
+	if (parsed.host !== undefined) argv.push("--host", parsed.host);
+	if (parsed.port !== undefined) argv.push("--port", parsed.port);
+	return argv;
+}
+
 export function parseCliInvocation(argv: string[]): CliInvocation {
 	const first = argv[0];
 	if (first === "help") return helpInvocation(argv.slice(1));
@@ -623,6 +648,12 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
 		if (parsed.help) return { kind: "help", path: ["restart"] };
 		if (parsed.version) return { kind: "version" };
 		return { kind: "restart", argv: commandArgv, parsed };
+	}
+	if (first === "browse") {
+		const parsed = parseBrowseArguments(argv.slice(1));
+		if (parsed.help) return { kind: "help", path: ["browse"] };
+		if (parsed.version) return { kind: "version" };
+		return { kind: "browse", argv: canonicalBrowseArguments(parsed), parsed };
 	}
 	if (first === "bridge") return parseBridgeArguments(argv.slice(1));
 	if (first === "artifacts") return parseArtifactArguments(argv.slice(1));

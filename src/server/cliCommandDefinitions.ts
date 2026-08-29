@@ -2,7 +2,14 @@ import { type ArgsDef, type CommandDef, defineCommand, renderUsage } from "citty
 
 import { CLI_VERSION } from "./cliCommandTypes.ts";
 
-export const topLevelCommandNames = ["serve", "restart", "bridge", "artifacts", "help"] as const;
+export const topLevelCommandNames = [
+	"serve",
+	"browse",
+	"restart",
+	"bridge",
+	"artifacts",
+	"help",
+] as const;
 export const bridgeActionNames = ["pair", "proxy", "codex", "terminal", "claude"] as const;
 export const artifactActionNames = ["list", "build", "download", "pull"] as const;
 
@@ -110,6 +117,22 @@ export const restartArgs = {
 	...helpAndVersionArgs,
 	host: rootServeArgs.host,
 	port: rootServeArgs.port,
+} as const satisfies ArgsDef;
+
+export const browseArgs = {
+	...helpAndVersionArgs,
+	repo: {
+		...rootServeArgs.repo,
+		description: "Repository containing the directory to open (default: current repository).",
+	},
+	host: {
+		...rootServeArgs.host,
+		description: "Running Couchview server address (default: 127.0.0.1).",
+	},
+	port: {
+		...rootServeArgs.port,
+		description: "Running Couchview server port (default: 4173).",
+	},
 } as const satisfies ArgsDef;
 
 export const bridgeCommandArgs = helpAndVersionArgs;
@@ -320,6 +343,11 @@ const restartCommand = defineCommand({
 	args: restartArgs,
 });
 
+const browseCommand = defineCommand({
+	meta: { name: "browse", description: "Open the current repository in a browser." },
+	args: browseArgs,
+});
+
 const helpCommand = defineCommand({
 	meta: { name: "help", description: "Show general or command-specific help." },
 	args: helpCommandArgs,
@@ -335,6 +363,7 @@ const rootCommand = defineCommand({
 	default: "serve",
 	subCommands: {
 		serve: serveCommand,
+		browse: browseCommand,
 		restart: restartCommand,
 		bridge: bridgeCommand,
 		artifacts: artifactsCommand,
@@ -345,6 +374,7 @@ const rootCommand = defineCommand({
 const definitions = new Map<string, CommandDef<any>>([
 	["", rootCommand],
 	["serve", serveCommand],
+	["browse", browseCommand],
 	["restart", restartCommand],
 	["bridge", bridgeCommand],
 	["bridge pair", bridgePairCommand],
@@ -397,6 +427,16 @@ Security:
   access controls tmux with your OS-user permissions; direct P2P can disclose
   peer addresses and sends terminal payloads outside a configured proxy. The
   native bridge is separately paired and can only reach loopback SSH.`,
+	],
+	[
+		"browse",
+		`Environment:
+  COUCHVIEW_HOST  Running server address (default: 127.0.0.1).
+  PORT            Running server port (default: 4173).
+
+Examples:
+  couchview browse
+  couchview browse --repo ../project --port 4173`,
 	],
 	[
 		"restart",

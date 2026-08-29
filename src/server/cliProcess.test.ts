@@ -31,8 +31,9 @@ async function runCouchview(args: string[]): Promise<CliProcessResult> {
 
 describe("Couchview CLI process", () => {
 	test("renders root and action help from the live Citty command tree", async () => {
-		const [root, bridge, pair, proxy, download] = await Promise.all([
+		const [root, browse, bridge, pair, proxy, download] = await Promise.all([
 			runCouchview(["--help"]),
+			runCouchview(["browse", "--help"]),
 			runCouchview(["bridge", "--help"]),
 			runCouchview(["bridge", "pair", "--help"]),
 			runCouchview(["bridge", "proxy", "--help"]),
@@ -44,6 +45,11 @@ describe("Couchview CLI process", () => {
 		expect(root.stdout).toContain("--enable-speech");
 		expect(root.stdout).toContain("artifacts");
 		expect(root.stdout).not.toContain("completion");
+
+		expect(browse.exitCode, browse.stderr).toBe(0);
+		expect(browse.stdout).toContain("USAGE couchview browse");
+		expect(browse.stdout).toContain("--repo=<path>");
+		expect(browse.stdout).toContain("couchview browse");
 
 		expect(bridge.exitCode, bridge.stderr).toBe(0);
 		expect(bridge.stdout).toContain(

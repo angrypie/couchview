@@ -121,10 +121,18 @@ describe("CLI command parsing", () => {
 			kind: "restart",
 			argv: ["-p", "5000"],
 		});
+		expect(parseCliInvocation(["browse", "--repo", ".", "-p", "5000"])).toMatchObject({
+			kind: "browse",
+			argv: ["--repo", ".", "--port", "5000"],
+		});
 		expect(parseCliInvocation(["--help"])).toEqual({ kind: "help", path: [] });
 		expect(parseCliInvocation(["serve", "--help"])).toEqual({
 			kind: "help",
 			path: ["serve"],
+		});
+		expect(parseCliInvocation(["browse", "--help"])).toEqual({
+			kind: "help",
+			path: ["browse"],
 		});
 		expect(parseCliInvocation(["help", "restart"])).toEqual({
 			kind: "help",
@@ -234,6 +242,9 @@ describe("CLI command parsing", () => {
 		);
 		expect(() => parseCliInvocation(["--", "."])).toThrow(
 			"Repository paths must follow the 'serve' command or '--repo'",
+		);
+		expect(() => parseCliInvocation(["browse", "."])).toThrow(
+			"accepts a repository only through --repo",
 		);
 	});
 });

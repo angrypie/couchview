@@ -225,10 +225,12 @@ export async function createCouchviewApp(options: CouchviewAppOptions): Promise<
 	const controlToken = options.controlToken ?? randomBytes(32).toString("base64url");
 	const instanceId = options.instanceId ?? randomUUID();
 	const version = options.version ?? APP_VERSION;
-	const accessOrigins = accessOriginsForHost(host, port);
-	const allowedOrigins = new Set(
-		[...accessOrigins, ...(options.allowedOrigins ?? [])].map(normalizeOrigin),
-	);
+	const accessOrigins = [
+		...new Set(
+			[...accessOriginsForHost(host, port), ...(options.allowedOrigins ?? [])].map(normalizeOrigin),
+		),
+	];
+	const allowedOrigins = new Set(accessOrigins);
 	const allowedHosts = new Set([...allowedOrigins].map((origin) => new URL(origin).host));
 	const autoTerminalEnabled = terminalAccessIsLoopback(host, [...allowedOrigins]);
 	const terminalSessions =

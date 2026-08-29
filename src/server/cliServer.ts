@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { projectUrls } from "./cliAccess.ts";
 import { replaceStaticBuild, restartCapability } from "./cliBuild.ts";
 import { type RunningRegistration, registerWithRunningServer } from "./cliRunningServer.ts";
 import { type CliOptions, parseCliState } from "./cliServeOptions.ts";
@@ -23,28 +24,13 @@ interface StartServerRuntime {
 	serve: typeof Bun.serve;
 }
 
-function projectOrigins(origins: readonly string[], repositoryId: string): string[] {
-	return origins
-		.filter((origin) => !origin.includes("//0.0.0.0:") && !origin.includes("//[::]:"))
-		.sort((left, right) => {
-			const leftLoopback = /\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|$)/.test(left);
-			const rightLoopback = /\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|$)/.test(right);
-			return Number(leftLoopback) - Number(rightLoopback) || left.localeCompare(right);
-		})
-		.map((origin) => {
-			const url = new URL(origin);
-			url.searchParams.set("repo", repositoryId);
-			return url.toString();
-		});
-}
-
 export function printServerAccess(
 	origins: readonly string[],
 	repositoryId: string,
 	repositoryRoot: string,
 	bindHost: string,
 ): void {
-	const copyableOrigins = projectOrigins(origins, repositoryId);
+	const copyableOrigins = projectUrls(origins, repositoryId);
 	console.log(copyableOrigins.length === 1 ? "Couchview URL:" : "Couchview URLs:");
 	for (const origin of copyableOrigins) console.log(`  ${origin}`);
 	console.log(`Repository: ${repositoryRoot}`);

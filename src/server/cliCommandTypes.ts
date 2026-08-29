@@ -2,7 +2,7 @@ import packageJson from "../../package.json" with { type: "json" };
 
 export const CLI_VERSION = packageJson.version;
 
-export type CliCommandName = "serve" | "restart" | "bridge" | "artifacts" | "help";
+export type CliCommandName = "serve" | "browse" | "restart" | "bridge" | "artifacts" | "help";
 export type ArtifactCliAction = "list" | "build" | "download" | "pull";
 
 export interface ParsedArtifactArguments {
@@ -49,6 +49,10 @@ export interface ParsedRestartArguments {
 	version: boolean;
 }
 
+export interface ParsedBrowseArguments extends ParsedRestartArguments {
+	repo: string | undefined;
+}
+
 export type CliInvocation =
 	| {
 			kind: "serve";
@@ -59,6 +63,11 @@ export type CliInvocation =
 			kind: "restart";
 			argv: string[];
 			parsed: ParsedRestartArguments;
+	  }
+	| {
+			kind: "browse";
+			argv: string[];
+			parsed: ParsedBrowseArguments;
 	  }
 	| {
 			kind: "bridge-pair";
