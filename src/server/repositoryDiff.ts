@@ -6,6 +6,7 @@ import type {
 	DiffResponse,
 	FileDiff,
 	SearchResponse,
+	SourceFileResponse,
 	SourcePreviewResponse,
 } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
@@ -16,6 +17,7 @@ import {
 	parseGrepOutput,
 	parseUnifiedDiff,
 	runGit,
+	sha256,
 } from "./git/index.ts";
 import {
 	looksBinary,
@@ -28,8 +30,94 @@ const MAX_DIFF_BYTES = 2 * 1024 * 1024;
 const MAX_DIFF_ROWS = 20_000;
 const FULL_DIFF_CONTEXT_LINES = 2_147_483_647;
 const MAX_SOURCE_BYTES = 8 * 1024 * 1024;
+const MAX_SOURCE_FILE_ROWS = 20_000;
+const MAX_SOURCE_FILE_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_SEARCH_RESULTS = 200;
 const MAX_SEARCH_PREVIEW_CHARS = 512;
+const sourceResponseEncoder = new TextEncoder();
+
+interface TextSource {
+	contentRevision: string;
+	lines: string[];
+}
+
+interface SourceFileMetadata {
+	contentRevision: string;
+	focusLine: number;
+	operationRevision: string;
+	path: string;
+	repositoryId: string;
+}
+
+function encodedJsonBytes(value: unknown): number {
+	return sourceResponseEncoder.encode(JSON.stringify(value)).byteLength;
+}
+
+function boundedSourceFileResponse(
+	metadata: SourceFileMetadata,
+	allLines: string[],
+): SourceFileResponse {
+	const totalLines = allLines.length;
+	const focusLine = Math.min(metadata.focusLine, Math.max(totalLines, 1));
+	const emptyResponse: SourceFileResponse = {
+		...metadata,
+		focusLine,
+		startLine: 1,
+		endLine: 0,
+		lines: [],
+		truncated: false,
+		totalLines,
+	};
+	if (totalLines === 0) return emptyResponse;
+
+	const baseBytes = encodedJsonBytes(emptyResponse);
+	const focusIndex = focusLine - 1;
+	const lineBytes = (index: number) =>
+		encodedJsonBytes({ line: index + 1, text: allLines[index] ?? "" });
+	let start = focusIndex;
+	let end = focusIndex + 1;
+	let responseBytes = baseBytes + lineBytes(focusIndex);
+	if (responseBytes > MAX_SOURCE_FILE_RESPONSE_BYTES) {
+		throw new HttpError(
+			413,
+			"source_line_too_large",
+			"The focused source line exceeds the main viewer response limit",
+		);
+	}
+
+	while (end - start < MAX_SOURCE_FILE_ROWS) {
+		const beforeBytes = start > 0 ? lineBytes(start - 1) + 1 : null;
+		const afterBytes = end < totalLines ? lineBytes(end) + 1 : null;
+		const beforeFits =
+			beforeBytes !== null && responseBytes + beforeBytes <= MAX_SOURCE_FILE_RESPONSE_BYTES;
+		const afterFits =
+			afterBytes !== null && responseBytes + afterBytes <= MAX_SOURCE_FILE_RESPONSE_BYTES;
+		if (!beforeFits && !afterFits) break;
+
+		const beforeDistance = focusIndex - start + 1;
+		const afterDistance = end - focusIndex;
+		if (beforeFits && (!afterFits || beforeDistance <= afterDistance)) {
+			start -= 1;
+			responseBytes += beforeBytes ?? 0;
+		} else {
+			end += 1;
+			responseBytes += afterBytes ?? 0;
+		}
+	}
+
+	return {
+		...metadata,
+		focusLine,
+		startLine: start + 1,
+		endLine: end,
+		lines: allLines.slice(start, end).map((text, index) => ({
+			line: start + index + 1,
+			text,
+		})),
+		truncated: start > 0 || end < totalLines,
+		totalLines,
+	};
+}
 
 function assertNonEmptyString(
 	value: unknown,
@@ -325,19 +413,7 @@ export class RepositoryDiff {
 			throw new HttpError(400, "invalid_line", "focus line must be a positive integer");
 		}
 		const safeContext = Math.min(Math.max(Number.isSafeInteger(context) ? context : 4, 0), 30);
-		if (!(await this.content.isProjectFile(pathName))) {
-			throw new HttpError(404, "file_not_found", "File is not tracked or available to search");
-		}
-		const working = await this.content.readWorkingFile(pathName, MAX_SOURCE_BYTES + 1);
-		if (working.bytes.byteLength > MAX_SOURCE_BYTES) {
-			throw new HttpError(413, "file_too_large", "Source file exceeds the 8 MiB preview limit");
-		}
-		if (looksBinary(working.bytes)) {
-			throw new HttpError(422, "binary_file", "Binary files cannot be previewed as source");
-		}
-		const text = decodeGitOutput(working.bytes).replace(/\r\n/g, "\n");
-		const allLines = text.split("\n");
-		if (allLines.at(-1) === "") allLines.pop();
+		const { lines: allLines } = await this.readTextSource(pathName);
 		const clampedFocus = Math.min(focusLine, Math.max(allLines.length, 1));
 		const startLine = Math.max(1, clampedFocus - safeContext);
 		const endLine = Math.min(allLines.length, clampedFocus + safeContext);
@@ -351,6 +427,68 @@ export class RepositoryDiff {
 				text: line,
 			})),
 			truncated: startLine > 1 || endLine < allLines.length,
+		};
+	}
+
+	async sourceFile(pathName: string, focusLine: number): Promise<SourceFileResponse> {
+		this.content.resolveProjectPath(pathName);
+		if (!Number.isSafeInteger(focusLine) || focusLine < 1) {
+			throw new HttpError(400, "invalid_line", "focus line must be a positive integer");
+		}
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const before = await this.getSnapshot(true);
+			try {
+				const source = await this.readTextSource(pathName);
+				const after = await this.getSnapshot(true);
+				if (before.operationRevision !== after.operationRevision) continue;
+				return boundedSourceFileResponse(
+					{
+						contentRevision:
+							after.files.find((file) => file.path === pathName)?.contentRevision ??
+							source.contentRevision,
+						focusLine,
+						operationRevision: after.operationRevision,
+						path: pathName,
+						repositoryId: after.repository.id,
+					},
+					source.lines,
+				);
+			} catch (error) {
+				const after = await this.getSnapshot(true).catch(() => null);
+				if (
+					attempt === 0 &&
+					after !== null &&
+					before.operationRevision !== after.operationRevision
+				) {
+					continue;
+				}
+				throw error;
+			}
+		}
+		throw new HttpError(
+			409,
+			"source_file_changed",
+			"The source file changed while it was loading; try again",
+		);
+	}
+
+	private async readTextSource(pathName: string): Promise<TextSource> {
+		if (!(await this.content.isProjectFile(pathName))) {
+			throw new HttpError(404, "file_not_found", "File is not tracked or available to search");
+		}
+		const working = await this.content.readWorkingFile(pathName, MAX_SOURCE_BYTES + 1);
+		if (working.bytes.byteLength > MAX_SOURCE_BYTES) {
+			throw new HttpError(413, "file_too_large", "Source file exceeds the 8 MiB read limit");
+		}
+		if (looksBinary(working.bytes)) {
+			throw new HttpError(422, "binary_file", "Binary files cannot be displayed as source");
+		}
+		const text = decodeGitOutput(working.bytes).replace(/\r\n/g, "\n");
+		const lines = text.split("\n");
+		if (lines.at(-1) === "") lines.pop();
+		return {
+			contentRevision: sha256("source-file\0", pathName, "\0", working.mode, "\0", working.bytes),
+			lines,
 		};
 	}
 

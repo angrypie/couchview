@@ -24,7 +24,7 @@ export function formatShortcut(
 		.map((stroke) => {
 			const modifiers = stroke.modifiers.map((modifier) => {
 				if (modifier === "mod") return isApple ? "⌘" : "Ctrl";
-				if (modifier === "ctrl") return "Ctrl";
+				if (modifier === "ctrl") return isApple ? "⌃" : "Ctrl";
 				if (modifier === "alt") return isApple ? "⌥" : "Alt";
 				if (modifier === "shift") return isApple ? "⇧" : "Shift";
 				return isApple ? "⌘" : "Meta";

@@ -18,6 +18,7 @@ import {
 	originalWebSocket,
 	testThemeRuntime,
 	viewerHunkJumps,
+	viewerLineJumps,
 	viewerState,
 } from "./appTestEnvironment.tsx";
 import {
@@ -40,6 +41,7 @@ export {
 	render,
 	screen,
 	viewerHunkJumps,
+	viewerLineJumps,
 	waitFor,
 	within,
 } from "./appTestEnvironment.tsx";
@@ -64,6 +66,7 @@ export { repository } from "./appTestData.ts";
 export function createAppTestHarness() {
 	const fixture = {
 		files: structuredClone(initialFiles) as FileChange[],
+		projectFiles: ["README.md", ...initialFiles.map((file) => file.path)],
 		reviews: [] as Array<Record<string, unknown>>,
 		packageRuns: [] as PackageRunSummary[],
 		requests: [] as Array<{ path: string; method: string; body: unknown }>,
@@ -113,6 +116,7 @@ export function createAppTestHarness() {
 
 	beforeEach(() => {
 		fixture.files = structuredClone(initialFiles);
+		fixture.projectFiles = ["README.md", ...initialFiles.map((file) => file.path)];
 		fixture.reviews = [];
 		fixture.packageRuns = [];
 		fixture.requests = [];
@@ -167,6 +171,7 @@ export function createAppTestHarness() {
 		nativeTestRuntime.reset();
 		EventSourceStub.instances.length = 0;
 		viewerHunkJumps.length = 0;
+		viewerLineJumps.length = 0;
 		viewerState.visibleLineChange = null;
 		localStorage.clear();
 		sessionStorage.clear();
@@ -686,6 +691,14 @@ export function createAppTestHarness() {
 					operationRevision: fixture.currentOperationRevision,
 				});
 			}
+			if (nestedPath === "project-files") {
+				return Response.json({
+					repositoryId: requestedRepository.id,
+					operationRevision: fixture.currentOperationRevision,
+					files: fixture.projectFiles.map((path) => ({ path })),
+					truncated: false,
+				});
+			}
 			if (nestedPath === "files/review" && method === "GET") {
 				return Response.json({
 					reviews: fixture.reviews,
@@ -767,23 +780,28 @@ export function createAppTestHarness() {
 					currentFile: [
 						{ path: "src/first.ts", line: 1, column: 15, preview: "const value = load(newPath);" },
 					],
-					otherFiles: [
-						{ path: "src/second.ts", line: 1, column: 14, preview: "export const load = true;" },
-					],
+					otherFiles: [{ path: "README.md", line: 2, column: 1, preview: "return value;" }],
 					truncated: false,
 				});
 			}
-			if (nestedPath === "source") {
+			if (nestedPath === "source-file") {
+				const path = url.searchParams.get("path") ?? "";
+				const requestedLine = Number(url.searchParams.get("line") ?? 1);
+				const lines = [
+					{ line: 1, text: "const value = load(newPath);" },
+					{ line: 2, text: "return value;" },
+				];
 				return Response.json({
-					path: url.searchParams.get("path"),
-					focusLine: 1,
+					repositoryId: requestedRepository.id,
+					operationRevision: fixture.currentOperationRevision,
+					contentRevision: `source-${path}-v1`,
+					path,
+					focusLine: Math.min(Math.max(requestedLine, 1), lines.length),
 					startLine: 1,
-					endLine: 2,
-					lines: [
-						{ line: 1, text: "const value = load(newPath);" },
-						{ line: 2, text: "return value;" },
-					],
+					endLine: lines.length,
+					lines,
 					truncated: false,
+					totalLines: lines.length,
 				});
 			}
 			if (nestedPath === "files/first/review" && method === "PUT") {

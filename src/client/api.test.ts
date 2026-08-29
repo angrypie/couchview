@@ -103,6 +103,67 @@ describe("API client", () => {
 		]);
 	});
 
+	test("requests the encoded project-file catalog with abort support", async () => {
+		const controller = new AbortController();
+		let requestSignal: AbortSignal | null | undefined;
+		let requestUrl = "";
+		globalThis.fetch = ((input, init) => {
+			requestUrl = String(input);
+			requestSignal = init?.signal;
+			return Promise.resolve(
+				Response.json({
+					repositoryId: "repository/id",
+					operationRevision: "operation-revision",
+					files: [{ path: "src/file.ts" }],
+					truncated: false,
+				}),
+			);
+		}) as typeof fetch;
+
+		const response = await api.projectFiles("repository/id", controller.signal);
+
+		expect(requestUrl).toBe("/api/repositories/repository%2Fid/project-files");
+		expect(requestSignal).toBe(controller.signal);
+		expect(response.files).toEqual([{ path: "src/file.ts" }]);
+	});
+
+	test("requests a focused main-view source file with abort support", async () => {
+		const controller = new AbortController();
+		let requestSignal: AbortSignal | null | undefined;
+		let requestUrl = "";
+		globalThis.fetch = ((input, init) => {
+			requestUrl = String(input);
+			requestSignal = init?.signal;
+			return Promise.resolve(
+				Response.json({
+					repositoryId: "repository/id",
+					operationRevision: "operation-revision",
+					contentRevision: "content-revision",
+					path: "src/space file.ts",
+					focusLine: 42,
+					startLine: 1,
+					endLine: 42,
+					lines: [],
+					truncated: false,
+					totalLines: 42,
+				}),
+			);
+		}) as typeof fetch;
+
+		const response = await api.sourceFile(
+			"repository/id",
+			"src/space file.ts",
+			42,
+			controller.signal,
+		);
+
+		expect(requestUrl).toBe(
+			"/api/repositories/repository%2Fid/source-file?path=src%2Fspace+file.ts&line=42",
+		);
+		expect(requestSignal).toBe(controller.signal);
+		expect(response.contentRevision).toBe("content-revision");
+	});
+
 	test("turns an actual network failure into a structured disconnected error", async () => {
 		globalThis.fetch = (() => Promise.reject(new TypeError("offline"))) as unknown as typeof fetch;
 

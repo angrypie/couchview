@@ -630,6 +630,12 @@ describe("Couchview HTTP advanced routes", () => {
 			),
 		);
 		expect(traversal.status).toBe(400);
+		const sourceFileTraversal = await app.fetch(
+			request(
+				`${API_ROUTES.sourceFile(app.repository.id)}?path=${encodeURIComponent("../secret")}&line=1`,
+			),
+		);
+		expect(sourceFileTraversal.status).toBe(400);
 
 		const forgedHost = await app.fetch(
 			new Request("http://attacker.invalid/api/files", {

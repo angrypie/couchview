@@ -1,10 +1,10 @@
 import { useCallback } from "react";
 import type { FileChange } from "../../../shared/contracts.ts";
-import type { useAppCommands } from "../commands/useAppCommands.ts";
 import { useAppCommands as useCommands } from "../commands/useAppCommands.ts";
 import type { useFailureReporting } from "../errors/useFailureReporting.ts";
 import type { GitWorkspaceController } from "../git/index.ts";
 import type { usePackageRuns } from "../packages/usePackageRuns.ts";
+import { useQuickPickers } from "../quickPick/useQuickPickers.ts";
 import type { useRepositoryManagement } from "../repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../review/useReviewWorkflow.ts";
@@ -49,9 +49,29 @@ export function useReviewShellCommands({
 	voiceCommandsEnabled,
 	workflow,
 	workspace,
-}: UseReviewShellCommandsOptions): ReturnType<typeof useAppCommands> {
+}: UseReviewShellCommandsOptions) {
 	const { commit, diff, review, search, staging } = workflow;
+	const selectFile = useCallback(
+		(path: string) => {
+			if (!navigation.showReview()) return false;
+			diff.openPathAtLine(path);
+			return true;
+		},
+		[diff.openPathAtLine, navigation.showReview],
+	);
+	const quickPicker = useQuickPickers({
+		currentPath: diff.activePath,
+		files: workspace.files,
+		onRefreshChanges: workspace.refreshChanges,
+		onRefreshRepositories: workspace.refreshRepositories,
+		onSelectFile: selectFile,
+		onSelectRepository: management.selectRepository,
+		operationRevision: workspace.operationRevision,
+		repositories: workspace.bootstrap?.repositories ?? [],
+		repositoryId: workspace.repositoryId,
+	});
 	const overlayVisible =
+		quickPicker.mode !== null ||
 		management.pickerOpen ||
 		remoteBridgeOpen ||
 		search.open ||
@@ -62,6 +82,7 @@ export function useReviewShellCommands({
 		(!splitView && drawerOpen);
 
 	const dismissAll = useCallback(() => {
+		quickPicker.close();
 		management.setPickerOpen(false);
 		onRemoteBridgeOpenChange(false);
 		search.setOpen(false);
@@ -78,6 +99,7 @@ export function useReviewShellCommands({
 		onDrawerOpenChange,
 		onRemoteBridgeOpenChange,
 		packages,
+		quickPicker,
 		search,
 	]);
 	const openFiles = useCallback(() => {
@@ -91,7 +113,6 @@ export function useReviewShellCommands({
 	const openSearch = useCallback(() => {
 		search.setQuery("");
 		search.setScope("current");
-		search.setSourcePreview(null);
 		search.setOpen(true);
 	}, [search]);
 	const reviewFile = useCallback(
@@ -116,11 +137,12 @@ export function useReviewShellCommands({
 		onNavigateHunk: diff.navigateHunk,
 		onOpenArtifacts: navigation.openArtifacts,
 		onOpenCommit: commit.openComposer,
+		onOpenFile: quickPicker.openFiles,
 		onOpenFiles: openFiles,
 		onOpenHistory: navigation.openGitHistory,
 		onOpenPackageCommands: openPackageCommands,
 		onOpenRemote: () => onRemoteBridgeOpenChange(true),
-		onOpenRepository: management.openPicker,
+		onOpenRepository: quickPicker.openProjects,
 		onOpenSearch: openSearch,
 		onOpenSettings: navigation.openSettings,
 		onOpenTerminal: navigation.openTerminal,
@@ -130,6 +152,7 @@ export function useReviewShellCommands({
 		overlayVisible,
 		repositoryReady: Boolean(workspace.repositoryId && workspace.repository),
 		reviewBusy: Boolean(review.busy),
+		searchableFile: Boolean(diff.activePath),
 		stageBusy: Boolean(staging.busy),
 		stagedCount,
 		terminalCapability: workspace.bootstrap?.terminal ?? {
@@ -145,6 +168,7 @@ export function useReviewShellCommands({
 	const dismissTop = useCallback(() => {
 		if (git.pendingAction) git.requestAction(null);
 		else if (failure.detailsOpen) failure.setDetailsOpen(false);
+		else if (quickPicker.mode !== null) quickPicker.close();
 		else if (management.pickerOpen) management.setPickerOpen(false);
 		else if (remoteBridgeOpen) onRemoteBridgeOpenChange(false);
 		else if (commit.open) commit.closeComposer();
@@ -159,6 +183,7 @@ export function useReviewShellCommands({
 		onDrawerOpenChange,
 		onRemoteBridgeOpenChange,
 		packages,
+		quickPicker,
 		remoteBridgeOpen,
 		search,
 	]);
@@ -168,5 +193,5 @@ export function useReviewShellCommands({
 		visible: overlayVisible,
 	});
 
-	return commands;
+	return { ...commands, quickPicker };
 }

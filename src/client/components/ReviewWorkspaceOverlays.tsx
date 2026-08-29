@@ -1,20 +1,17 @@
 import type { CommitMessageCapability, RemoteBridgeCapability } from "../../shared/contracts.ts";
 import type { useFailureReporting } from "../features/errors/useFailureReporting.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
-import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
 import { RemoteBridgeSheet } from "../RemoteBridgeSheet.tsx";
 import { CommitComposerSheet } from "./CommitComposerSheet.tsx";
 import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
 import { PackageRunSheet } from "./PackageRunSheet.tsx";
-import { RepositoryPickerSheet } from "./RepositoryPickerSheet.tsx";
 import { SearchSheet } from "./SearchSheet.tsx";
 
 interface ReviewWorkspaceOverlaysProps {
 	commitMessageCapability: CommitMessageCapability;
 	failureReporting: ReturnType<typeof useFailureReporting>;
-	management: ReturnType<typeof useRepositoryManagement>;
 	onRemoteBridgeOpenChange: (open: boolean) => void;
 	packages: ReturnType<typeof usePackageRuns>;
 	remoteBridgeCapability: RemoteBridgeCapability;
@@ -27,7 +24,6 @@ interface ReviewWorkspaceOverlaysProps {
 export function ReviewWorkspaceOverlays({
 	commitMessageCapability,
 	failureReporting,
-	management,
 	onRemoteBridgeOpenChange,
 	packages,
 	remoteBridgeCapability,
@@ -39,30 +35,6 @@ export function ReviewWorkspaceOverlays({
 	const { commit, search } = workflow;
 	return (
 		<>
-			<RepositoryPickerSheet
-				addBusy={management.addBusy}
-				addRoot={management.addRoot}
-				currentRepositoryId={workspace.repositoryId}
-				directoryBrowser={management.directoryBrowser}
-				forgetBusy={management.forgetBusy}
-				nativeSetupAvailable={Boolean(workspace.repositoryId && workspace.repository)}
-				onAdd={() => void management.addRepository()}
-				onAddDirectory={(path) => void management.addRepository(path)}
-				onAddRootChange={management.setAddRoot}
-				onClose={() => management.setPickerOpen(false)}
-				onForget={(entry) => void management.forgetRepository(entry)}
-				onOpenNativeSetup={() => {
-					management.setPickerOpen(false);
-					onRemoteBridgeOpenChange(true);
-				}}
-				onRebuild={() => void management.rebuildAndRestart()}
-				onSelect={management.selectRepository}
-				open={management.pickerOpen}
-				repositories={workspace.bootstrap?.repositories ?? []}
-				restart={workspace.bootstrap?.restart ?? null}
-				restartPhase={management.restartPhase}
-			/>
-
 			{workspace.bootstrap && workspace.repositoryId && workspace.repository && (
 				<RemoteBridgeSheet
 					capability={remoteBridgeCapability}
@@ -79,22 +51,13 @@ export function ReviewWorkspaceOverlays({
 			<SearchSheet
 				busy={search.busy}
 				onClose={() => search.setOpen(false)}
-				onQueryChange={(query) => {
-					search.setQuery(query);
-					search.setSourcePreview(null);
-				}}
-				onScopeChange={(scope) => {
-					search.setScope(scope);
-					search.setSourcePreview(null);
-				}}
-				onShowResults={() => search.setSourcePreview(null)}
-				onShowSource={(match) => void search.showSource(match)}
+				onQueryChange={search.setQuery}
+				onScopeChange={search.setScope}
+				onSelectMatch={search.selectMatch}
 				open={search.open}
 				query={search.query}
 				result={search.result}
 				scope={search.scope}
-				sourceBusy={search.sourceBusy}
-				sourcePreview={search.sourcePreview}
 			/>
 
 			<CommitComposerSheet

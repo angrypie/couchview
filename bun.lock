@@ -9,6 +9,7 @@
         "@expo/ui": "~57.0.9",
         "@gluestack-ui/core": "5.0.15",
         "@gluestack-ui/utils": "5.0.6",
+        "@leeoniya/ufuzzy": "1.0.19",
         "@legendapp/list": "3.3.7",
         "@react-native-community/slider": "5.2.0",
         "@shikijs/engine-javascript": "4.3.1",
@@ -475,6 +476,8 @@
     "@kwsites/file-exists": ["@kwsites/file-exists@1.1.1", "", { "dependencies": { "debug": "^4.1.1" } }, "sha512-m9/5YGR18lIwxSFDwfE3oA7bWuq9kdau6ugN4H2rJeyhFQZcG9AgSHkQtSD15a8WvTgfz9aikZMrKPHvbpqFiw=="],
 
     "@kwsites/promise-deferred": ["@kwsites/promise-deferred@1.1.1", "", {}, "sha512-GaHYm+c0O9MjZRu0ongGBRbinu8gVAMd2UZjji6jVmqKtZluZnptXGWhz1E8j8D2HJ3f/yMxKAUC0b+57wncIw=="],
+
+    "@leeoniya/ufuzzy": ["@leeoniya/ufuzzy@1.0.19", "", {}, "sha512-0pikDeYt0IHEUPza5RTCDXc/17S1pTrYnReEMp8Aa6k1ovzw5QdZLwicW8TjljwEZRb6oYag0xmALohrcq/yOQ=="],
 
     "@legendapp/list": ["@legendapp/list@3.3.7", "", { "dependencies": { "use-sync-external-store": "^1.5.0" }, "peerDependencies": { "react": "*", "react-dom": "*", "react-native": "*" }, "optionalPeers": ["react-dom", "react-native"] }, "sha512-Z6LvHZwds4Vn38bZKOrWpvh3Nde6o4c/ciQ3qy57/kNXqzjVTTqMoZRO2SZ00TwDzM0vLDesNWRglEbKyYhVuA=="],
 

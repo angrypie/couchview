@@ -501,10 +501,14 @@ describe("Couchview app lifecycle and settings", () => {
 			updatedAt: "2026-07-31T00:03:00.000Z",
 		});
 		const routeChanges: Array<{ mode: WorkspaceMode; replace: boolean }> = [];
+		let settingsDirty = false;
 		render(
 			<ControlledRouteApp
 				initialMode="settings"
 				onRouteChange={(mode, replace) => routeChanges.push({ mode, replace })}
+				onSettingsDirtyChange={(dirty) => {
+					settingsDirty = dirty;
+				}}
 			/>,
 		);
 		const settings = await screen.findByRole("region", { name: "Settings" });
@@ -539,7 +543,10 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(
 			within(staleDialog).getByText("The settings profile changed on another client."),
 		).toBeTruthy();
-		fireEvent.click(within(staleDialog).getByRole("button", { name: "OK" }));
+		await act(async () => {
+			fireEvent.click(within(staleDialog).getByRole("button", { name: "OK" }));
+			await Promise.resolve();
+		});
 		expect(diffFontSize.value).toBe("14");
 		expect(
 			(
@@ -556,13 +563,21 @@ describe("Couchview app lifecycle and settings", () => {
 				data: { typography: { diff: { fontSize: 14 } } },
 			}),
 		);
+		await waitFor(() => expect(settingsDirty).toBe(false));
 		fireEvent.click(within(settings).getByRole("button", { name: "Review" }));
 		await waitFor(() => expect(routeChanges).toEqual([{ mode: "review", replace: true }]));
 	});
 
 	test("records a shortcut and atomically replaces its exact conflict", async () => {
+		fixture.settingsProfiles[0]!.name = "Keyboard profile";
+		fixture.settingsProfiles[0]!.revision = 2;
 		render(<App initialMode="settings" />);
 		const settings = await screen.findByRole("region", { name: "Settings" });
+		await waitFor(() =>
+			expect(
+				(within(settings).getByRole("textbox", { name: "Profile name" }) as HTMLInputElement).value,
+			).toBe("Keyboard profile"),
+		);
 		const keyboardCard = within(settings)
 			.getByRole("heading", { name: "Keyboard shortcuts" })
 			.closest("section")!;
@@ -571,7 +586,10 @@ describe("Couchview app lifecycle and settings", () => {
 		expect(within(previousFileRow).getByText("H")).toBeTruthy();
 		expect(within(nextFileRow).getByText("L")).toBeTruthy();
 
-		fireEvent.click(within(previousFileRow).getByRole("button", { name: "Edit" }));
+		await act(async () => {
+			fireEvent.click(within(previousFileRow).getByRole("button", { name: "Edit" }));
+			await Promise.resolve();
+		});
 		const shortcutDialog = await screen.findByRole("dialog", { name: "Edit Previous file" });
 		fireEvent.change(within(shortcutDialog).getByRole("textbox", { name: "Shortcut" }), {
 			target: { value: "L" },

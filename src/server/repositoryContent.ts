@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, readlink } from "node:fs/promises";
 import path from "node:path";
 
-import type { FileChange, RepositorySummary } from "../shared/contracts.ts";
+import type { FileChange, ProjectFileEntry, RepositorySummary } from "../shared/contracts.ts";
 import { HttpError } from "./errors.ts";
 import type { ParsedStatusEntry } from "./git/index.ts";
 import { decodeGitOutput, runGit } from "./git/index.ts";
@@ -44,6 +44,31 @@ function statisticsForBytes(bytes: Uint8Array): WorkingFileStatistics {
 }
 
 const BINARY_UTF8_PROBE_BYTES = 64 * 1024;
+const PROJECT_FILE_ARGS = ["ls-files", "--cached", "--others", "--exclude-standard", "-z"] as const;
+const DELETED_PROJECT_FILE_ARGS = ["ls-files", "--deleted", "-z"] as const;
+
+export interface ProjectFileCatalogLimits {
+	maxOutputBytes: number;
+	maxResults: number;
+}
+
+export interface ProjectFileCatalog {
+	files: ProjectFileEntry[];
+	truncated: boolean;
+}
+
+const DEFAULT_PROJECT_FILE_CATALOG_LIMITS: ProjectFileCatalogLimits = {
+	maxOutputBytes: 8 * 1024 * 1024,
+	maxResults: 50_000,
+};
+
+function nulTerminatedPaths(output: Uint8Array): string[] {
+	const lastTerminator = output.lastIndexOf(0);
+	if (lastTerminator < 0) return [];
+	return decodeGitOutput(output.subarray(0, lastTerminator + 1))
+		.split("\0")
+		.filter(Boolean);
+}
 
 /**
  * Classify bytes as binary. A NUL byte anywhere in the bounded buffer is
@@ -334,16 +359,36 @@ export class RepositoryContent {
 		}
 	}
 
-	async isProjectFile(relativePath: string): Promise<boolean> {
-		const result = await runGit(this.root, [
-			"ls-files",
-			"--cached",
-			"--others",
-			"--exclude-standard",
-			"-z",
-			"--",
-			relativePath,
+	async projectFiles(
+		limits: ProjectFileCatalogLimits = DEFAULT_PROJECT_FILE_CATALOG_LIMITS,
+	): Promise<ProjectFileCatalog> {
+		const options = {
+			maxOutputBytes: limits.maxOutputBytes,
+			truncateOutput: true,
+		} as const;
+		const [includedResult, deletedResult] = await Promise.all([
+			runGit(this.root, PROJECT_FILE_ARGS, options),
+			runGit(this.root, DELETED_PROJECT_FILE_ARGS, options),
 		]);
+		const deletedPaths = new Set(nulTerminatedPaths(deletedResult.stdout));
+		const paths = [
+			...new Set(
+				nulTerminatedPaths(includedResult.stdout).filter(
+					(candidate) => !deletedPaths.has(candidate),
+				),
+			),
+		].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+		return {
+			files: paths.slice(0, limits.maxResults).map((path) => ({ path })),
+			truncated:
+				includedResult.stdoutTruncated ||
+				deletedResult.stdoutTruncated ||
+				paths.length > limits.maxResults,
+		};
+	}
+
+	async isProjectFile(relativePath: string): Promise<boolean> {
+		const result = await runGit(this.root, [...PROJECT_FILE_ARGS, "--", relativePath]);
 		return decodeGitOutput(result.stdout)
 			.split("\0")
 			.some((candidate) => candidate === relativePath);

@@ -68,6 +68,8 @@ test.describe("repository projects", () => {
 		await page.goto("/");
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 		await page.getByRole("button", { name: "Select repository" }).click();
+		const quickPicker = page.getByRole("dialog", { name: "Projects" });
+		await quickPicker.getByRole("button", { name: "Manage projects…" }).click();
 		const picker = page.getByRole("dialog", { name: "Repositories" });
 		await expect(picker).toBeInViewport();
 		await picker.getByRole("button", { name: "Browse server folders" }).click();

@@ -22,6 +22,7 @@ interface DiffWorkspaceProps {
 	onOpenFailure: () => void;
 	onRetry: () => void;
 	onVisibleLineChange: (lineNumber: number, side: "old" | "new") => void;
+	readOnly: boolean;
 	repositoryId: string | null;
 	rowCount: number;
 	retryAvailable: boolean;
@@ -57,6 +58,7 @@ export function DiffWorkspace({
 	onOpenFailure,
 	onRetry,
 	onVisibleLineChange,
+	readOnly,
 	repositoryId,
 	rowCount,
 	retryAvailable,
@@ -64,8 +66,9 @@ export function DiffWorkspace({
 	typography,
 	viewerRef,
 }: DiffWorkspaceProps) {
+	const sourceView = diff?.fileId.startsWith("source:") ?? false;
 	let content: ReactNode = null;
-	if (fileCount === 0) {
+	if (fileCount === 0 && !diff && !readOnly) {
 		content = (
 			<EmptyState
 				description="New changes will appear here automatically."
@@ -123,6 +126,8 @@ export function DiffWorkspace({
 				title="Diff is too large to display"
 			/>
 		);
+	} else if (sourceView && diff && rowCount === 0) {
+		content = <EmptyState icon={FileCode2} title="Empty file" />;
 	} else if (rowCount === 0) {
 		content = (
 			<EmptyState
@@ -159,6 +164,17 @@ export function DiffWorkspace({
 			className="relative min-h-0 flex-1 overflow-hidden bg-background"
 			role="region"
 		>
+			{sourceView && diff?.tooLarge && rowCount > 0 ? (
+				<View
+					accessibilityLiveRegion="polite"
+					className="border-b border-border bg-muted px-3 py-2"
+					role="status"
+				>
+					<Text className="text-muted-foreground" size="xs">
+						{diff.header[0] ?? "Showing a bounded section of this file."}
+					</Text>
+				</View>
+			) : null}
 			{content}
 			{diffLoading && diff ? (
 				<View

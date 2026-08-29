@@ -32,6 +32,7 @@ import { FailureDetailsSheet } from "./FailureDetailsSheet.tsx";
 import { GlobalCommandUi } from "./GlobalCommandUi.tsx";
 import { GitHistoryPage } from "./git/index.ts";
 import { ProfileSettingsPage } from "./ProfileSettingsPage.tsx";
+import { RepositorySelectionUi } from "./RepositorySelectionUi.tsx";
 import { RestartOverlay } from "./RestartOverlay.tsx";
 import { ReviewWorkspaceChrome } from "./ReviewWorkspaceChrome.tsx";
 import { ReviewWorkspaceOverlays } from "./ReviewWorkspaceOverlays.tsx";
@@ -183,6 +184,16 @@ export function CouchviewApplicationView({
 	);
 	const voiceUi =
 		navigation.mode === "terminal" ? null : <VoiceCommandControl controller={voiceCommands} />;
+	const selectionUi = (
+		<RepositorySelectionUi
+			management={management}
+			onOpenNativeSetup={() => {
+				if (navigation.showReview()) onRemoteBridgeOpenChange(true);
+			}}
+			quickPicker={shellCommands.quickPicker}
+			workspace={workspace}
+		/>
+	);
 
 	if (navigation.mode === "settings" && workspace.phase === "ready" && workspace.bootstrap) {
 		return (
@@ -207,6 +218,7 @@ export function CouchviewApplicationView({
 					voiceCommands={voiceCommands}
 				/>
 				{commandUi}
+				{selectionUi}
 				{voiceUi}
 			</View>
 		);
@@ -234,6 +246,7 @@ export function CouchviewApplicationView({
 			<View className="min-h-0 flex-1 bg-background">
 				{terminal}
 				{commandUi}
+				{selectionUi}
 				<GitHistoryPage
 					commandPaletteShortcut={commandPaletteShortcut}
 					controller={git}
@@ -274,7 +287,6 @@ export function CouchviewApplicationView({
 				<ReviewWorkspaceOverlays
 					commitMessageCapability={commitMessageCapability}
 					failureReporting={failure}
-					management={management}
 					onRemoteBridgeOpenChange={(open) => {
 						onRemoteBridgeOpenChange(open);
 						if (!open) void artifacts.refreshDevices();
@@ -286,6 +298,7 @@ export function CouchviewApplicationView({
 					workflow={workflow}
 					workspace={workspace}
 				/>
+				{selectionUi}
 				{toastUi}
 				{voiceUi}
 			</View>
@@ -305,7 +318,6 @@ export function CouchviewApplicationView({
 					drawerView={drawerView}
 					failureAvailable={Boolean(failure.failure)}
 					filters={filters}
-					management={management}
 					onDrawerOpenChange={onDrawerOpenChange}
 					onDrawerViewChange={onDrawerViewChange}
 					onOpenCommandPalette={() => shellCommands.setPaletteOpen(true)}
@@ -313,6 +325,7 @@ export function CouchviewApplicationView({
 					onOpenGitHistory={navigation.openGitHistory}
 					onOpenArtifacts={navigation.openArtifacts}
 					onOpenRemoteBridge={() => onRemoteBridgeOpenChange(true)}
+					onOpenRepositoryPicker={shellCommands.quickPicker.openProjects}
 					onOpenSettings={navigation.openSettings}
 					onOpenTerminal={navigation.openTerminal}
 					packages={packages}
@@ -328,7 +341,6 @@ export function CouchviewApplicationView({
 			<ReviewWorkspaceOverlays
 				commitMessageCapability={commitMessageCapability}
 				failureReporting={failure}
-				management={management}
 				onRemoteBridgeOpenChange={onRemoteBridgeOpenChange}
 				packages={packages}
 				remoteBridgeCapability={remoteBridgeCapability}
@@ -337,6 +349,7 @@ export function CouchviewApplicationView({
 				workflow={workflow}
 				workspace={workspace}
 			/>
+			{selectionUi}
 			{toastUi}
 			{voiceUi}
 			<RestartOverlay phase={management.restartPhase} />

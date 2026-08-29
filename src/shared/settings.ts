@@ -22,6 +22,7 @@ export const COMMAND_IDS = [
 	"panel.packageCommands",
 	"search.open",
 	"commit.open",
+	"file.open",
 	"file.toggleStage",
 	"file.toggleReviewed",
 	"file.previous",
@@ -168,6 +169,7 @@ const COMMON_DEFAULT_KEYBINDINGS: Record<CommandId, ShortcutSequence | null> = {
 	"panel.packageCommands": sequence(stroke("g"), stroke("x")),
 	"search.open": sequence(stroke("/")),
 	"commit.open": sequence(stroke("c"), stroke("c")),
+	"file.open": sequence(stroke("p", ["ctrl"])),
 	"file.toggleStage": sequence(stroke("g"), stroke("a")),
 	"file.toggleReviewed": sequence(stroke("r")),
 	"file.previous": null,
@@ -341,10 +343,35 @@ export function shortcutSequenceKey(sequenceValue: ShortcutSequence): string {
 	return sequenceValue.map((item) => `${item.modifiers.join("+")}+${item.key}`).join(" ");
 }
 
-function sequenceIsPrefix(left: ShortcutSequence, right: ShortcutSequence): boolean {
+export function shortcutSequenceKeyForPlatform(
+	sequenceValue: ShortcutSequence,
+	isApple: boolean,
+): string {
+	return sequenceValue
+		.map((item) => {
+			const modifiers = new Set<ShortcutModifier>(
+				item.modifiers.map((modifier) =>
+					modifier === "mod" ? (isApple ? "meta" : "ctrl") : modifier,
+				),
+			);
+			const ordered = MODIFIER_ORDER.filter(
+				(modifier) => modifier !== "mod" && modifiers.has(modifier),
+			);
+			return `${ordered.join("+")}+${item.key}`;
+		})
+		.join(" ");
+}
+
+function sequenceIsPrefixForPlatform(
+	left: ShortcutSequence,
+	right: ShortcutSequence,
+	isApple: boolean,
+): boolean {
 	if (left.length > right.length) return false;
 	return left.every(
-		(item, index) => shortcutSequenceKey([item]) === shortcutSequenceKey([right[index]!]),
+		(item, index) =>
+			shortcutSequenceKeyForPlatform([item], isApple) ===
+			shortcutSequenceKeyForPlatform([right[index]!], isApple),
 	);
 }
 
@@ -378,7 +405,13 @@ export function keybindingConflicts(
 		for (let rightIndex = leftIndex + 1; rightIndex < COMMAND_IDS.length; rightIndex += 1) {
 			const second = COMMAND_IDS[rightIndex]!;
 			const right = bindings[second];
-			if (right && (sequenceIsPrefix(left, right) || sequenceIsPrefix(right, left))) {
+			const conflictsOnAnyPlatform =
+				right &&
+				(sequenceIsPrefixForPlatform(left, right, true) ||
+					sequenceIsPrefixForPlatform(right, left, true) ||
+					sequenceIsPrefixForPlatform(left, right, false) ||
+					sequenceIsPrefixForPlatform(right, left, false));
+			if (conflictsOnAnyPlatform) {
 				conflicts.push({ first, second });
 			}
 		}
@@ -479,6 +512,13 @@ export function parseSettingsProfileData(value: unknown): SettingsProfileData {
 			throw new Error(`Unknown command ID: ${commandId}`);
 		}
 		bindings[commandId] = binding === null ? null : parseShortcutSequence(binding);
+	}
+	if (!Object.prototype.hasOwnProperty.call(keyboard.bindings, "file.open")) {
+		const legacyEffective = effectiveKeybindings({ layout: keyboard.layout, bindings });
+		const fileOpenConflicts = keybindingConflicts(legacyEffective).some(
+			(conflict) => conflict.first === "file.open" || conflict.second === "file.open",
+		);
+		if (fileOpenConflicts) bindings["file.open"] = null;
 	}
 	const voiceCandidate = candidate.voice;
 	const voice: VoicePreferences = {

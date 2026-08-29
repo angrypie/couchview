@@ -182,6 +182,9 @@ export async function handleRepositoryApi(
 	if (nestedPath === "files" && request.method === "GET") {
 		return json(await repository.changes());
 	}
+	if (nestedPath === "project-files" && request.method === "GET") {
+		return json(await repository.projectFiles());
+	}
 	if (nestedPath === "terminal/attachments" && request.method === "POST") {
 		const input = await readJsonObject<TerminalAttachmentRequest>(request);
 		const origin = request.headers.get("origin");
@@ -296,6 +299,14 @@ export async function handleRepositoryApi(
 				url.searchParams.get("path") ?? "",
 				Number(url.searchParams.get("line") ?? 1),
 				Number(url.searchParams.get("context") ?? 4),
+			),
+		);
+	}
+	if (nestedPath === "source-file" && request.method === "GET") {
+		return json(
+			await repository.sourceFile(
+				url.searchParams.get("path") ?? "",
+				Number(url.searchParams.get("line") ?? 1),
 			),
 		);
 	}

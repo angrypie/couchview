@@ -163,6 +163,16 @@ export const COMMAND_DEFINITIONS: Record<CommandId, CommandMetadata> = {
 		paletteVisible: true,
 		voicePolicy: VOICE_COMMAND_POLICIES["commit.open"],
 	},
+	"file.open": {
+		id: "file.open",
+		title: "Go to file",
+		category: "Go to",
+		keywords: ["file", "project", "quick open", "fuzzy"],
+		icon: FileCode2,
+		repeatable: false,
+		paletteVisible: true,
+		voicePolicy: VOICE_COMMAND_POLICIES["file.open"],
+	},
 	"file.toggleStage": {
 		id: "file.toggleStage",
 		title: "Toggle staged for current file",

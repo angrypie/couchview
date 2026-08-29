@@ -1,13 +1,26 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 import type {
 	BootstrapResponse,
 	ChangesResponse,
+	ProjectFilesResponse,
 	RemoteBridgeDevice,
 } from "../../src/shared/contracts.ts";
 
 const localFixture = !process.env.PLAYWRIGHT_BASE_URL;
 const fixtureCsrf = "e2e-csrf-token";
+
+async function primaryModifier(page: Page): Promise<"Control" | "Meta"> {
+	return page.evaluate(() => {
+		const userAgentData = (
+			navigator as Navigator & {
+				userAgentData?: { platform?: string };
+			}
+		).userAgentData;
+		const platform = userAgentData?.platform || navigator.platform || navigator.userAgent;
+		return /Mac|iPhone|iPad|iPod/i.test(platform) ? "Meta" : "Control";
+	});
+}
 
 test.describe("desktop review layout", () => {
 	test.skip(!localFixture, "The long file list uses the bundled e2e fixture.");
@@ -40,6 +53,214 @@ test.describe("desktop review layout", () => {
 		const settings = page.getByRole("region", { name: "Settings" });
 		await expect(settings).toBeVisible();
 		await expect(page).toHaveURL(/\/settings/);
+	});
+
+	test("keeps the quick project picker focused and stable while filtering", async ({ page }) => {
+		await page.goto("/");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+		await page.keyboard.press("g");
+		await page.keyboard.press("p");
+		const picker = page.getByRole("dialog", { name: "Projects" });
+		const search = picker.getByRole("textbox", { name: "Search projects" });
+		await expect(picker).toBeVisible();
+		await expect(search).toBeFocused();
+		const initialBounds = await picker.boundingBox();
+		expect(initialBounds).not.toBeNull();
+
+		await search.fill("design");
+		await expect(
+			picker.getByRole("button", { name: "design-system, /fixtures/design-system" }),
+		).toBeVisible();
+		const filteredBounds = await picker.boundingBox();
+		expect(filteredBounds).not.toBeNull();
+		expect(Math.abs(filteredBounds!.width - initialBounds!.width)).toBeLessThanOrEqual(1);
+		expect(Math.abs(filteredBounds!.height - initialBounds!.height)).toBeLessThanOrEqual(1);
+		expect(Math.abs(filteredBounds!.x - initialBounds!.x)).toBeLessThanOrEqual(1);
+		expect(Math.abs(filteredBounds!.y - initialBounds!.y)).toBeLessThanOrEqual(1);
+
+		await page.keyboard.press("Control+c");
+		await expect(picker).toHaveCount(0);
+
+		await page.keyboard.press("g");
+		await page.keyboard.press("p");
+		await picker.getByRole("textbox", { name: "Search projects" }).fill("design");
+		await page.keyboard.press("Enter");
+		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+		await expect(page.getByRole("button", { name: "Select repository" })).toContainText(
+			"design-system",
+		);
+	});
+
+	test("replaces the quick project picker with the command palette", async ({ page }) => {
+		await page.goto("/");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+		await page.keyboard.press("g");
+		await page.keyboard.press("p");
+		const projectPicker = page.getByRole("dialog", { name: "Projects" });
+		await expect(projectPicker).toBeVisible();
+
+		const primary = await primaryModifier(page);
+		await page.keyboard.press(`${primary}+k`);
+		const palette = page.getByRole("dialog", { name: "Command palette", exact: true });
+		await expect(palette).toBeVisible();
+		await expect(projectPicker).toHaveCount(0);
+
+		await page.keyboard.press("Escape");
+		await expect(palette).toHaveCount(0);
+		await expect(projectPicker).toHaveCount(0);
+	});
+
+	test("cycles projects with held G and opens current-project files with Ctrl+P", async ({
+		page,
+	}) => {
+		await page.goto("/");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+		await page.keyboard.down("g");
+		await page.keyboard.press("p");
+		const projectPicker = page.getByRole("dialog", { name: "Projects" });
+		const currentProject = projectPicker.getByRole("button", {
+			name: "sample-project, /fixtures/sample-project",
+		});
+		const alternateProject = projectPicker.getByRole("button", {
+			name: "design-system, /fixtures/design-system",
+		});
+		await expect(currentProject).toHaveAttribute("aria-selected", "true");
+		await expect(projectPicker.getByRole("status")).toContainText("sample-project");
+		await page.keyboard.down("g");
+		await expect(projectPicker.getByRole("textbox", { name: "Search projects" })).toHaveValue("");
+		await page.keyboard.press("p");
+		await expect(alternateProject).toHaveAttribute("aria-selected", "true");
+		await page.keyboard.press("p");
+		await expect(currentProject).toHaveAttribute("aria-selected", "true");
+		await page.keyboard.up("g");
+		await page.keyboard.press("Control+c");
+		await expect(projectPicker).toHaveCount(0);
+
+		await page.keyboard.press("g");
+		await page.keyboard.press("p");
+		const manageProjects = projectPicker.getByRole("button", { name: "Manage projects…" });
+		await manageProjects.focus();
+		await page.keyboard.press("Enter");
+		const repositoryManager = page.getByRole("dialog", { name: "Repositories" });
+		await expect(repositoryManager).toBeVisible();
+		await repositoryManager.getByRole("button", { name: "Close sheet" }).click();
+		await expect(repositoryManager).toHaveCount(0);
+
+		await page.keyboard.press("Control+p");
+		const filePicker = page.getByRole("dialog", { name: "Files" });
+		const fileSearch = filePicker.getByRole("textbox", { name: "Search project files" });
+		await expect(filePicker).toBeVisible();
+		await expect(fileSearch).toBeFocused();
+		await expect(filePicker.getByRole("button", { name: "README.md, Project root" })).toBeVisible();
+		const repeatPrevented = await fileSearch.evaluate((input) => {
+			const event = new KeyboardEvent("keydown", {
+				bubbles: true,
+				cancelable: true,
+				ctrlKey: true,
+				key: "p",
+				repeat: true,
+			});
+			input.dispatchEvent(event);
+			return event.defaultPrevented;
+		});
+		expect(repeatPrevented).toBe(true);
+		await fileSearch.fill("format");
+		await page.keyboard.press("Enter");
+		await expect(filePicker).toHaveCount(0);
+		await expect(page.getByRole("region", { name: "Current file" })).toContainText("src/format.ts");
+
+		await page.keyboard.press("Control+p");
+		await expect(filePicker).toBeVisible();
+		await fileSearch.fill("readme");
+		await page.keyboard.press("Enter");
+		await expect(filePicker).toHaveCount(0);
+		const sourceFile = page.getByRole("region", { name: "Current file" });
+		await expect(sourceFile).toContainText("README.md");
+		await expect(sourceFile).toContainText("read-only");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toContainText(
+			"export function fixture()",
+		);
+	});
+
+	test("resets equal-sized fuzzy file results to their active first row", async ({ page }) => {
+		await page.route("**/api/repositories/*/project-files", async (route) => {
+			const response = await route.fetch();
+			const body = (await response.json()) as ProjectFilesResponse;
+			const files = ["alpha", "beta"].flatMap((group) =>
+				Array.from({ length: 40 }, (_, index) => ({
+					path: `src/${group}/item-${String(index).padStart(2, "0")}.ts`,
+				})),
+			);
+			await route.fulfill({ response, json: { ...body, files } });
+		});
+		await page.goto("/");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+		await page.keyboard.press("Control+p");
+		const picker = page.getByRole("dialog", { name: "Files" });
+		const search = picker.getByRole("textbox", { name: "Search project files" });
+		const results = picker.getByTestId("quick-picker-results");
+		await search.fill("alpha");
+		await expect(picker.getByRole("button", { name: "item-00.ts, src/alpha" })).toBeVisible();
+		await results.evaluate((element) => {
+			element.scrollTop = 560;
+			element.dispatchEvent(new Event("scroll", { bubbles: true }));
+		});
+		await expect.poll(() => results.evaluate((element) => element.scrollTop)).toBeGreaterThan(400);
+
+		await search.fill("beta");
+		const activeFirstRow = picker.getByRole("button", { name: "item-00.ts, src/beta" });
+		await expect(activeFirstRow).toHaveAttribute("aria-selected", "true");
+		await expect(activeFirstRow).toBeInViewport();
+		await expect.poll(() => results.evaluate((element) => element.scrollTop)).toBeLessThan(60);
+	});
+
+	test("ranks a contiguous filename match ahead of cross-directory fuzzy noise", async ({
+		page,
+	}) => {
+		const distractorPath = "apps/native/src/app/conversations/[id].tsx";
+		const targetPath = "apps/native/src/features/audio/transcription.ios.ts";
+		await page.route("**/api/repositories/*/project-files", async (route) => {
+			const response = await route.fetch();
+			const body = (await response.json()) as ProjectFilesResponse;
+			await route.fulfill({
+				response,
+				json: {
+					...body,
+					files: [{ path: distractorPath }, { path: targetPath }],
+				},
+			});
+		});
+		await page.goto("/");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
+
+		await page.keyboard.press("Control+p");
+		const picker = page.getByRole("dialog", { name: "Files" });
+		const search = picker.getByRole("textbox", { name: "Search project files" });
+		await expect(
+			picker.getByRole("button", {
+				name: "transcription.ios.ts, apps/native/src/features/audio",
+			}),
+		).toBeVisible();
+		await search.fill("trans ios");
+
+		const results = picker.getByTestId("quick-picker-results");
+		const target = results.getByRole("button", {
+			name: "transcription.ios.ts, apps/native/src/features/audio",
+		});
+		await expect(target).toHaveAttribute("aria-selected", "true");
+		await expect(results.getByRole("button").first()).toHaveAccessibleName(
+			"transcription.ios.ts, apps/native/src/features/audio",
+		);
+
+		await page.keyboard.press("Enter");
+		await expect(picker).toHaveCount(0);
+		const currentFile = page.getByRole("region", { name: "Current file" });
+		await expect(currentFile).toContainText(targetPath);
+		await expect(currentFile).toContainText("read-only");
 	});
 
 	test("applies and persists a device-local color theme", async ({ page }) => {

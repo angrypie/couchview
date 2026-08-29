@@ -9,6 +9,7 @@ import {
 	render,
 	screen,
 	viewerHunkJumps,
+	viewerLineJumps,
 	waitFor,
 	within,
 } from "./appTestHarness.tsx";
@@ -351,7 +352,7 @@ describe("Couchview app review and delivery workflows", () => {
 		expect(viewerHunkJumps).toEqual([0, 1, 2]);
 	});
 
-	test("searches a clicked identifier and opens a source preview", async () => {
+	test("searches a clicked identifier and opens a full-view source file at the match", async () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
@@ -360,9 +361,24 @@ describe("Couchview app review and delivery workflows", () => {
 		await screen.findByRole("dialog", { name: "Find in project" });
 		await screen.findByText(/src\/first\.ts:1:15/);
 		fireEvent.click(screen.getByRole("tab", { name: "Other files (1)" }));
-		expect(await screen.findByText(/src\/second\.ts:1:14/)).toBeTruthy();
-		fireEvent.click(screen.getByRole("tab", { name: "Current file (1)" }));
-		fireEvent.click(await screen.findByText(/src\/first\.ts:1:15/));
-		expect(await screen.findByText("return value;")).toBeTruthy();
+		fireEvent.click(await screen.findByText(/README\.md:2:1/));
+
+		await waitFor(() =>
+			expect(screen.queryByRole("dialog", { name: "Find in project" })).toBeNull(),
+		);
+		const currentFile = screen.getByRole("region", { name: "Current file" });
+		expect(within(currentFile).getByText("README.md")).toBeTruthy();
+		expect(within(currentFile).getByText("read-only")).toBeTruthy();
+		await waitFor(() =>
+			expect(screen.getByTestId("pierre-code-view").textContent).toContain("return value;"),
+		);
+		await waitFor(() =>
+			expect(viewerLineJumps).toContainEqual({
+				align: "center",
+				behavior: "instant",
+				lineNumber: 2,
+				side: "new",
+			}),
+		);
 	});
 });

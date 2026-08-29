@@ -4,7 +4,6 @@ import { View } from "react-native";
 import type { RemoteBridgeCapability, TerminalCapability } from "../../shared/contracts.ts";
 import type { ResolvedTheme } from "../../shared/theme.ts";
 import type { usePackageRuns } from "../features/packages/usePackageRuns.ts";
-import type { useRepositoryManagement } from "../features/repositories/useRepositoryManagement.ts";
 import type { useRepositoryWorkspace } from "../features/repositories/useRepositoryWorkspace.ts";
 import type { useReviewWorkflow } from "../features/review/useReviewWorkflow.ts";
 import type { useDisplayPreferences } from "../features/settings/useDisplayPreferences.ts";
@@ -26,7 +25,6 @@ interface ReviewWorkspaceChromeProps {
 	drawerView: DrawerView;
 	failureAvailable: boolean;
 	filters: ReturnType<typeof useChangedFileFilters>;
-	management: ReturnType<typeof useRepositoryManagement>;
 	onDrawerOpenChange: (open: boolean) => void;
 	onDrawerViewChange: (view: DrawerView) => void;
 	onOpenCommandPalette: () => void;
@@ -34,6 +32,7 @@ interface ReviewWorkspaceChromeProps {
 	onOpenArtifacts: () => void;
 	onOpenGitHistory: () => void;
 	onOpenRemoteBridge: () => void;
+	onOpenRepositoryPicker: () => void;
 	onOpenSettings: () => void;
 	onOpenTerminal: () => void;
 	packages: ReturnType<typeof usePackageRuns>;
@@ -54,7 +53,6 @@ export function ReviewWorkspaceChrome({
 	drawerView,
 	failureAvailable,
 	filters,
-	management,
 	onDrawerOpenChange,
 	onDrawerViewChange,
 	onOpenCommandPalette,
@@ -62,6 +60,7 @@ export function ReviewWorkspaceChrome({
 	onOpenArtifacts,
 	onOpenGitHistory,
 	onOpenRemoteBridge,
+	onOpenRepositoryPicker,
 	onOpenSettings,
 	onOpenTerminal,
 	packages,
@@ -89,7 +88,7 @@ export function ReviewWorkspaceChrome({
 				commandsAvailable={commandsAvailable}
 				commandsLoading={packages.commandsLoading}
 				commitBusy={workflow.commit.busy}
-				currentFileId={diff.currentFileId}
+				currentFileId={diff.readOnly ? null : diff.currentFileId}
 				fileQuery={filters.fileQuery}
 				files={workspace.files}
 				filteredFiles={filters.filteredFiles}
@@ -122,6 +121,7 @@ export function ReviewWorkspaceChrome({
 			<View className="min-w-0 flex-1 bg-background">
 				<ReviewTopBar
 					activeFile={diff.activeFile}
+					activePath={diff.activePath}
 					canNavigateNextHunk={diff.canNavigateNextHunk}
 					canNavigatePreviousHunk={diff.canNavigatePreviousHunk}
 					commandPaletteShortcut={commandPaletteShortcut}
@@ -141,10 +141,11 @@ export function ReviewWorkspaceChrome({
 					onOpenArtifacts={onOpenArtifacts}
 					onOpenGitHistory={onOpenGitHistory}
 					onOpenRemoteBridge={onOpenRemoteBridge}
-					onOpenRepositoryPicker={management.openPicker}
+					onOpenRepositoryPicker={onOpenRepositoryPicker}
 					onOpenSettings={onOpenSettings}
 					onOpenTerminal={onOpenTerminal}
 					remoteBridgeCapability={remoteBridgeCapability}
+					readOnly={diff.readOnly}
 					repository={workspace.repository}
 					repositoryId={workspace.repositoryId}
 					reviewedCount={filters.reviewedCount}
@@ -168,8 +169,10 @@ export function ReviewWorkspaceChrome({
 
 				<CurrentFileBar
 					activeFile={diff.activeFile}
+					activePath={diff.activePath}
 					diff={diff.diff}
 					onOpenSettings={onOpenSettings}
+					readOnly={diff.readOnly}
 					visible={!compactLandscape}
 				/>
 
@@ -184,15 +187,11 @@ export function ReviewWorkspaceChrome({
 					lineWrapEnabled={display.lineWrapEnabled}
 					onIdentifierClick={search.openWithQuery}
 					onOpenFailure={onOpenFailure}
-					onRetry={() => {
-						if (!diff.currentFileId) return;
-						const retryId = diff.currentFileId;
-						diff.setCurrentFileId(null);
-						setTimeout(() => diff.setCurrentFileId(retryId), 0);
-					}}
+					onRetry={diff.retry}
 					onVisibleLineChange={diff.handleVisibleLineChange}
+					readOnly={diff.readOnly}
 					repositoryId={workspace.repositoryId}
-					retryAvailable={Boolean(diff.currentFileId)}
+					retryAvailable={Boolean(diff.activePath)}
 					rowCount={diff.rows.length}
 					themeType={themeType}
 					typography={display.typography.diff}

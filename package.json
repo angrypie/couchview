@@ -52,6 +52,7 @@
 		"@expo/ui": "~57.0.9",
 		"@gluestack-ui/core": "5.0.15",
 		"@gluestack-ui/utils": "5.0.6",
+		"@leeoniya/ufuzzy": "1.0.19",
 		"@legendapp/list": "3.3.7",
 		"@react-native-community/slider": "5.2.0",
 		"@shikijs/engine-javascript": "4.3.1",

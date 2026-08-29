@@ -20,6 +20,7 @@ interface UseAppCommandsOptions {
 	onNavigateHunk: (direction: -1 | 1) => void;
 	onOpenArtifacts: () => void;
 	onOpenCommit: () => void;
+	onOpenFile: () => void;
 	onOpenFiles: () => void;
 	onOpenHistory: () => void;
 	onOpenPackageCommands: () => void;
@@ -34,6 +35,7 @@ interface UseAppCommandsOptions {
 	overlayVisible: boolean;
 	repositoryReady: boolean;
 	reviewBusy: boolean;
+	searchableFile: boolean;
 	stageBusy: boolean;
 	stagedCount: number;
 	terminalCapability: TerminalCapability;
@@ -56,6 +58,7 @@ export function useAppCommands({
 	onNavigateHunk,
 	onOpenArtifacts,
 	onOpenCommit,
+	onOpenFile,
 	onOpenFiles,
 	onOpenHistory,
 	onOpenPackageCommands,
@@ -70,6 +73,7 @@ export function useAppCommands({
 	overlayVisible,
 	repositoryReady,
 	reviewBusy,
+	searchableFile,
 	stageBusy,
 	stagedCount,
 	terminalCapability,
@@ -101,10 +105,11 @@ export function useAppCommands({
 		};
 		return {
 			"palette.open": command("palette.open", true, null, () => {
-				setPaletteOpenState((current) => {
-					if (!current) setPaletteQuery("");
-					return !current;
-				});
+				if (!paletteOpen) {
+					onDismissOverlays();
+					setPaletteQuery("");
+				}
+				setPaletteOpenState(!paletteOpen);
 			}),
 			"navigate.review": command(
 				"navigate.review",
@@ -160,8 +165,8 @@ export function useAppCommands({
 			),
 			"search.open": command(
 				"search.open",
-				Boolean(activeFile && repositoryReady),
-				"Open a changed file first",
+				searchableFile && repositoryReady,
+				"Open a file first",
 				reviewAction(onOpenSearch),
 			),
 			"commit.open": command(
@@ -169,6 +174,12 @@ export function useAppCommands({
 				stagedCount > 0 && !commitBusy,
 				stagedCount === 0 ? "Stage changes before committing" : "A commit is already running",
 				reviewAction(onOpenCommit),
+			),
+			"file.open": command(
+				"file.open",
+				repositoryReady,
+				"Select a repository first",
+				reviewAction(onOpenFile),
 			),
 			"file.toggleStage": command(
 				"file.toggleStage",
@@ -221,6 +232,7 @@ export function useAppCommands({
 		onNavigateHunk,
 		onOpenArtifacts,
 		onOpenCommit,
+		onOpenFile,
 		onOpenFiles,
 		onOpenHistory,
 		onOpenPackageCommands,
@@ -232,8 +244,10 @@ export function useAppCommands({
 		onReviewFile,
 		onShowReview,
 		onToggleStage,
+		paletteOpen,
 		repositoryReady,
 		reviewBusy,
+		searchableFile,
 		stageBusy,
 		stagedCount,
 		terminalCapability.available,
@@ -250,11 +264,15 @@ export function useAppCommands({
 		restricted: workspaceMode === "terminal" || overlayVisible,
 	});
 	const openPaletteWithQuery = (query: string) => {
+		onDismissOverlays();
 		setPaletteQuery(query);
 		setPaletteOpenState(true);
 	};
 	const setPaletteOpen = (open: boolean) => {
-		if (open) setPaletteQuery("");
+		if (open) {
+			onDismissOverlays();
+			setPaletteQuery("");
+		}
 		setPaletteOpenState(open);
 	};
 

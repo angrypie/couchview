@@ -18,6 +18,7 @@ if (!GlobalRegistrator.isRegistered) {
 
 const { act, cleanup, fireEvent, render, screen } = await import("@testing-library/react");
 const { COMMAND_DEFINITIONS } = await import("./commands.ts");
+const { isExactControlP } = await import("./features/quickPick/useQuickPickerKeyboard.ts");
 const { formatShortcut, shortcutStrokeFromEvent, useShortcutEngine } = await import(
 	"./shortcutEngine.ts"
 );
@@ -89,6 +90,21 @@ describe("shortcut engine", () => {
 		});
 		expect(formatShortcut([{ key: "k", modifiers: ["mod", "shift"] }], true)).toBe("⌘⇧K");
 		expect(formatShortcut([{ key: "k", modifiers: ["mod", "shift"] }], false)).toBe("Ctrl+Shift+K");
+		expect(formatShortcut([{ key: "p", modifiers: ["ctrl"] }], true)).toBe("⌃P");
+	});
+
+	test("recognizes only the exact Control+P file picker chord", () => {
+		const ctrlP = new KeyboardEvent("keydown", { ctrlKey: true, key: "p" });
+		const metaP = new KeyboardEvent("keydown", { key: "p", metaKey: true });
+		const combinedP = new KeyboardEvent("keydown", {
+			ctrlKey: true,
+			key: "p",
+			metaKey: true,
+		});
+
+		expect(isExactControlP(ctrlP)).toBe(true);
+		expect(isExactControlP(metaP)).toBe(false);
+		expect(isExactControlP(combinedP)).toBe(false);
 	});
 
 	test("executes single and multi-stroke commands through the same registry", () => {
@@ -103,6 +119,9 @@ describe("shortcut engine", () => {
 
 		fireEvent.keyDown(window, { key: "r" });
 		expect(calls).toEqual(["navigate.review", "file.toggleReviewed"]);
+
+		fireEvent.keyDown(window, { key: "p", ctrlKey: true });
+		expect(calls).toEqual(["navigate.review", "file.toggleReviewed", "file.open"]);
 	});
 
 	test("cancels pending strokes on Escape and after the fixed timeout", async () => {

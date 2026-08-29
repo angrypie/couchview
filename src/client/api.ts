@@ -25,6 +25,7 @@ import {
 	type PackageRunResponse,
 	type PackageRunsResponse,
 	type PackageScriptsResponse,
+	type ProjectFilesResponse,
 	type RegisterRepositoryRequest,
 	type RegisterRepositoryResponse,
 	type RemoteBridgeDevicesResponse,
@@ -41,7 +42,7 @@ import {
 	type SetReviewsResponse,
 	type SettingsProfileResponse,
 	type SettingsProfilesResponse,
-	type SourcePreviewResponse,
+	type SourceFileResponse,
 	type SpeechLanguageHint,
 	type SpeechTranscriptionResponse,
 	type StageFileRequest,
@@ -319,6 +320,10 @@ export const api = {
 		return request<ChangesResponse>(API_ROUTES.files(repositoryId), { signal });
 	},
 
+	projectFiles(repositoryId: string, signal?: AbortSignal) {
+		return request<ProjectFilesResponse>(API_ROUTES.projectFiles(repositoryId), { signal });
+	},
+
 	diff(repositoryId: string, fileId: string, signal?: AbortSignal) {
 		return request<DiffResponse>(API_ROUTES.fileDiff(repositoryId, fileId), { signal });
 	},
@@ -460,9 +465,9 @@ export const api = {
 		);
 	},
 
-	source(repositoryId: string, path: string, line: number, signal?: AbortSignal) {
-		return request<SourcePreviewResponse>(
-			withQuery(API_ROUTES.source(repositoryId), { path, line, context: 20 }),
+	sourceFile(repositoryId: string, path: string, line: number, signal?: AbortSignal) {
+		return request<SourceFileResponse>(
+			withQuery(API_ROUTES.sourceFile(repositoryId), { path, line }),
 			{ signal },
 		);
 	},

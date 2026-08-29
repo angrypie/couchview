@@ -37,6 +37,7 @@ export const VOICE_COMMAND_EVAL_CASES = [
 	{ transcript: "Open package commands.", expectedActionIds: ["panel.packageCommands"] },
 	{ transcript: "search repository", expectedActionIds: ["search.open"] },
 	{ transcript: "open commit composer", expectedActionIds: ["commit.open"] },
+	{ transcript: "go to file", expectedActionIds: ["file.open"] },
 	{ transcript: "stage current file", expectedActionIds: ["file.stage"] },
 	{ transcript: "unstage current file", expectedActionIds: ["file.unstage"] },
 	{ transcript: "review current file", expectedActionIds: ["file.markReviewed"] },

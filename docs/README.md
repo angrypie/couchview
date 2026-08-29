@@ -8,6 +8,7 @@ research, and historical material. Start with the row matching what you are tryi
 | Audience | Document | Purpose |
 | --- | --- | --- |
 | New users | [Project README](../README.md) | Product overview and five-minute setup. |
+| Keyboard users | [Command Palette and Quick Picker](guides/quick-picker.md) | Cmd/Ctrl shortcuts, fuzzy Repository and file selection, controls, and implementation boundaries. |
 | Phone, native, and remote-web users | [Remote and mobile access](guides/remote-access.md) | Trusted-LAN access, native pairing, Cloudflare Access, and PWA installation. |
 | Speech users | [Speech and dictation](guides/speech.md) | Host-local transcription plus opt-in Needle setup, controls, privacy, and retry behavior. |
 | Terminal users | [Terminal](guides/terminal.md) | Persistent tmux behavior, authorization, and optional WebRTC transport. |

@@ -3,7 +3,9 @@ import type {
 	BootstrapResponse,
 	ChangesResponse,
 	PackageRunEvent,
+	ProjectFilesResponse,
 	ReviewStateResponse,
+	SourceFileResponse,
 } from "../src/shared/contracts.ts";
 import { API_ROUTES, ARTIFACT_EXECUTABLE_HEADER } from "../src/shared/contracts.ts";
 import type { GitCommitChangesResponse, GitHistoryResponse } from "../src/shared/git/index.ts";
@@ -226,6 +228,16 @@ export function handleFixtureReadRoute(
 			operationRevision: state.operationRevision,
 		} satisfies ChangesResponse);
 	}
+	if (nestedPath === "project-files") {
+		return fixtureJson({
+			files: ["README.md", "docs/contributing.md", ...files.map((file) => file.path)].map(
+				(path) => ({ path }),
+			),
+			operationRevision: state.operationRevision,
+			repositoryId: repositoryId!,
+			truncated: false,
+		} satisfies ProjectFilesResponse);
+	}
 	if (nestedPath === "terminal") return fixtureJson(state.terminal.status());
 	if (fileRoute?.[2] === "diff") {
 		const diff = diffs[decodeURIComponent(fileRoute[1] || "")];
@@ -333,10 +345,15 @@ export function handleFixtureReadRoute(
 			truncated: false,
 		});
 	}
-	if (nestedPath === "source") {
+	if (nestedPath === "source-file") {
 		const sourcePath = url.searchParams.get("path") || files[0]!.path;
 		const focusLine = Number(url.searchParams.get("line") || 2);
 		return fixtureJson({
+			repositoryId: repositoryId!,
+			operationRevision: state.operationRevision,
+			contentRevision:
+				files.find((file) => file.path === sourcePath)?.contentRevision ??
+				`fixture-source:${state.operationRevision}:${sourcePath}`,
 			path: sourcePath,
 			focusLine,
 			startLine: 1,
@@ -348,7 +365,8 @@ export function handleFixtureReadRoute(
 				{ line: 4, text: "" },
 			],
 			truncated: false,
-		});
+			totalLines: 4,
+		} satisfies SourceFileResponse);
 	}
 	if (nestedPath === "events") {
 		return eventStream({

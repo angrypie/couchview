@@ -29,6 +29,7 @@ import { Badge, Button, Icon, IconButton, Text } from "./ui";
 
 interface ReviewTopBarProps {
 	activeFile: FileChange | null;
+	activePath: string | null;
 	canNavigateNextHunk: boolean;
 	canNavigatePreviousHunk: boolean;
 	commandPaletteShortcut: string;
@@ -52,6 +53,7 @@ interface ReviewTopBarProps {
 	onOpenSettings: () => void;
 	onOpenTerminal: () => void;
 	remoteBridgeCapability: RemoteBridgeCapability;
+	readOnly: boolean;
 	repository: RepositorySummary | null;
 	repositoryId: string | null;
 	reviewedCount: number;
@@ -74,12 +76,26 @@ function connectionTitle(connectionState: RepositoryConnectionState): string {
 
 function FileContext({
 	activeFile,
+	activePath,
 	diff,
+	readOnly,
 }: {
 	activeFile: FileChange | null;
+	activePath: string | null;
 	diff: FileDiff | null;
+	readOnly: boolean;
 }) {
 	if (!activeFile) {
+		if (activePath) {
+			return (
+				<View className="min-w-0 flex-1 gap-1">
+					<Text className="font-mono text-sm" numberOfLines={1} selectable>
+						{activePath}
+					</Text>
+					{readOnly ? <Badge variant="outline">read-only</Badge> : null}
+				</View>
+			);
+		}
 		return (
 			<Text className="min-w-0 flex-1 text-sm text-muted-foreground" numberOfLines={1}>
 				No changed file
@@ -117,6 +133,7 @@ function FileContext({
 
 export function ReviewTopBar({
 	activeFile,
+	activePath,
 	canNavigateNextHunk,
 	canNavigatePreviousHunk,
 	commandPaletteShortcut,
@@ -140,6 +157,7 @@ export function ReviewTopBar({
 	onOpenSettings,
 	onOpenTerminal,
 	remoteBridgeCapability,
+	readOnly,
 	repository,
 	repositoryId,
 	reviewedCount,
@@ -203,7 +221,12 @@ export function ReviewTopBar({
 						<Icon as={ChevronDown} size={12} tone="muted" />
 					</Pressable>
 					<Text className="text-muted-foreground">/</Text>
-					<FileContext activeFile={activeFile} diff={diff} />
+					<FileContext
+						activeFile={activeFile}
+						activePath={activePath}
+						diff={diff}
+						readOnly={readOnly}
+					/>
 				</View>
 			) : (
 				<Pressable

@@ -64,6 +64,7 @@ export const API_ROUTES = {
 	artifactDownload: (repositoryId: string, artifactId: string, buildId: string) =>
 		`${repositoryApiPath(repositoryId)}/artifacts/${encodeURIComponent(artifactId)}/builds/${encodeURIComponent(buildId)}/download`,
 	files: repositoryFilesApiPath,
+	projectFiles: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/project-files`,
 	fileDiff: (repositoryId: string, fileId: string) =>
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/diff`,
 	fileStage: (repositoryId: string, fileId: string) =>
@@ -74,6 +75,7 @@ export const API_ROUTES = {
 		`${repositoryFilesApiPath(repositoryId)}/${encodeURIComponent(fileId)}/review`,
 	search: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/search`,
 	source: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/source`,
+	sourceFile: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/source-file`,
 	commit: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit`,
 	commitMessage: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/commit-message`,
 	packageScripts: (repositoryId: string) => `${repositoryApiPath(repositoryId)}/package-scripts`,
@@ -442,6 +444,17 @@ export interface ChangesResponse {
 	operationRevision: string;
 }
 
+export interface ProjectFileEntry {
+	path: string;
+}
+
+export interface ProjectFilesResponse {
+	repositoryId: string;
+	operationRevision: string;
+	files: ProjectFileEntry[];
+	truncated: boolean;
+}
+
 export interface DiffLine {
 	id: string;
 	kind: DiffLineKind;
@@ -516,6 +529,18 @@ export interface SourcePreviewResponse {
 	endLine: number;
 	lines: SourceLine[];
 	truncated: boolean;
+}
+
+/**
+ * A revision-stamped, bounded source document for the main file viewer.
+ * The returned lines are contiguous and always include `focusLine` when the
+ * source is non-empty, even when row or response-size limits truncate it.
+ */
+export interface SourceFileResponse extends SourcePreviewResponse {
+	repositoryId: string;
+	operationRevision: string;
+	contentRevision: string;
+	totalLines: number;
 }
 
 export interface ReviewRecord {

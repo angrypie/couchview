@@ -6,23 +6,13 @@ import {
 	type ShortcutModifier,
 	type ShortcutSequence,
 	type ShortcutStroke,
-	shortcutSequenceKey,
+	shortcutSequenceKeyForPlatform,
 } from "../shared/settings.ts";
 import type { RuntimeCommand } from "./commands.ts";
+import { isApplePlatform } from "./lib/platform.ts";
 
 const SHORTCUT_TIMEOUT_MS = 1_000;
 const NO_RESERVED_STROKES: readonly ShortcutStroke[] = [];
-
-function applePlatform(navigatorValue: Navigator | undefined): boolean {
-	if (!navigatorValue) return false;
-	const userAgentData = (
-		navigatorValue as Navigator & {
-			userAgentData?: { platform?: string };
-		}
-	).userAgentData;
-	const platform = userAgentData?.platform || navigatorValue.platform || navigatorValue.userAgent;
-	return /Mac|iPhone|iPad|iPod/i.test(platform);
-}
 
 function normalizedKey(event: KeyboardEvent): string | null {
 	if (
@@ -54,7 +44,7 @@ function normalizedKey(event: KeyboardEvent): string | null {
 
 export function shortcutStrokeFromEvent(
 	event: KeyboardEvent,
-	isApple = applePlatform(event.view?.navigator),
+	isApple = isApplePlatform(event.view?.navigator),
 ): ShortcutStroke | null {
 	const key = normalizedKey(event);
 	if (!key) return null;
@@ -68,14 +58,21 @@ export function shortcutStrokeFromEvent(
 	return { key, modifiers };
 }
 
-function strokesEqual(left: ShortcutStroke, right: ShortcutStroke): boolean {
-	return shortcutSequenceKey([left]) === shortcutSequenceKey([right]);
+function strokesEqual(left: ShortcutStroke, right: ShortcutStroke, isApple: boolean): boolean {
+	return (
+		shortcutSequenceKeyForPlatform([left], isApple) ===
+		shortcutSequenceKeyForPlatform([right], isApple)
+	);
 }
 
-function isPrefix(prefix: readonly ShortcutStroke[], sequence: ShortcutSequence): boolean {
+function isPrefix(
+	prefix: readonly ShortcutStroke[],
+	sequence: ShortcutSequence,
+	isApple: boolean,
+): boolean {
 	return (
 		prefix.length <= sequence.length &&
-		prefix.every((item, index) => strokesEqual(item, sequence[index]!))
+		prefix.every((item, index) => strokesEqual(item, sequence[index]!, isApple))
 	);
 }
 
@@ -102,14 +99,14 @@ function keyLabel(key: string): string {
 
 export function formatShortcut(
 	sequence: ShortcutSequence | null,
-	isApple = applePlatform(typeof navigator === "undefined" ? undefined : navigator),
+	isApple = isApplePlatform(),
 ): string {
 	if (!sequence || sequence.length === 0) return "Unassigned";
 	return sequence
 		.map((stroke) => {
 			const modifiers = stroke.modifiers.map((modifier) => {
 				if (modifier === "mod") return isApple ? "⌘" : "Ctrl";
-				if (modifier === "ctrl") return "Ctrl";
+				if (modifier === "ctrl") return isApple ? "⌃" : "Ctrl";
 				if (modifier === "alt") return isApple ? "⌥" : "Alt";
 				if (modifier === "shift") return isApple ? "⇧" : "Shift";
 				return isApple ? "⌘" : "Meta";
@@ -164,10 +161,11 @@ export function useShortcutEngine({
 				clearPending();
 				return;
 			}
-			const stroke = shortcutStrokeFromEvent(event);
+			const isApple = isApplePlatform(event.view?.navigator);
+			const stroke = shortcutStrokeFromEvent(event, isApple);
 			if (!stroke) return;
 			const typing = isTypingSurface(event.target);
-			if (!typing && reservedStrokes.some((reserved) => strokesEqual(stroke, reserved))) {
+			if (!typing && reservedStrokes.some((reserved) => strokesEqual(stroke, reserved, isApple))) {
 				clearPending();
 				return;
 			}
@@ -176,13 +174,13 @@ export function useShortcutEngine({
 			let nextPending = [...pending, stroke];
 			let candidates = candidateIds.filter((commandId) => {
 				const binding = bindings[commandId];
-				return binding ? isPrefix(nextPending, binding) : false;
+				return binding ? isPrefix(nextPending, binding, isApple) : false;
 			});
 			if (candidates.length === 0 && pending.length > 0) {
 				nextPending = [stroke];
 				candidates = candidateIds.filter((commandId) => {
 					const binding = bindings[commandId];
-					return binding ? isPrefix(nextPending, binding) : false;
+					return binding ? isPrefix(nextPending, binding, isApple) : false;
 				});
 			}
 			if (candidates.length === 0) {

@@ -14,6 +14,7 @@ import {
 	type PackageRunResponse,
 	type PackageRunsResponse,
 	type PackageScriptsResponse,
+	type ProjectFilesResponse,
 	REMOTE_BRIDGE_DEVICE_TOKEN_HEADER,
 	REMOTE_BRIDGE_PROTOCOL,
 	REMOTE_BRIDGE_TICKET_PREFIX,
@@ -23,6 +24,7 @@ import {
 	type ServerEvent,
 	type SettingsProfileResponse,
 	type SettingsProfilesResponse,
+	type SourceFileResponse,
 	type StageFileResponse,
 } from "../shared/contracts.ts";
 import {
@@ -151,6 +153,91 @@ async function nextPackageRunEvent(
 }
 
 describe("Couchview HTTP security and routes", () => {
+	test("serves the current project file catalog with its repository revision", async () => {
+		const app = await fixture();
+		const response = await app.fetch(request(API_ROUTES.projectFiles(app.repository.id)));
+		const body = (await response.json()) as ProjectFilesResponse;
+
+		expect(response.status).toBe(200);
+		expect(body).toEqual({
+			repositoryId: app.repository.id,
+			operationRevision: (await app.repository.changes()).operationRevision,
+			files: [{ path: "sample.ts" }],
+			truncated: false,
+		});
+	});
+
+	test("retries a project file catalog that changes between revision snapshots", async () => {
+		const app = await fixture();
+		const before = await app.repository.changes();
+		type ProjectFileContent = {
+			projectFiles(): Promise<Pick<ProjectFilesResponse, "files" | "truncated">>;
+		};
+		const internal = app.repository as unknown as { content: ProjectFileContent };
+		const projectFiles = internal.content.projectFiles.bind(internal.content);
+		let catalogCalls = 0;
+		internal.content.projectFiles = async () => {
+			const catalog = await projectFiles();
+			catalogCalls += 1;
+			if (catalogCalls === 1) {
+				await writeFile(path.join(app.repository.root, "added-during-list.ts"), "export {}\n");
+			}
+			return catalog;
+		};
+
+		const response = await app.fetch(request(API_ROUTES.projectFiles(app.repository.id)));
+		const body = (await response.json()) as ProjectFilesResponse;
+
+		expect(response.status).toBe(200);
+		expect(catalogCalls).toBe(2);
+		expect(body.files.map((file) => file.path)).toEqual(["added-during-list.ts", "sample.ts"]);
+		expect(body.operationRevision).not.toBe(before.operationRevision);
+		expect(body.operationRevision).toBe((await app.repository.changes()).operationRevision);
+	});
+
+	test("serves a revision-stamped main-view source file without changing source previews", async () => {
+		const app = await fixture();
+		const changes = (await (
+			await app.fetch(request(API_ROUTES.files(app.repository.id)))
+		).json()) as ChangesResponse;
+		const changedFile = changes.files[0];
+		if (!changedFile) throw new Error("source route fixture file missing");
+		const sourceResponse = await app.fetch(
+			request(
+				`${API_ROUTES.sourceFile(app.repository.id)}?path=${encodeURIComponent("sample.ts")}&line=1`,
+			),
+		);
+		expect(sourceResponse.status).toBe(200);
+		const source = (await sourceResponse.json()) as SourceFileResponse;
+		expect(source).toMatchObject({
+			repositoryId: app.repository.id,
+			operationRevision: changes.operationRevision,
+			path: "sample.ts",
+			focusLine: 1,
+			startLine: 1,
+			endLine: 1,
+			lines: [{ line: 1, text: "const sample = true;" }],
+			truncated: false,
+			totalLines: 1,
+		});
+		expect(source.contentRevision).toBe(changedFile.contentRevision);
+
+		const previewResponse = await app.fetch(
+			request(
+				`${API_ROUTES.source(app.repository.id)}?path=${encodeURIComponent("sample.ts")}&line=1&context=0`,
+			),
+		);
+		expect(previewResponse.status).toBe(200);
+		expect(await previewResponse.json()).toEqual({
+			path: "sample.ts",
+			focusLine: 1,
+			startLine: 1,
+			endLine: 1,
+			lines: [{ line: 1, text: "const sample = true;" }],
+			truncated: false,
+		});
+	});
+
 	test("protects local voice resolution and preserves ordered array results", async () => {
 		const voiceCommands = new VoiceCommandService({
 			enabled: true,

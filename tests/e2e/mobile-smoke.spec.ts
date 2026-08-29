@@ -645,9 +645,14 @@ test.describe("mobile fixture review", () => {
 		const currentHit = search.getByRole("button", { name: /src\/review\.ts:2:16/ });
 		await expect(currentHit).toBeVisible();
 		await currentHit.click();
-		await expect(search.getByText("src/review.ts", { exact: true })).toBeVisible();
-		await expect(search).toContainText("return true");
-		await search.getByRole("button", { name: "Back to results" }).click();
+		await expect(search).toHaveCount(0);
+		await expect(currentFile).toContainText("src/review.ts");
+		await expect(page.getByRole("region", { name: "Unified diff" })).toContainText(
+			"return load(path)",
+		);
+
+		await loadToken.click();
+		await expect(search).toBeVisible();
 		await search.getByRole("tab", { name: /Other files \(1\)/ }).click();
 		await expect(search.getByRole("button", { name: /src\/format\.ts:2:10/ })).toBeVisible();
 		await search.getByRole("button", { name: "Close sheet" }).click();
@@ -756,7 +761,8 @@ test.describe("mobile fixture review", () => {
 		const repositoryButton = page.getByRole("button", { name: "Select repository" });
 		await expect(repositoryButton).toContainText("sample-project");
 		await repositoryButton.click();
-		const picker = page.getByRole("dialog", { name: "Repositories" });
+		const picker = page.getByRole("dialog", { name: "Projects" });
+		await expect(picker.getByRole("button", { name: "Manage projects…" })).toBeInViewport();
 		await expect(picker).toContainText("/fixtures/sample-project");
 		await expect(picker).toContainText("/fixtures/design-system");
 		await picker.getByRole("button", { name: "design-system, /fixtures/design-system" }).click();

@@ -95,6 +95,28 @@ describe("global SQLite state", () => {
 		reopened.close();
 	});
 
+	test("reopens a profile saved before the file picker shortcut existed", async () => {
+		const filePath = await databasePath();
+		const database = await StateDatabase.open(filePath);
+		database.close();
+		const legacy = createDefaultSettingsProfileData();
+		legacy.keyboard.bindings["search.open"] = [{ key: "p", modifiers: ["mod"] }];
+		const raw = new Database(filePath, { strict: true });
+		raw
+			.query("UPDATE settings_profiles SET data_json = ? WHERE id = ?")
+			.run(JSON.stringify(legacy), DEFAULT_SETTINGS_PROFILE_ID);
+		raw.close();
+
+		const reopened = await StateDatabase.open(filePath);
+		try {
+			const data = reopened.settingsProfile(DEFAULT_SETTINGS_PROFILE_ID)?.data;
+			expect(data?.keyboard.bindings["search.open"]).toEqual([{ key: "p", modifiers: ["mod"] }]);
+			expect(data?.keyboard.bindings["file.open"]).toBeNull();
+		} finally {
+			reopened.close();
+		}
+	});
+
 	test("migrates version-one state without losing repositories", async () => {
 		const filePath = await databasePath();
 		await mkdir(path.dirname(filePath), { recursive: true });

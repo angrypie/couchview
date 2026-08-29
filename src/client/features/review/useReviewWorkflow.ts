@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type {
 	CodexGenerationPreferences,
 	CommitMessageCapability,
+	SearchMatch,
 } from "../../../shared/contracts.ts";
 import type { FailureState } from "../../lib/failures.ts";
 import { useCommitWorkflow } from "../commit/useCommitWorkflow.ts";
@@ -18,6 +19,7 @@ interface UseReviewWorkflowOptions {
 	commitMessageCapability: CommitMessageCapability;
 	codexPreferences: CodexGenerationPreferences;
 	dismissToast: () => void;
+	onShowReview: () => boolean;
 	refreshPackageScripts: () => Promise<unknown>;
 	reportFailure: (error: unknown, context: string) => FailureState;
 	showToast: (message: string, undo?: UndoReview, details?: boolean) => void;
@@ -30,6 +32,7 @@ export function useReviewWorkflow({
 	commitMessageCapability,
 	codexPreferences,
 	dismissToast,
+	onShowReview,
 	refreshPackageScripts,
 	reportFailure,
 	showToast,
@@ -39,11 +42,22 @@ export function useReviewWorkflow({
 	const diff = useDiffReview({
 		files: workspace.files,
 		onFileSelected: closeDrawer,
+		onRefreshChanges: workspace.refreshChanges,
+		operationRevision: workspace.operationRevision,
 		reportFailure,
 		repositoryId: workspace.repositoryId,
 	});
+	const openSearchMatch = useCallback(
+		(match: SearchMatch) => {
+			if (!onShowReview()) return false;
+			diff.openPathAtLine(match.path, match.line);
+			return true;
+		},
+		[diff.openPathAtLine, onShowReview],
+	);
 	const search = useRepositorySearch({
-		activeFile: diff.activeFile,
+		currentPath: diff.activePath,
+		onOpenMatch: openSearchMatch,
 		repositoryId: workspace.repositoryId,
 		showToast,
 	});
@@ -62,7 +76,7 @@ export function useReviewWorkflow({
 		activeFileIndex: diff.activeFileIndex,
 		csrfToken: workspace.bootstrap?.csrfToken,
 		currentFileId: diff.currentFileId,
-		diff: diff.diff,
+		diff: diff.changeDiff,
 		files: workspace.files,
 		loadDiff: diff.loadDiff,
 		onOperationRevision: workspace.applyOperationRevision,

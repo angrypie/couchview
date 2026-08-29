@@ -35,4 +35,12 @@ describe("voice command registry", () => {
 			toolName: "open_git_history",
 		});
 	});
+
+	test("exposes the project file picker as a Needle navigation action", () => {
+		expect(VOICE_ACTION_DEFINITIONS["file.open"]).toMatchObject({
+			commandId: "file.open",
+			risk: "navigation",
+			toolName: "open_project_file_picker",
+		});
+	});
 });

@@ -145,6 +145,100 @@ describe("GitRepository advanced behavior", () => {
 			expect(response.diff.binary).toBe(true);
 			expect(response.diff.hunks).toHaveLength(0);
 			await expect(repository.source("artifact.bin", 1, 1)).rejects.toThrow("Binary files");
+			await expect(repository.sourceFile("artifact.bin", 1)).rejects.toThrow("Binary files");
+		} finally {
+			repository.close();
+		}
+	});
+
+	test("returns a revision-stamped bounded source file that retains the focus line", async () => {
+		const totalLines = 21_250;
+		const contents = Array.from(
+			{ length: totalLines },
+			(_, index) => `${String(index + 1).padStart(5, "0")} ${"x".repeat(120)}\n`,
+		).join("");
+		const rowBoundedContents = "row\n".repeat(20_050);
+		const directory = await committedRepository({
+			"large-source.ts": contents,
+			"row-bounded-source.ts": rowBoundedContents,
+		});
+		const repository = await GitRepository.open(directory);
+		try {
+			const before = await repository.changes();
+			const focusLine = 20_750;
+			const source = await repository.sourceFile("large-source.ts", focusLine);
+
+			expect(source).toMatchObject({
+				repositoryId: before.repository.id,
+				operationRevision: before.operationRevision,
+				path: "large-source.ts",
+				focusLine,
+				totalLines,
+				truncated: true,
+			});
+			expect(source.contentRevision).toMatch(/^[0-9a-f]{64}$/);
+			expect(source.lines.length).toBeLessThanOrEqual(20_000);
+			expect(source.lines.some((line) => line.line === focusLine)).toBe(true);
+			expect(new TextEncoder().encode(JSON.stringify(source)).byteLength).toBeLessThanOrEqual(
+				2 * 1024 * 1024,
+			);
+			const rowBounded = await repository.sourceFile("row-bounded-source.ts", 20_025);
+			expect(rowBounded.lines).toHaveLength(20_000);
+			expect(rowBounded.lines.some((line) => line.line === 20_025)).toBe(true);
+			expect(rowBounded.truncated).toBe(true);
+
+			await writeFile(path.join(directory, "large-source.ts"), `changed\n${contents}`);
+			const changed = await repository.sourceFile("large-source.ts", 1);
+			expect(changed.operationRevision).not.toBe(source.operationRevision);
+			expect(changed.contentRevision).not.toBe(source.contentRevision);
+			expect(changed.lines[0]).toEqual({ line: 1, text: "changed" });
+		} finally {
+			repository.close();
+		}
+	});
+
+	test("retries a source-file read when the bracketed repository snapshot changes", async () => {
+		const directory = await committedRepository({ "retry-source.ts": "before\nsecond\n" });
+		const repository = await GitRepository.open(directory);
+		const diffs = (
+			repository as unknown as {
+				diffs: {
+					getSnapshot(fresh?: boolean): Promise<{
+						operationRevision: string;
+						repository: { id: string };
+					}>;
+				};
+			}
+		).diffs;
+		const getSnapshot = diffs.getSnapshot.bind(diffs);
+		let snapshotReads = 0;
+		diffs.getSnapshot = async (fresh) => {
+			const snapshot = await getSnapshot(fresh);
+			snapshotReads += 1;
+			if (snapshotReads === 1) {
+				await writeFile(path.join(directory, "retry-source.ts"), "after\nsecond\n");
+			}
+			return snapshot;
+		};
+
+		try {
+			const source = await repository.sourceFile("retry-source.ts", 1);
+			expect(snapshotReads).toBe(4);
+			expect(source.lines[0]).toEqual({ line: 1, text: "after" });
+			expect(source.operationRevision).toBe((await repository.changes()).operationRevision);
+		} finally {
+			repository.close();
+		}
+	});
+
+	test("rejects unsafe and missing paths from the main source-file boundary", async () => {
+		const directory = await committedRepository({ "visible.ts": "export const visible = true;\n" });
+		const repository = await GitRepository.open(directory);
+		try {
+			await expect(repository.sourceFile("../secret.ts", 1)).rejects.toThrow("path is invalid");
+			await expect(repository.sourceFile("missing.ts", 1)).rejects.toThrow(
+				"not tracked or available",
+			);
 		} finally {
 			repository.close();
 		}

@@ -15,6 +15,12 @@ import {
 
 describe("Couchview app repository workflows", () => {
 	const fixture = createAppTestHarness();
+	const openRepositoryManager = async () => {
+		fireEvent.click(await screen.findByRole("button", { name: "Select repository" }));
+		const quickPicker = await screen.findByRole("dialog", { name: "Projects" });
+		fireEvent.click(within(quickPicker).getByRole("button", { name: "Manage projects…" }));
+		return screen.findByRole("dialog", { name: "Repositories" });
+	};
 	const syncReviewRecords = () => {
 		fixture.reviews = fixture.files
 			.filter((file) => file.reviewed)
@@ -497,7 +503,7 @@ describe("Couchview app repository workflows", () => {
 		await screen.findByText("src/first.ts");
 
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await screen.findByRole("dialog", { name: "Projects" });
 		fireEvent.click(
 			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
 		);
@@ -506,6 +512,7 @@ describe("Couchview app repository workflows", () => {
 				"second-fixture",
 			);
 		});
+		await act(async () => Promise.resolve());
 
 		fireEvent.click(screen.getByRole("button", { name: "Set up native IDE" }));
 		const dialog = await screen.findByRole("dialog", { name: "Native IDE setup" });
@@ -546,7 +553,7 @@ describe("Couchview app repository workflows", () => {
 
 		await screen.findByText("src/first.ts");
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await screen.findByRole("dialog", { name: "Projects" });
 		expect(within(picker).getByText("/second-fixture")).toBeTruthy();
 		fireEvent.click(
 			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
@@ -593,8 +600,7 @@ describe("Couchview app repository workflows", () => {
 			/>,
 		);
 
-		fireEvent.click(await screen.findByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await openRepositoryManager();
 		expect(within(picker).getByText("No saved repositories")).toBeTruthy();
 		fireEvent.click(within(picker).getByRole("button", { name: "Browse server folders" }));
 		const directoryPicker = await screen.findByRole("dialog", { name: "Choose project folder" });
@@ -631,8 +637,7 @@ describe("Couchview app repository workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await openRepositoryManager();
 		const pathInput = within(picker).getByRole("textbox", {
 			name: "Project path on this server",
 		});
@@ -651,8 +656,7 @@ describe("Couchview app repository workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await openRepositoryManager();
 		fireEvent.click(
 			within(picker).getByRole("button", {
 				name: "Rebuild & restart Couchview",
@@ -672,8 +676,7 @@ describe("Couchview app repository workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await openRepositoryManager();
 		expect(within(picker).getByText("Unavailable")).toBeTruthy();
 		const unavailableProject = within(picker).getByRole("button", {
 			name: "second-fixture, /second-fixture, unavailable",
@@ -703,8 +706,7 @@ describe("Couchview app repository workflows", () => {
 		render(<App />);
 
 		await screen.findByText("src/first.ts");
-		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await openRepositoryManager();
 		fireEvent.click(within(picker).getByRole("button", { name: "Forget second-fixture" }));
 
 		await waitFor(() =>
@@ -743,7 +745,7 @@ describe("Couchview app repository workflows", () => {
 		}) as typeof fetch;
 
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const picker = await screen.findByRole("dialog", { name: "Repositories" });
+		const picker = await screen.findByRole("dialog", { name: "Projects" });
 		fireEvent.click(
 			within(picker).getByRole("button", { name: "second-fixture, /second-fixture" }),
 		);
@@ -756,7 +758,7 @@ describe("Couchview app repository workflows", () => {
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: "Select repository" }));
-		const returnPicker = await screen.findByRole("dialog", { name: "Repositories" });
+		const returnPicker = await screen.findByRole("dialog", { name: "Projects" });
 		fireEvent.click(within(returnPicker).getByRole("button", { name: "fixture, /fixture" }));
 		await waitFor(() => expect(secondLoadAborted).toBe(true));
 		await screen.findByText("src/first.ts");

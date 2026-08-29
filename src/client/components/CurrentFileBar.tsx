@@ -7,12 +7,21 @@ import { Badge, IconButton, Text } from "./ui";
 
 interface CurrentFileBarProps {
 	activeFile: FileChange | null;
+	activePath: string | null;
 	diff: FileDiff | null;
 	onOpenSettings: () => void;
+	readOnly: boolean;
 	visible: boolean;
 }
 
-export function CurrentFileBar({ activeFile, diff, onOpenSettings, visible }: CurrentFileBarProps) {
+export function CurrentFileBar({
+	activeFile,
+	activePath,
+	diff,
+	onOpenSettings,
+	readOnly,
+	visible,
+}: CurrentFileBarProps) {
 	if (!visible) return null;
 	const staged = activeFile ? stageLabel(activeFile) : null;
 
@@ -24,9 +33,13 @@ export function CurrentFileBar({ activeFile, diff, onOpenSettings, visible }: Cu
 		>
 			<View className="min-w-0 flex-1 gap-1">
 				<Text className="font-mono text-sm" numberOfLines={1} selectable>
-					{activeFile?.path ?? "No changed file"}
+					{activePath ?? "No changed file"}
 				</Text>
-				{activeFile ? (
+				{readOnly ? (
+					<View className="flex-row items-center gap-1.5">
+						<Badge variant="outline">read-only</Badge>
+					</View>
+				) : activeFile ? (
 					<View className="flex-row flex-wrap items-center gap-1.5">
 						<Badge variant={activeFile.conflicted ? "destructive" : "outline"}>
 							{changeLabel(activeFile)}

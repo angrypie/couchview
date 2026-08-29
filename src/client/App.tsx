@@ -207,6 +207,7 @@ export function App({
 		commitMessageCapability,
 		codexPreferences: settings.activeProfile.data.codex,
 		dismissToast,
+		onShowReview: navigation.showReview,
 		refreshPackageScripts: packageWorkflow.refreshScripts,
 		reportFailure: failureReporting.reportFailure,
 		showToast,

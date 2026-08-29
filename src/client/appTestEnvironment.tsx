@@ -4,6 +4,7 @@ import type { FileDiff } from "../shared/contracts.ts";
 import type { ResolvedTheme } from "../shared/theme.ts";
 import type { AppRouteConfiguration } from "./App.tsx";
 import { nativeTestRuntime } from "./appTestNativeRuntime.tsx";
+import type { ViewerLineTarget } from "./features/review/types.ts";
 import { terminalPreviewRendererFactory, terminalRendererFactory } from "./terminalTestFakes.ts";
 import { DEFAULT_DIFF_LINE_HEIGHT_MULTIPLIER } from "./typographyPreferences.ts";
 
@@ -140,6 +141,7 @@ mock.module("uniwind", () => ({
 }));
 
 export const viewerHunkJumps: number[] = [];
+export const viewerLineJumps: ViewerLineTarget[] = [];
 export const viewerState: {
 	visibleLineChange: ((lineNumber: number, side: "old" | "new") => void) | null;
 } = {
@@ -175,7 +177,9 @@ mock.module("./DiffViewer.tsx", () => ({
 	) {
 		viewerState.visibleLineChange = onVisibleLineChange;
 		React.useImperativeHandle(ref, () => ({
-			scrollToLine() {},
+			scrollToLine(target: ViewerLineTarget) {
+				viewerLineJumps.push(target);
+			},
 			scrollToHunk(hunkIndex: number) {
 				viewerHunkJumps.push(hunkIndex);
 			},

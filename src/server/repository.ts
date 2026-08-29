@@ -25,12 +25,14 @@ import type {
 	FileChange,
 	FileChangeDelta,
 	GenerateCommitMessageRequest,
+	ProjectFilesResponse,
 	ReviewStateResponse,
 	SearchResponse,
 	SetReviewRequest,
 	SetReviewResponse,
 	SetReviewsRequest,
 	SetReviewsResponse,
+	SourceFileResponse,
 	SourcePreviewResponse,
 	StageFileRequest,
 	StageFileResponse,
@@ -203,6 +205,26 @@ export class GitRepository {
 		};
 	}
 
+	async projectFiles(): Promise<ProjectFilesResponse> {
+		for (let attempt = 0; attempt < 2; attempt += 1) {
+			const before = await this.snapshots.getSnapshot(true);
+			const catalog = await this.content.projectFiles();
+			const after = await this.snapshots.getSnapshot(true);
+			if (before.operationRevision === after.operationRevision) {
+				return {
+					repositoryId: this.id,
+					operationRevision: after.operationRevision,
+					...catalog,
+				};
+			}
+		}
+		throw new HttpError(
+			409,
+			"project_files_changed",
+			"Project files changed while the file list was loading; try again",
+		);
+	}
+
 	async diff(fileId: string): Promise<DiffResponse> {
 		return this.diffs.diff(fileId);
 	}
@@ -233,6 +255,10 @@ export class GitRepository {
 		context: number,
 	): Promise<SourcePreviewResponse> {
 		return this.diffs.source(pathName, focusLine, context);
+	}
+
+	async sourceFile(pathName: string, focusLine: number): Promise<SourceFileResponse> {
+		return this.diffs.sourceFile(pathName, focusLine);
 	}
 
 	async stage(input: StageFileRequest): Promise<StageFileResponse> {

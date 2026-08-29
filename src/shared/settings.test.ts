@@ -12,6 +12,7 @@ import {
 	parseShortcutSequence,
 	type ShortcutSequence,
 	shortcutSequenceKey,
+	shortcutSequenceKeyForPlatform,
 } from "./settings.ts";
 
 const keys = (sequence: ShortcutSequence | null) =>
@@ -27,6 +28,7 @@ describe("settings profiles and keymaps", () => {
 		expect(keys(DEFAULT_KEYBINDINGS.dvorak["file.next"])).toBe("s");
 		expect(keys(DEFAULT_KEYBINDINGS.dvorak["hunk.next"])).toBe("t");
 		expect(keys(DEFAULT_KEYBINDINGS.qwerty["navigate.history"])).toBe("g h");
+		expect(DEFAULT_KEYBINDINGS.qwerty["file.open"]).toEqual([{ key: "p", modifiers: ["ctrl"] }]);
 		expect(DEFAULT_KEYBINDINGS.dvorak["navigate.settings"]).toEqual(
 			DEFAULT_KEYBINDINGS.qwerty["navigate.settings"],
 		);
@@ -80,6 +82,22 @@ describe("settings profiles and keymaps", () => {
 		});
 	});
 
+	test("detects portable Mod and physical Control collisions", () => {
+		const bindings = effectiveKeybindings(createDefaultSettingsProfileData().keyboard);
+		bindings["search.open"] = [{ key: "p", modifiers: ["mod"] }];
+
+		expect(keybindingConflicts(bindings)).toContainEqual({
+			first: "search.open",
+			second: "file.open",
+		});
+		expect(shortcutSequenceKeyForPlatform(bindings["search.open"]!, false)).toBe(
+			shortcutSequenceKeyForPlatform(bindings["file.open"]!, false),
+		);
+		expect(shortcutSequenceKeyForPlatform(bindings["search.open"]!, true)).not.toBe(
+			shortcutSequenceKeyForPlatform(bindings["file.open"]!, true),
+		);
+	});
+
 	test("requires the palette opener to begin with a non-shift modifier", () => {
 		expect(paletteShortcutHasRequiredModifier(null)).toBe(true);
 		expect(paletteShortcutHasRequiredModifier([{ key: "k", modifiers: ["mod"] }])).toBe(true);
@@ -120,6 +138,29 @@ describe("settings profiles and keymaps", () => {
 		>;
 		delete legacy.voice;
 		expect(parseSettingsProfileData(legacy).voice.commandsEnabled).toBe(false);
+	});
+
+	test("preserves an older explicit Mod+P shortcut when file open was not yet saved", () => {
+		const legacy = createDefaultSettingsProfileData();
+		legacy.keyboard.bindings["search.open"] = [{ key: "p", modifiers: ["mod"] }];
+
+		const parsed = parseSettingsProfileData(legacy);
+
+		expect(parsed.keyboard.bindings["search.open"]).toEqual([{ key: "p", modifiers: ["mod"] }]);
+		expect(parsed.keyboard.bindings["file.open"]).toBeNull();
+		expect(keybindingConflicts(effectiveKeybindings(parsed.keyboard))).toEqual([]);
+	});
+
+	test("preserves explicit file opener overrides and unassignment", () => {
+		const custom = createDefaultSettingsProfileData();
+		custom.keyboard.bindings["file.open"] = [{ key: "p", modifiers: ["mod"] }];
+		expect(parseSettingsProfileData(custom).keyboard.bindings["file.open"]).toEqual([
+			{ key: "p", modifiers: ["mod"] },
+		]);
+
+		const unassigned = createDefaultSettingsProfileData();
+		unassigned.keyboard.bindings["file.open"] = null;
+		expect(parseSettingsProfileData(unassigned).keyboard.bindings["file.open"]).toBeNull();
 	});
 
 	test("trims names and enforces their portable length", () => {
