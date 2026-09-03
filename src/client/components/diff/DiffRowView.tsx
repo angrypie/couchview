@@ -140,7 +140,7 @@ function DiffRowViewInner({
 						style={{
 							alignItems: "flex-end",
 							flex: 1,
-							justifyContent: "center",
+							justifyContent: "flex-start",
 							paddingHorizontal: layout.gutterPadding,
 						}}
 					>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FileDiff } from "../../../shared/contracts.ts";
-import { api } from "../../api.ts";
+import { ApiError, api } from "../../api.ts";
 import type { FailureState } from "../../lib/failures.ts";
 
 const SOURCE_CACHE_LIMIT = 5;
@@ -25,6 +25,7 @@ interface UseSourceFileViewOptions {
 	operationRevision: string;
 	reportFailure: (error: unknown, context: string, toastMessage?: boolean) => FailureState;
 	repositoryId: string | null;
+	suppressNotFound?: boolean;
 }
 
 function responseCacheKey(response: SourceFileResponse): string {
@@ -78,11 +79,13 @@ export function useSourceFileView({
 	operationRevision,
 	reportFailure,
 	repositoryId,
+	suppressNotFound = false,
 }: UseSourceFileViewOptions) {
 	const [target, setTarget] = useState<SourceTarget | null>(null);
 	const [loaded, setLoaded] = useState<LoadedSource | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState("");
+	const [notFoundPath, setNotFoundPath] = useState<string | null>(null);
 	const nextSelectionIdRef = useRef(0);
 	const cacheRef = useRef(new Map<string, SourceFileResponse>());
 
@@ -91,6 +94,7 @@ export function useSourceFileView({
 		setLoaded(null);
 		setLoading(false);
 		setError("");
+		setNotFoundPath(null);
 	}, []);
 	const open = useCallback((path: string, focusLine = 1, changeFileId: string | null = null) => {
 		nextSelectionIdRef.current += 1;
@@ -100,6 +104,7 @@ export function useSourceFileView({
 			path,
 			selectionId: nextSelectionIdRef.current,
 		});
+		setNotFoundPath(null);
 	}, []);
 	const retry = useCallback(() => {
 		setTarget((current) =>
@@ -146,16 +151,24 @@ export function useSourceFileView({
 					cacheRef.current.delete(oldest);
 				}
 				setLoaded({ response, selectionId: target.selectionId });
+				setNotFoundPath(null);
 			})
 			.catch((loadError) => {
 				if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+				if (loadError instanceof ApiError && loadError.status === 404) {
+					setNotFoundPath(target.path);
+					setError(
+						suppressNotFound ? "" : reportFailure(loadError, "Load source file", false).message,
+					);
+					return;
+				}
 				setError(reportFailure(loadError, "Load source file", false).message);
 			})
 			.finally(() => {
 				if (!controller.signal.aborted) setLoading(false);
 			});
 		return () => controller.abort();
-	}, [onRefreshChanges, operationRevision, reportFailure, repositoryId, target]);
+	}, [onRefreshChanges, operationRevision, reportFailure, repositoryId, suppressNotFound, target]);
 
 	const currentLoaded =
 		loaded?.response.repositoryId === repositoryId &&
@@ -176,6 +189,7 @@ export function useSourceFileView({
 		focusLine: currentLoaded?.response.focusLine ?? target?.focusLine ?? 1,
 		loadedSelectionId: currentLoaded?.selectionId ?? null,
 		loading,
+		notFoundPath,
 		open,
 		path: target?.path ?? null,
 		retry,

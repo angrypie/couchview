@@ -8,6 +8,7 @@ import { configureApiRuntime, resetApiRuntime } from "../api.ts";
 import { Text } from "../components/ui/text";
 import { useNativeServer } from "../features/nativeServers/NativeServerProvider.tsx";
 import { useNativeServerConnection } from "../features/nativeServers/useNativeServerConnection.ts";
+import { useWorkspacePosition } from "../features/workspacePosition/index.ts";
 import type { ProductRouteMode } from "./productRouteMode.ts";
 import { useProductRouteNavigation } from "./useProductRouteNavigation.ts";
 
@@ -58,7 +59,11 @@ export function NativeProductRoot({ mode }: { mode: Exclude<ProductRouteMode, "s
 	const activeProfileBaseUrl = activeProfile?.baseUrl ?? null;
 	const activeProfileId = activeProfile?.id ?? null;
 	const connection = useNativeServerConnection(activeProfile, profiles.update);
-	const navigation = useProductRouteNavigation(mode, activeProfile?.lastRepositoryId ?? null);
+	const workspacePosition = useWorkspacePosition({
+		legacyRepositoryId: activeProfile?.lastRepositoryId,
+		scope: activeProfile?.serverId ? `native:${activeProfile.serverId}` : null,
+	});
+	const navigation = useProductRouteNavigation(mode, workspacePosition.lastRepositoryId);
 	const [configuredProfileId, setConfiguredProfileId] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -94,8 +99,10 @@ export function NativeProductRoot({ mode }: { mode: Exclude<ProductRouteMode, "s
 					updatedAt: new Date().toISOString(),
 				});
 			},
+			shareBaseUrl: activeProfile?.baseUrl ?? null,
+			workspacePosition,
 		}),
-		[activeProfile, navigation, profiles, router],
+		[activeProfile, navigation, profiles, router, workspacePosition],
 	);
 
 	if (!profiles.hydrated) {
@@ -125,6 +132,9 @@ export function NativeProductRoot({ mode }: { mode: Exclude<ProductRouteMode, "s
 	}
 	if (configuredProfileId !== activeProfile.id) {
 		return <ConnectionState busy message={`Opening ${activeProfile.name}…`} title="Connecting" />;
+	}
+	if (!workspacePosition.hydrated) {
+		return <ConnectionState busy message="Reading saved workspace…" title="Opening Couchview" />;
 	}
 
 	return <App {...appNavigation} />;

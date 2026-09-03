@@ -108,6 +108,7 @@ describe("native client pairing and credentials", () => {
 		expect(service.authenticate(first.token).lastUsedAt).toBe("2026-08-05T12:11:00.000Z");
 
 		expect(service.revoke(first.device.id).revokedAt).toBe("2026-08-05T12:11:00.000Z");
+		expect(service.clients().map(({ label }) => label)).toEqual(["Tablet"]);
 		expect(() => service.authenticate(first.token)).toThrow(
 			expect.objectContaining({ code: "native_client_unauthorized" }),
 		);

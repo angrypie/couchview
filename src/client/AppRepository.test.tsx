@@ -9,6 +9,7 @@ import {
 	render,
 	repository,
 	screen,
+	viewerLineJumps,
 	waitFor,
 	within,
 } from "./appTestHarness.tsx";
@@ -101,6 +102,61 @@ describe("Couchview app repository workflows", () => {
 			"const value = load(newPath);",
 		);
 		expect(diffRequestCount("first")).toBe(1);
+	});
+
+	test("opens routed files at semantic lines and replaces the URL target on file navigation", async () => {
+		const locations: Array<{ anchor: null; path: string }> = [];
+		render(
+			<App
+				onReviewLocationChange={(location) =>
+					locations.push(location as { anchor: null; path: string })
+				}
+				requestedRepositoryId="repo"
+				requestedReviewLocation={{
+					anchor: { line: 1, side: "new" },
+					path: "src/second.ts",
+				}}
+			/>,
+		);
+
+		const currentFile = await screen.findByRole("region", { name: "Current file" });
+		await waitFor(() => expect(currentFile.textContent).toContain("src/second.ts"));
+		await waitFor(() =>
+			expect(viewerLineJumps).toContainEqual({
+				align: "start",
+				behavior: "instant",
+				lineNumber: 1,
+				side: "new",
+			}),
+		);
+		expect(locations).toEqual([]);
+
+		fireEvent.click(screen.getAllByRole("button", { name: "Previous file" })[0]!);
+		await waitFor(() => expect(currentFile.textContent).toContain("src/first.ts"));
+		expect(locations.at(-1)).toEqual({ anchor: null, path: "src/first.ts" });
+	});
+
+	test("copies a normal server link to the settled review line", async () => {
+		let copied = "";
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: {
+				writeText: async (value: string) => {
+					copied = value;
+				},
+			},
+		});
+		render(<App requestedRepositoryId="repo" shareBaseUrl="https://review.example.test/base" />);
+		await screen.findByTestId("pierre-code-view");
+		act(() => fixture.viewerVisibleLineChange?.(2, "new"));
+		fireEvent.click(screen.getByRole("button", { name: "Copy link to current line" }));
+
+		await waitFor(() =>
+			expect(copied).toBe(
+				"https://review.example.test/?repo=repo&file=src%2Ffirst.ts&line=2&side=new",
+			),
+		);
+		await screen.findByText("Link to current line copied");
 	});
 
 	test("does not reload the diff for duplicate SSE operation revisions", async () => {

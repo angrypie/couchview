@@ -1,4 +1,4 @@
-import { Settings2 } from "lucide-react-native";
+import { Link2, Settings2 } from "lucide-react-native";
 import { View } from "react-native";
 
 import type { FileChange, FileDiff } from "../../shared/contracts.ts";
@@ -9,6 +9,7 @@ interface CurrentFileBarProps {
 	activeFile: FileChange | null;
 	activePath: string | null;
 	diff: FileDiff | null;
+	onCopyLink: () => void;
 	onOpenSettings: () => void;
 	readOnly: boolean;
 	visible: boolean;
@@ -18,6 +19,7 @@ export function CurrentFileBar({
 	activeFile,
 	activePath,
 	diff,
+	onCopyLink,
 	onOpenSettings,
 	readOnly,
 	visible,
@@ -63,6 +65,14 @@ export function CurrentFileBar({
 					</View>
 				) : null}
 			</View>
+			<IconButton
+				accessibilityLabel="Copy link to current line"
+				disabled={!activePath}
+				icon={Link2}
+				onPress={onCopyLink}
+				size="sm"
+				variant="ghost"
+			/>
 			<IconButton
 				accessibilityLabel="Open settings"
 				icon={Settings2}

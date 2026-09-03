@@ -64,6 +64,7 @@ export class NativeClientDatabase {
 			.query<NativeClientRow, []>(`
         SELECT id, label, token_hash, created_at, last_used_at, revoked_at
         FROM native_clients
+        WHERE revoked_at IS NULL
         ORDER BY created_at, id
       `)
 			.all()

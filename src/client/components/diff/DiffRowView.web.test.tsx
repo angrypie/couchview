@@ -297,6 +297,9 @@ describe("DiffRowView web DOM", () => {
 			/>,
 		);
 		const wrappedText = container.querySelector<HTMLElement>("[data-line-text]");
+		const wrappedLineNumber = getByTestId("new-line-10");
+		expect(wrappedLineNumber.parentElement?.style.flexDirection).toBe("column");
+		expect(wrappedLineNumber.parentElement?.style.justifyContent).toBe("flex-start");
 		expect(wrappedText?.style.whiteSpace).toBe("pre-wrap");
 		expect(wrappedText?.style.wordWrap).toBe("break-word");
 		expect(wrappedText?.textContent).toBe(context.text);

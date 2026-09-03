@@ -58,6 +58,7 @@ mock.module("lucide-react-native", () => ({
 	Laptop: NullIcon,
 	ListFilter: NullIcon,
 	ListTree: NullIcon,
+	Link2: NullIcon,
 	LoaderCircle: NullIcon,
 	LogIn: NullIcon,
 	Menu: NullIcon,

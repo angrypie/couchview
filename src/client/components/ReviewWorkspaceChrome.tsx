@@ -135,6 +135,7 @@ export function ReviewWorkspaceChrome({
 					onFontSizeChange={display.setFontSize}
 					onLineNumbersChange={display.setLineNumbersVisible}
 					onLineWrapChange={display.setLineWrapEnabled}
+					onCopyLink={workflow.copyCurrentLink}
 					onNavigateHunk={diff.navigateHunk}
 					onOpenCommandPalette={onOpenCommandPalette}
 					onOpenDrawer={() => onDrawerOpenChange(true)}
@@ -171,6 +172,7 @@ export function ReviewWorkspaceChrome({
 					activeFile={diff.activeFile}
 					activePath={diff.activePath}
 					diff={diff.diff}
+					onCopyLink={workflow.copyCurrentLink}
 					onOpenSettings={onOpenSettings}
 					readOnly={diff.readOnly}
 					visible={!compactLandscape}

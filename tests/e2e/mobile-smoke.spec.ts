@@ -126,6 +126,30 @@ test.describe("mobile fixture review", () => {
 		await expect(page.getByRole("region", { name: "Unified diff" })).toBeVisible();
 	});
 
+	test("keeps the Settings toolbar and stacked cards compact", async ({ page }, testInfo) => {
+		test.skip(
+			testInfo.project.name !== "mobile-430-chromium",
+			"One narrow viewport covers Settings responsive spacing.",
+		);
+		await page.goto("/settings");
+		const settings = page.getByRole("region", { name: "Settings" });
+		const toolbar = settings.getByRole("toolbar");
+		await expect(toolbar).toBeVisible();
+		const toolbarBounds = await toolbar.boundingBox();
+		expect(toolbarBounds).not.toBeNull();
+		expect(toolbarBounds!.height).toBeLessThanOrEqual(56);
+
+		const wrapLongLines = settings.getByRole("switch", { name: "Wrap long lines" });
+		const codexHeading = settings.getByRole("heading", { name: "Codex generation" });
+		const [wrapBounds, codexBounds] = await Promise.all([
+			wrapLongLines.boundingBox(),
+			codexHeading.boundingBox(),
+		]);
+		expect(wrapBounds).not.toBeNull();
+		expect(codexBounds).not.toBeNull();
+		expect(codexBounds!.y - (wrapBounds!.y + wrapBounds!.height)).toBeLessThanOrEqual(120);
+	});
+
 	test("uses mobile terminal helper keys and a one-shot Ctrl modifier", async ({
 		page,
 		request,
@@ -767,10 +791,14 @@ test.describe("mobile fixture review", () => {
 		await expect(picker).toContainText("/fixtures/design-system");
 		await picker.getByRole("button", { name: "design-system, /fixtures/design-system" }).click();
 		await expect(repositoryButton).toContainText("design-system");
-		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+		await expect
+			.poll(() => Object.fromEntries(new URL(page.url()).searchParams))
+			.toEqual({ file: "src/review.ts", repo: "fixture-repository-two" });
 
 		await page.goBack();
-		await expect(page).toHaveURL(/\?repo=fixture-repository$/);
+		await expect
+			.poll(() => Object.fromEntries(new URL(page.url()).searchParams))
+			.toEqual({ file: "src/review.ts", repo: "fixture-repository" });
 		await expect(repositoryButton).toContainText("sample-project");
 
 		const secondTab = await context.newPage();
@@ -780,6 +808,67 @@ test.describe("mobile fixture review", () => {
 		);
 		await expect(repositoryButton).toContainText("sample-project");
 		await secondTab.close();
+	});
+
+	test("persists review locations in IndexedDB and opens stable file links", async ({
+		context,
+		page,
+	}, testInfo) => {
+		test.skip(
+			testInfo.project.name !== "mobile-430-chromium",
+			"One Chromium browser covers IndexedDB, history, and clipboard links.",
+		);
+		await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+		const currentFile = await openFixture(page);
+		const actions = page.getByRole("navigation", { name: "Review actions" });
+		const historyLength = await page.evaluate(() => window.history.length);
+
+		await actions.getByRole("button", { name: "Next file" }).click();
+		await expect(currentFile).toContainText("src/format.ts");
+		await expect
+			.poll(() => {
+				const url = new URL(page.url());
+				return {
+					file: url.searchParams.get("file"),
+					repo: url.searchParams.get("repo"),
+				};
+			})
+			.toEqual({ file: "src/format.ts", repo: "fixture-repository" });
+		expect(await page.evaluate(() => window.history.length)).toBe(historyLength);
+
+		await expect
+			.poll(() =>
+				page.evaluate(async () => {
+					const request = indexedDB.open("couchview");
+					const database = await new Promise<IDBDatabase>((resolve, reject) => {
+						request.onsuccess = () => resolve(request.result);
+						request.onerror = () => reject(request.error);
+					});
+					const transaction = database.transaction("values", "readonly");
+					const read = transaction.objectStore("values").get("couchview.workspace-position.v1");
+					const serialized = await new Promise<string | undefined>((resolve, reject) => {
+						read.onsuccess = () => resolve(read.result);
+						read.onerror = () => reject(read.error);
+					});
+					database.close();
+					if (!serialized) return null;
+					const state = JSON.parse(serialized);
+					return state.servers[`web:${location.origin}`]?.repositories["fixture-repository"]?.path;
+				}),
+			)
+			.toBe("src/format.ts");
+
+		await page.goto("/");
+		await expect(currentFile).toContainText("src/format.ts");
+		await page.goto("/?repo=fixture-repository");
+		await expect(currentFile).toContainText("src/review.ts");
+
+		await page.goto("/?repo=fixture-repository&file=src%2Fformat.ts&line=1&side=new");
+		await expect(currentFile).toContainText("src/format.ts");
+		await page.getByRole("button", { name: "Copy link to current line" }).click();
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+			.toMatch(/\?repo=fixture-repository&file=src%2Fformat\.ts&line=1&side=new$/);
 	});
 
 	test("landscape phones keep the viewer full width while the drawer overlays it", async ({

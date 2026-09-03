@@ -83,7 +83,9 @@ test.describe("repository projects", () => {
 		await expect(page.getByRole("button", { name: "Select repository" })).toContainText(
 			"design-system",
 		);
-		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+		await expect
+			.poll(() => Object.fromEntries(new URL(page.url()).searchParams))
+			.toEqual({ file: "src/review.ts", repo: "fixture-repository-two" });
 		expect(submittedRoot).toBe("/fixtures/design-system");
 	});
 });

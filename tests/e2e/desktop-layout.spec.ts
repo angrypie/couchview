@@ -86,7 +86,9 @@ test.describe("desktop review layout", () => {
 		await page.keyboard.press("p");
 		await picker.getByRole("textbox", { name: "Search projects" }).fill("design");
 		await page.keyboard.press("Enter");
-		await expect(page).toHaveURL(/\?repo=fixture-repository-two$/);
+		await expect
+			.poll(() => Object.fromEntries(new URL(page.url()).searchParams))
+			.toEqual({ file: "src/review.ts", repo: "fixture-repository-two" });
 		await expect(page.getByRole("button", { name: "Select repository" })).toContainText(
 			"design-system",
 		);

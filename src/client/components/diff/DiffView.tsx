@@ -42,7 +42,12 @@ function navigationCommand(
 		const y = scene.queries.offsetForHunk(request.hunkIndex, scene.viewport.height);
 		return y === null ? null : { behavior: "smooth", y };
 	}
-	const y = scene.queries.offsetForLine(request.target, scene.viewport.height);
+	const y =
+		scene.queries.offsetForLine(request.target, scene.viewport.height) ??
+		scene.queries.offsetForLine(
+			{ ...request.target, side: request.target.side === "new" ? "old" : "new" },
+			scene.viewport.height,
+		);
 	if (y === null) return null;
 	return {
 		behavior: request.target.behavior === "instant" ? "instant" : "smooth",

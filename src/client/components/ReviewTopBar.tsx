@@ -4,6 +4,7 @@ import {
 	ChevronUp,
 	GitBranch,
 	GitGraph,
+	Link2,
 	Menu,
 	Minus,
 	MonitorUp,
@@ -43,6 +44,7 @@ interface ReviewTopBarProps {
 	onFontSizeChange: (fontSize: number) => void;
 	onLineNumbersChange: (visible: boolean) => void;
 	onLineWrapChange: (enabled: boolean) => void;
+	onCopyLink: () => void;
 	onNavigateHunk: (direction: -1 | 1) => void;
 	onOpenCommandPalette: () => void;
 	onOpenDrawer: () => void;
@@ -147,6 +149,7 @@ export function ReviewTopBar({
 	onFontSizeChange,
 	onLineNumbersChange,
 	onLineWrapChange,
+	onCopyLink,
 	onNavigateHunk,
 	onOpenCommandPalette,
 	onOpenDrawer,
@@ -320,12 +323,21 @@ export function ReviewTopBar({
 					variant={terminalActive ? "secondary" : "ghost"}
 				/>
 				{compactLandscape ? (
-					<IconButton
-						accessibilityLabel="Open settings"
-						icon={Settings2}
-						onPress={onOpenSettings}
-						size="sm"
-					/>
+					<>
+						<IconButton
+							accessibilityLabel="Copy link to current line"
+							disabled={!activePath}
+							icon={Link2}
+							onPress={onCopyLink}
+							size="sm"
+						/>
+						<IconButton
+							accessibilityLabel="Open settings"
+							icon={Settings2}
+							onPress={onOpenSettings}
+							size="sm"
+						/>
+					</>
 				) : null}
 				<View accessibilityLabel="Diff display controls" className="flex-row items-center gap-1">
 					<Button

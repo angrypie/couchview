@@ -86,6 +86,7 @@ const focusedSource: SourceFileResponse = {
 let controller: DiffController | null = null;
 let sourceRequests = 0;
 const lineJumps: ViewerLineTarget[] = [];
+const openedFiles: Array<{ fileId: string | null; path: string; updateRoute: boolean }> = [];
 const viewer: DiffViewerHandle = {
 	scrollToHunk: () => undefined,
 	scrollToLine: (target) => lineJumps.push(target),
@@ -94,9 +95,15 @@ const viewer: DiffViewerHandle = {
 const onRefreshChanges = async () => undefined;
 const reportFailure = (error: unknown, context: string) => failureOf(error, context);
 
-function DiffHarness() {
+function DiffHarness({
+	initialLocation = null,
+}: {
+	initialLocation?: Parameters<typeof useDiffReview>[0]["initialLocation"];
+}) {
 	controller = useDiffReview({
 		files: [changedFile],
+		initialLocation,
+		onFileOpened: (path, fileId, updateRoute) => openedFiles.push({ fileId, path, updateRoute }),
 		onFileSelected: () => undefined,
 		onRefreshChanges,
 		operationRevision: "operation-one",
@@ -118,6 +125,7 @@ afterEach(() => {
 	controller = null;
 	sourceRequests = 0;
 	lineJumps.length = 0;
+	openedFiles.length = 0;
 });
 
 describe("main-view search navigation", () => {
@@ -156,5 +164,36 @@ describe("main-view search navigation", () => {
 				side: "new",
 			}),
 		);
+	});
+
+	test("falls back silently when a device-saved source path disappeared", async () => {
+		configureApiRuntime({
+			fetch: async (input) => {
+				const url = new URL(String(input), "http://127.0.0.1");
+				if (url.pathname.endsWith("/diff")) return Response.json({ diff: boundedDiff });
+				return Response.json(
+					{ error: { code: "not_found", message: "File does not exist" } },
+					{ status: 404 },
+				);
+			},
+		});
+		render(
+			<DiffHarness
+				initialLocation={{
+					fallbackOnMissing: true,
+					location: { anchor: { line: 80, side: "new" }, path: "src/deleted.ts" },
+					updateRoute: true,
+				}}
+			/>,
+		);
+
+		await waitFor(() => expect(currentController().activePath).toBe(changedFile.path));
+		await waitFor(() => expect(currentController().diff?.fileId).toBe(changedFile.id));
+		expect(currentController().error).toBe("");
+		expect(openedFiles).toContainEqual({
+			fileId: changedFile.id,
+			path: changedFile.path,
+			updateRoute: true,
+		});
 	});
 });

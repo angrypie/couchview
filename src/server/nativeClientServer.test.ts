@@ -146,6 +146,8 @@ describe("native client HTTP authority", () => {
 			headers: { origin: baseUrl, [CSRF_HEADER]: bootstrap.csrfToken },
 		});
 		expect(revoked.status).toBe(204);
+		const pairedClients = await fetch(`${baseUrl}${API_ROUTES.nativeClients}`);
+		expect(await pairedClients.json()).toEqual({ devices: [] });
 		expect(
 			await fetch(`${baseUrl}${API_ROUTES.instance}`, { headers: nativeHeaders }),
 		).toMatchObject({ status: 401 });

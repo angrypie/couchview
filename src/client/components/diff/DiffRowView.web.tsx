@@ -151,7 +151,8 @@ function LineNumber({
 				boxSizing: "border-box",
 				display: "flex",
 				flex: 1,
-				justifyContent: "center",
+				flexDirection: "column",
+				justifyContent: "flex-start",
 				paddingLeft: layout.gutterPadding,
 				paddingRight: layout.gutterPadding,
 			}}

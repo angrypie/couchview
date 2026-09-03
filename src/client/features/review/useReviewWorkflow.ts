@@ -10,37 +10,64 @@ import { useRepositoryEvents } from "../repositories/useRepositoryEvents.ts";
 import type { useRepositoryWorkspace } from "../repositories/useRepositoryWorkspace.ts";
 import { useRepositorySearch } from "../search/useRepositorySearch.ts";
 import { useStagingWorkflow } from "../staging/useStagingWorkflow.ts";
+import type { ReviewLocation, WorkspacePositionController } from "../workspacePosition/index.ts";
 import { useDiffReview } from "./useDiffReview.ts";
+import { useReviewLocation } from "./useReviewLocation.ts";
 import type { UndoReview } from "./useReviewStatus.ts";
 import { useReviewStatus } from "./useReviewStatus.ts";
 
 interface UseReviewWorkflowOptions {
+	active?: boolean;
 	closeDrawer: () => void;
 	commitMessageCapability: CommitMessageCapability;
 	codexPreferences: CodexGenerationPreferences;
 	dismissToast: () => void;
+	onReviewLocationChange?: (location: ReviewLocation) => void;
 	onShowReview: () => boolean;
 	refreshPackageScripts: () => Promise<unknown>;
 	reportFailure: (error: unknown, context: string) => FailureState;
 	showToast: (message: string, undo?: UndoReview, details?: boolean) => void;
+	requestedReviewLocation?: ReviewLocation | null;
+	restoreSavedReviewPosition?: boolean;
+	shareBaseUrl?: string | null;
 	stagedCount: number;
 	workspace: ReturnType<typeof useRepositoryWorkspace>;
+	workspacePosition?: WorkspacePositionController | null;
 }
 
 export function useReviewWorkflow({
+	active = true,
 	closeDrawer,
 	commitMessageCapability,
 	codexPreferences,
 	dismissToast,
+	onReviewLocationChange,
 	onShowReview,
 	refreshPackageScripts,
 	reportFailure,
 	showToast,
+	requestedReviewLocation,
+	restoreSavedReviewPosition,
+	shareBaseUrl,
 	stagedCount,
 	workspace,
+	workspacePosition,
 }: UseReviewWorkflowOptions) {
+	const reviewLocation = useReviewLocation({
+		active,
+		onReviewLocationChange,
+		repositoryId: workspace.repositoryId,
+		requestedLocation: requestedReviewLocation,
+		restoreSavedPosition: restoreSavedReviewPosition,
+		shareBaseUrl,
+		showToast,
+		workspacePosition,
+	});
 	const diff = useDiffReview({
 		files: workspace.files,
+		initialLocation: reviewLocation.initialLocation,
+		onAnchorChanged: reviewLocation.onAnchorChanged,
+		onFileOpened: reviewLocation.onFileOpened,
 		onFileSelected: closeDrawer,
 		onRefreshChanges: workspace.refreshChanges,
 		operationRevision: workspace.operationRevision,
@@ -132,6 +159,7 @@ export function useReviewWorkflow({
 
 	return {
 		commit,
+		copyCurrentLink: () => void reviewLocation.copyLink(diff.activePath, diff.visibleAnchor),
 		diff,
 		review,
 		search,

@@ -104,15 +104,10 @@ export function useDiffGeometry({
 		const contentWidth = lineWrapEnabled
 			? viewportWidth || 0
 			: Math.max(viewportWidth || 0, fixedContentWidth);
-		const availableColumns = Math.max(
-			1,
-			Math.floor(
-				(Math.max(viewportWidth, gutterWidth + contentPadding * 2 + 1) -
-					gutterWidth -
-					contentPadding * 2) /
-					charStride,
-			),
-		);
+		const availableColumns =
+			viewportWidth > 0
+				? Math.max(1, Math.floor((viewportWidth - gutterWidth - contentPadding * 2) / charStride))
+				: Math.max(1, maxColumns);
 		const rowHeights: number[] = new Array(rows.length);
 		const rowOffsets: number[] = new Array(rows.length);
 		let offset = 0;

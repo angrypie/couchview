@@ -10,6 +10,7 @@ import {
 import type { FileChange, FileDiff } from "../../../shared/contracts.ts";
 import { api } from "../../api.ts";
 import type { FailureState } from "../../lib/failures.ts";
+import type { ReviewLineAnchor } from "../workspacePosition/index.ts";
 import { diffCacheKey, readCachedDiff, rememberDiff } from "./diffCache.ts";
 import {
 	navigationAtHunk,
@@ -19,10 +20,19 @@ import {
 	type SelectableSide,
 } from "./diffModel.ts";
 import type { DiffViewerHandle } from "./types.ts";
+import { useDiffPrefetch } from "./useDiffPrefetch.ts";
+import {
+	type InitialReviewLocation,
+	type PendingLineNavigation,
+	useReviewLocationRestoration,
+} from "./useReviewLocationRestoration.ts";
 import { useSourceFileView } from "./useSourceFileView.ts";
 
 interface UseDiffReviewOptions {
 	files: FileChange[];
+	initialLocation?: InitialReviewLocation | null;
+	onAnchorChanged?: (path: string, anchor: ReviewLineAnchor) => void;
+	onFileOpened?: (path: string, fileId: string | null, updateRoute: boolean) => void;
 	onFileSelected: () => void;
 	onRefreshChanges: () => Promise<unknown>;
 	operationRevision: string;
@@ -47,6 +57,9 @@ function diffContainsNewLine(diff: FileDiff, lineNumber: number): boolean {
 
 export function useDiffReview({
 	files,
+	initialLocation = null,
+	onAnchorChanged,
+	onFileOpened,
 	onFileSelected,
 	onRefreshChanges,
 	operationRevision,
@@ -58,20 +71,21 @@ export function useDiffReview({
 	const [error, setError] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [hunkNavigation, setHunkNavigation] = useState(navigationBeforeFirstHunk);
-	const [lineNavigation, setLineNavigation] = useState<{ line: number; path: string } | null>(null);
+	const [lineNavigation, setLineNavigation] = useState<PendingLineNavigation | null>(null);
+	const [visibleAnchor, setVisibleAnchor] = useState<ReviewLineAnchor | null>(null);
 	const viewerRef = useRef<DiffViewerHandle>(null);
 	const source = useSourceFileView({
 		onRefreshChanges,
 		operationRevision,
 		reportFailure,
 		repositoryId,
+		suppressNotFound: initialLocation?.fallbackOnMissing,
 	});
 	const currentFileIdRef = useRef(currentFileId);
 	const repositoryIdRef = useRef(repositoryId);
 	const filesRef = useRef(files);
 	const diffRef = useRef(diff);
 	const cacheRef = useRef(new Map<string, FileDiff>());
-	const prefetchRef = useRef(new Map<string, Promise<FileDiff | null>>());
 	const requestRef = useRef<{
 		generation: number;
 		controller: AbortController;
@@ -85,6 +99,14 @@ export function useDiffReview({
 	repositoryIdRef.current = repositoryId;
 	filesRef.current = files;
 	diffRef.current = diff;
+	const prefetchRef = useDiffPrefetch({
+		cacheRef,
+		currentFileId,
+		files,
+		repositoryId,
+		repositoryIdRef,
+		repositoryRequestRef,
+	});
 
 	const setCurrentFileId = useCallback((value: SetStateAction<string | null>) => {
 		setCurrentFileIdState((current) => {
@@ -104,6 +126,7 @@ export function useDiffReview({
 		setDiff(null);
 		setError("");
 		setLoading(false);
+		setVisibleAnchor(null);
 		pendingHunkNavigationRef.current = null;
 		setHunkNavigation(navigationBeforeFirstHunk());
 		return () => {
@@ -132,12 +155,20 @@ export function useDiffReview({
 	const rows = useMemo(() => rowsForDiff(displayDiff), [displayDiff]);
 	const activePath = source.path ?? selectedFile?.path ?? null;
 
-	useEffect(() => {
-		setCurrentFileId((current) => {
-			if (current && files.some((file) => file.id === current)) return current;
-			return files.find((file) => !file.reviewed)?.id ?? files[0]?.id ?? null;
-		});
-	}, [files, setCurrentFileId]);
+	useReviewLocationRestoration({
+		closeSource: source.close,
+		currentFileId,
+		files,
+		initialLocation,
+		notFoundPath: source.notFoundPath,
+		onFileOpened,
+		openSource: source.open,
+		operationRevision,
+		repositoryId,
+		setCurrentFileId,
+		setLineNavigation,
+		setVisibleAnchor,
+	});
 	const hunkCount = diff?.hunks.length ?? 0;
 	const canNavigatePreviousHunk =
 		!source.path && hunkNavigation.previous !== null && hunkNavigation.previous < hunkCount;
@@ -148,40 +179,6 @@ export function useDiffReview({
 		diffRef.current = nextDiff;
 		setDiff(nextDiff);
 	}, []);
-
-	const prefetchDiff = useCallback(
-		(activeRepositoryId: string, file: FileChange): Promise<FileDiff | null> => {
-			const cached = readCachedDiff(cacheRef.current, activeRepositoryId, file);
-			if (cached) {
-				return Promise.resolve(cached);
-			}
-			const key = diffCacheKey(activeRepositoryId, file.id, file.contentRevision);
-			const existing = prefetchRef.current.get(key);
-			if (existing) return existing;
-
-			let pending: Promise<FileDiff | null>;
-			pending = api
-				.diff(activeRepositoryId, file.id, repositoryRequestRef.current?.signal)
-				.then((response) => {
-					if (
-						repositoryIdRef.current !== activeRepositoryId ||
-						response.diff.fileId !== file.id ||
-						response.diff.contentRevision !== file.contentRevision
-					) {
-						return null;
-					}
-					rememberDiff(cacheRef.current, activeRepositoryId, response.diff);
-					return response.diff;
-				})
-				.catch(() => null)
-				.finally(() => {
-					if (prefetchRef.current.get(key) === pending) prefetchRef.current.delete(key);
-				});
-			prefetchRef.current.set(key, pending);
-			return pending;
-		},
-		[],
-	);
 
 	const loadDiff = useCallback(
 		async (fileId: string, resetPosition = false, fileOverride?: FileChange) => {
@@ -269,29 +266,19 @@ export function useDiffReview({
 		};
 	}, [currentFileId, loadDiff, setDiffState]);
 
-	useEffect(() => {
-		if (!repositoryId || !currentFileId) return;
-		const index = files.findIndex((file) => file.id === currentFileId);
-		if (index < 0) return;
-		const neighbors = [files[index + 1], files[index - 1]].filter((file): file is FileChange =>
-			Boolean(file),
-		);
-		const timeout = setTimeout(() => {
-			if (repositoryIdRef.current !== repositoryId) return;
-			for (const file of neighbors) void prefetchDiff(repositoryId, file);
-		}, 0);
-		return () => clearTimeout(timeout);
-	}, [currentFileId, files, prefetchDiff, repositoryId]);
-
 	const selectFile = useCallback(
 		(fileId: string) => {
+			const file = filesRef.current.find((candidate) => candidate.id === fileId);
+			if (!file) return;
 			source.close();
 			setLineNavigation(null);
+			setVisibleAnchor(null);
 			setCurrentFileId(fileId);
+			onFileOpened?.(file.path, file.id, true);
 			onFileSelected();
 			viewerRef.current?.scrollToTop();
 		},
-		[onFileSelected, source.close],
+		[onFileOpened, onFileSelected, source.close],
 	);
 	const openPathAtLine = useCallback(
 		(path: string, line = 1) => {
@@ -299,14 +286,16 @@ export function useDiffReview({
 			const changedFile = filesRef.current.find((file) => file.path === path);
 			if (changedFile) {
 				selectFile(changedFile.id);
-				setLineNavigation({ line: safeLine, path });
+				setLineNavigation({ allowSource: true, line: safeLine, path, side: "new" });
 				return;
 			}
-			setLineNavigation({ line: safeLine, path });
+			setVisibleAnchor(null);
+			setLineNavigation({ allowSource: false, line: safeLine, path, side: "new" });
 			source.open(path, safeLine);
+			onFileOpened?.(path, null, true);
 			onFileSelected();
 		},
-		[onFileSelected, selectFile, source.open],
+		[onFileOpened, onFileSelected, selectFile, source.open],
 	);
 
 	const navigateFile = useCallback(
@@ -338,6 +327,10 @@ export function useDiffReview({
 
 	const handleVisibleLineChange = useCallback(
 		(lineNumber: number, side: SelectableSide) => {
+			const path = source.path ?? selectedFile?.path ?? null;
+			const anchor = { line: lineNumber, side };
+			setVisibleAnchor(anchor);
+			if (path) onAnchorChanged?.(path, anchor);
 			if (source.path) return;
 			const hunks = diff?.hunks ?? [];
 			const next = navigationAtVisibleLine(hunks, lineNumber, side);
@@ -352,7 +345,7 @@ export function useDiffReview({
 				current.previous === next.previous && current.next === next.next ? current : next,
 			);
 		},
-		[diff, source.path],
+		[diff, onAnchorChanged, selectedFile?.path, source.path],
 	);
 
 	useLayoutEffect(() => {
@@ -363,7 +356,12 @@ export function useDiffReview({
 		) {
 			return;
 		}
-		if (!source.path && !diffContainsNewLine(displayDiff, lineNavigation.line)) {
+		if (
+			lineNavigation.allowSource &&
+			lineNavigation.side === "new" &&
+			!source.path &&
+			!diffContainsNewLine(displayDiff, lineNavigation.line)
+		) {
 			source.open(lineNavigation.path, lineNavigation.line, displayDiff.fileId);
 			return;
 		}
@@ -372,7 +370,7 @@ export function useDiffReview({
 			align: targetLine === 1 ? "start" : "center",
 			behavior: "instant",
 			lineNumber: targetLine,
-			side: "new",
+			side: source.path ? "new" : lineNavigation.side,
 		});
 		setLineNavigation(null);
 	}, [
@@ -412,6 +410,7 @@ export function useDiffReview({
 		selectFile,
 		setCurrentFileId,
 		setDiff: setDiffState,
+		visibleAnchor,
 		viewerRef,
 	};
 }

@@ -9,20 +9,16 @@ import { useToastNotifications } from "./features/notifications/useToastNotifica
 import { usePackageRuns } from "./features/packages/usePackageRuns.ts";
 import { usePwaUpdate } from "./features/pwa/usePwaUpdate";
 import { useRepositoryManagement } from "./features/repositories/useRepositoryManagement.ts";
-import {
-	type RepositoryHistoryMode,
-	useRepositoryWorkspace,
-} from "./features/repositories/useRepositoryWorkspace.ts";
+import { useRepositoryWorkspace } from "./features/repositories/useRepositoryWorkspace.ts";
 import { useReviewWorkflow } from "./features/review/useReviewWorkflow.ts";
 import { useAppTheme } from "./features/settings/ThemeProvider.tsx";
 import { useDisplayPreferences } from "./features/settings/useDisplayPreferences.ts";
 import { useSettingsProfiles } from "./features/settings/useSettingsProfiles.ts";
+import type { AppRouteConfiguration } from "./features/shell/appRouteConfiguration.ts";
+import { resolveHostCapabilities } from "./features/shell/hostCapabilities.ts";
 import { useApplicationShellState } from "./features/shell/useApplicationShellState.ts";
 import { useReviewShellCommands } from "./features/shell/useReviewShellCommands.ts";
-import {
-	useWorkspaceNavigation,
-	type WorkspaceMode,
-} from "./features/shell/useWorkspaceNavigation.ts";
+import { useWorkspaceNavigation } from "./features/shell/useWorkspaceNavigation.ts";
 import { SpeechProvider } from "./features/speech/index.ts";
 import { useChangedFileFilters } from "./features/staging/useChangedFileFilters.ts";
 import {
@@ -31,6 +27,7 @@ import {
 	useVoiceCommands,
 	withVoiceCommandCapability,
 } from "./features/voiceCommands/index.ts";
+import { useRememberOpenedRepository } from "./features/workspacePosition/index.ts";
 import { useWorkspaceLayout } from "./lib/mediaQuery.ts";
 
 type VoiceCommandApplicationProps = Omit<CouchviewApplicationViewProps, "voiceCommands"> & {
@@ -45,23 +42,7 @@ function VoiceCommandApplication({
 	return <CouchviewApplicationView {...viewProps} voiceCommands={voiceCommands} />;
 }
 
-export interface AppRouteConfiguration {
-	accessRefreshAttempted?: boolean;
-	initialMode?: WorkspaceMode;
-	nativeServerManagerUrl?: string | null;
-	onAccessRefreshHandled?: () => void;
-	onNavigate?: (mode: WorkspaceMode, replace?: boolean) => void;
-	onManageServers?: () => void;
-	onReload?: () => void;
-	onTerminalLatencyChange?: (enabled: boolean) => void | Promise<void>;
-	onSettingsDirtyChange?: (dirty: boolean) => void;
-	onRepositorySelection?: (
-		repositoryId: string | null,
-		historyMode: Exclude<RepositoryHistoryMode, "none">,
-	) => void;
-	requestedRepositoryId?: string | null;
-	terminalLatencyEnabled?: boolean;
-}
+export type { AppRouteConfiguration } from "./features/shell/appRouteConfiguration.ts";
 
 export function App({
 	accessRefreshAttempted,
@@ -74,8 +55,13 @@ export function App({
 	onTerminalLatencyChange,
 	onSettingsDirtyChange,
 	onRepositorySelection,
+	onReviewLocationChange,
 	requestedRepositoryId,
+	requestedReviewLocation,
+	restoreSavedReviewPosition,
+	shareBaseUrl,
 	terminalLatencyEnabled,
+	workspacePosition,
 }: AppRouteConfiguration = {}) {
 	const theme = useAppTheme();
 	const workspace = useRepositoryWorkspace({
@@ -99,6 +85,11 @@ export function App({
 		repositoryLoading,
 		setBootstrap,
 	} = workspace;
+	useRememberOpenedRepository(
+		workspacePosition,
+		repositoryId,
+		phase === "ready" && !repositoryLoading && repository !== null,
+	);
 	const notifications = useToastNotifications();
 	const { dismissToast, showToast } = notifications;
 	const repositoryManagement = useRepositoryManagement({
@@ -110,29 +101,8 @@ export function App({
 		refreshRepositories,
 		showToast,
 	});
-	const commitMessageCapability = bootstrap?.commitMessage ?? {
-		available: false,
-		reason: "Commit message generation is unavailable from this Couchview server.",
-	};
-	const terminalCapability = bootstrap?.terminal ?? {
-		available: false,
-		reason: "The browser tmux terminal is unavailable from this Couchview server.",
-		persistence: "tmux" as const,
-		profiles: [],
-	};
-	const remoteBridgeCapability = bootstrap?.remoteBridge ?? {
-		available: false,
-		reason: "Native remote development is unavailable from this Couchview server.",
-		p2pEnabled: false,
-	};
-	const speechCapability = bootstrap?.speech ?? {
-		enabled: false,
-		ready: false,
-		model: "parakeet-tdt-0.6b-v3-int8",
-		maxDurationMs: 300_000,
-		maxUploadBytes: 32 * 1024 * 1024,
-		reason: "Host speech transcription is unavailable from this Couchview server.",
-	};
+	const { commitMessageCapability, remoteBridgeCapability, speechCapability, terminalCapability } =
+		resolveHostCapabilities(bootstrap);
 	const navigation = useWorkspaceNavigation({
 		bootstrap,
 		initialMode,
@@ -203,16 +173,22 @@ export function App({
 	const fileFilters = useChangedFileFilters(files);
 	const { stagedCount } = fileFilters;
 	const workflow = useReviewWorkflow({
+		active: navigation.mode === "review",
 		closeDrawer: shell.closeDrawer,
 		commitMessageCapability,
 		codexPreferences: settings.activeProfile.data.codex,
 		dismissToast,
+		onReviewLocationChange,
 		onShowReview: navigation.showReview,
 		refreshPackageScripts: packageWorkflow.refreshScripts,
 		reportFailure: failureReporting.reportFailure,
 		showToast,
+		requestedReviewLocation,
+		restoreSavedReviewPosition,
+		shareBaseUrl,
 		stagedCount,
 		workspace,
+		workspacePosition,
 	});
 	const { commit, review, staging } = workflow;
 

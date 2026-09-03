@@ -1,4 +1,5 @@
 import * as Linking from "expo-linking";
+import { ArrowLeft } from "lucide-react-native";
 
 import {
 	COMMAND_IDS,
@@ -29,6 +30,7 @@ import {
 	Divider,
 	Heading,
 	HStack,
+	IconButton,
 	Radio,
 	RadioGroup,
 	ScrollScreen,
@@ -145,11 +147,9 @@ function SettingsToolbar({
 	editor: ProfileSettingsEditor;
 }) {
 	return (
-		<Toolbar className="flex-wrap" placement="inline">
-			<Button onPress={editor.close} size="sm" variant="ghost">
-				Review
-			</Button>
-			<Heading className="px-1" level={2}>
+		<Toolbar className="gap-1 px-2" placement="inline">
+			<IconButton accessibilityLabel="Review" icon={ArrowLeft} onPress={editor.close} size="sm" />
+			<Heading className="px-1" level={3}>
 				Settings
 			</Heading>
 			<ToolbarSpacer className="min-w-2" />
@@ -169,13 +169,19 @@ function SettingsToolbar({
 				size="sm"
 				variant="ghost"
 			>
-				Commands · {commandPaletteShortcut}
+				{commandPaletteShortcut}
 			</Button>
 			<Button disabled={!editor.dirty || busy} onPress={editor.discard} size="sm" variant="outline">
 				Discard
 			</Button>
-			<Button disabled={!editor.dirty} loading={busy} onPress={() => void editor.save()} size="sm">
-				Save changes
+			<Button
+				accessibilityLabel="Save changes"
+				disabled={!editor.dirty}
+				loading={busy}
+				onPress={() => void editor.save()}
+				size="sm"
+			>
+				Save
 			</Button>
 		</Toolbar>
 	);
@@ -574,11 +580,11 @@ export function ProfileSettingsPage(props: ProfileSettingsPageProps) {
 				/>
 				<ProfilePicker editor={editor} profile={props.profile} profiles={props.profiles} />
 				<VStack className="gap-4 lg:flex-row lg:items-start">
-					<VStack className="min-w-0 flex-1" space="lg">
+					<VStack className="min-w-0 lg:flex-1" space="lg">
 						<AppearanceSettingsCard editor={editor} theme={props.theme} />
 						<DisplaySettingsCard editor={editor} />
 					</VStack>
-					<VStack className="min-w-0 flex-1" space="lg">
+					<VStack className="min-w-0 lg:flex-1" space="lg">
 						<CodexGenerationSettingsCard editor={editor} />
 						<VoiceCommandSettingsCard controller={props.voiceCommands} editor={editor} />
 						<KeyboardSettingsCard editor={editor} />
